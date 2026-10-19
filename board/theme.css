@@ -1,0 +1,191 @@
+/*
+ * theme.css — design tokens only. No selectors that aren't :root / html / body
+ * live here; every rule in components.css and app.css reads from this file, so
+ * a palette change is a one-file change.
+ *
+ * Dark is the default (not a media-query branch): the board is an operations
+ * console that sits open next to a terminal all day. The light block below is
+ * a straight token remap — nothing downstream branches on colour scheme.
+ */
+:root {
+  color-scheme: dark;
+
+  /* ---------------------------------------------------- neutral ramp (dark) */
+  --n-0: #08090c;
+  --n-25: #0a0c10;
+  --n-50: #0d1015;
+  --n-100: #11151b;
+  --n-150: #151a22;
+  --n-200: #1a2029;
+  --n-300: #212834;
+  --n-400: #2b3341;
+  --n-500: #3a4454;
+  --n-600: #58657a;
+  --n-700: #8792a5;
+  --n-800: #c2cad8;
+  --n-900: #edf1f7;
+
+  /* ------------------------------------------------------------- semantic */
+  --bg: var(--n-25);
+  --bg-grad: radial-gradient(1200px 600px at 15% -10%, #14202c 0%, transparent 60%),
+             radial-gradient(900px 500px at 100% 0%, #1a1520 0%, transparent 55%);
+  --surface: var(--n-100);
+  --surface-2: var(--n-150);
+  --surface-3: var(--n-200);
+  /* Glass: a translucent wash over --bg plus a blur. Kept as tokens so the
+     light remap can swap the tint without touching a single component rule. */
+  --glass: rgba(20, 25, 33, 0.62);
+  --glass-strong: rgba(15, 19, 26, 0.86);
+  --glass-blur: blur(14px) saturate(1.3);
+
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-hair: rgba(255, 255, 255, 0.04);
+
+  --ink: var(--n-900);
+  --ink-dim: var(--n-700);
+  --ink-faint: var(--n-600);
+
+  /* --------------------------------------------------------- accent + state */
+  --accent: #ff8a3d;
+  --accent-hi: #ffa869;
+  --accent-on: #2a1400;
+  --accent-soft: rgba(255, 138, 61, 0.14);
+  --accent-line: rgba(255, 138, 61, 0.42);
+
+  --run: #5aa2ff;
+  --ok: #3fb950;
+  --warn: #e3b341;
+  --bad: #f2664f;
+  --gate: #b083f7;
+
+  --run-soft: rgba(90, 162, 255, 0.14);
+  --ok-soft: rgba(63, 185, 80, 0.14);
+  --warn-soft: rgba(227, 179, 65, 0.14);
+  --bad-soft: rgba(242, 102, 79, 0.14);
+  --gate-soft: rgba(176, 131, 247, 0.14);
+
+  /* ------------------------------------------------------------ typography */
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-base: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+
+  --lh-tight: 1.25;
+  --lh-base: 1.5;
+  --tracking-caps: 0.09em;
+
+  /* ---------------------------------------------------------------- space */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 32px;
+  --s8: 40px;
+  --s9: 56px;
+
+  /* ---------------------------------------------------------------- radii */
+  --r1: 6px;
+  --r2: 8px;
+  --r3: 10px;
+  --r4: 14px;
+  --r5: 18px;
+  --rf: 999px;
+
+  /* -------------------------------------------------------------- shadows */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 2px 6px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.3);
+  --sh-3: 0 8px 20px rgba(0, 0, 0, 0.45), 0 32px 64px rgba(0, 0, 0, 0.45);
+  --ring: 0 0 0 3px rgba(255, 138, 61, 0.28);
+  --ring-focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* --------------------------------------------------------------- motion */
+  --t-fast: 110ms;
+  --t-med: 190ms;
+  --t-slow: 320ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --------------------------------------------------------------- layout */
+  --sidebar-w: 226px;
+  --sidebar-w-min: 60px;
+  --topbar-h: 54px;
+  --z-drawer: 40;
+  --z-topbar: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+  --z-tip: 80;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --n-0: #ffffff;
+    --n-25: #f7f8fa;
+    --n-50: #f2f4f7;
+    --n-100: #ffffff;
+    --n-150: #f4f6f9;
+    --n-200: #eceff4;
+    --n-300: #e2e6ee;
+    --n-400: #d3d9e3;
+    --n-500: #b3bccb;
+    --n-600: #7b8798;
+    --n-700: #5c6675;
+    --n-800: #333b47;
+    --n-900: #131820;
+
+    --bg-grad: radial-gradient(1100px 560px at 12% -12%, #e8eef6 0%, transparent 62%),
+               radial-gradient(820px 460px at 100% 0%, #f6ebe4 0%, transparent 58%);
+    --glass: rgba(255, 255, 255, 0.7);
+    --glass-strong: rgba(255, 255, 255, 0.92);
+
+    --border: rgba(16, 22, 32, 0.09);
+    --border-strong: rgba(16, 22, 32, 0.18);
+    --border-hair: rgba(16, 22, 32, 0.05);
+
+    --accent: #d9670f;
+    --accent-hi: #b8540b;
+    --accent-on: #ffffff;
+    --accent-soft: rgba(217, 103, 15, 0.1);
+    --accent-line: rgba(217, 103, 15, 0.36);
+
+    --run: #1f6feb;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --bad: #cf222e;
+    --gate: #8250df;
+
+    --sh-1: 0 1px 2px rgba(16, 22, 32, 0.07);
+    --sh-2: 0 2px 6px rgba(16, 22, 32, 0.07), 0 8px 24px rgba(16, 22, 32, 0.07);
+    --sh-3: 0 8px 20px rgba(16, 22, 32, 0.1), 0 32px 64px rgba(16, 22, 32, 0.12);
+    --ring: 0 0 0 3px rgba(217, 103, 15, 0.22);
+  }
+}
+
+/*
+ * One global motion switch. Every transition/animation in the app is written
+ * against the --t-* tokens, so zeroing them here disables motion everywhere
+ * rather than requiring a per-component opt-out.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-med: 0ms;
+    --t-slow: 0ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

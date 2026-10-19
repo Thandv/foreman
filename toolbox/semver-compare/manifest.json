@@ -1,0 +1,32 @@
+{
+  "name": "semver-compare",
+  "description": "Semantic Versioning 2.0.0 comparison and range matching. \"compare\" mode ranks two version strings (-1/0/1) with correct prerelease precedence (rejecting invalid versions such as a leading-zero numeric prerelease identifier, e.g. \"1.0.0-01\"). \"satisfies\" mode checks a version against an npm-style range expression supporting ^, ~, >=, <=, >, <, =, x/*/X wildcards, || alternatives, hyphen ranges (\"1.2.3 - 2.0.0\"), and optional whitespace after an operator (\">= 1.2.0\"). Use this instead of naive string or numeric comparison of version numbers, which gets prerelease ordering and range logic wrong.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["compare", "satisfies"],
+        "description": "\"compare\" ranks two versions; \"satisfies\" checks a version against a range."
+      },
+      "a": { "type": "string", "description": "First version. Required for mode \"compare\"." },
+      "b": { "type": "string", "description": "Second version. Required for mode \"compare\"." },
+      "version": { "type": "string", "description": "Version to test. Required for mode \"satisfies\"." },
+      "range": { "type": "string", "description": "Range expression, e.g. \"^1.2.3\", \">= 1.0.0 <2.0.0 || 3.x\" (whitespace after an operator is fine), or a hyphen range \"1.2.3 - 2.0.0\". Required for mode \"satisfies\"." }
+    },
+    "required": ["mode"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "result": { "type": "integer", "enum": [-1, 0, 1], "description": "compare: -1 if a<b, 0 if equal precedence, 1 if a>b." },
+      "satisfies": { "type": "boolean", "description": "satisfies: whether version matches range." }
+    }
+  }
+}

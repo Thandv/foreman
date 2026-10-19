@@ -1,0 +1,15 @@
+{
+  "note": "Stand-in for the 2026-10-08 plan (the ledger and traces are unreadable from the jail): p1-p6 edit core-guarded files and were refused at admission; d1-d4 are their dependents and name no protected path to edit.",
+  "tickets": [
+    { "ref": "p1", "title": "Queue: add a retry counter", "prompt": "Edit src/queue.ts so a task keeps a retry counter across restarts.", "acceptance": "The counter survives a restart.", "after": [] },
+    { "ref": "p2", "title": "Scheduler: fair share", "prompt": "Change src/scheduler.ts to pick lanes round-robin.", "acceptance": "Lanes alternate.", "after": [] },
+    { "ref": "p3", "title": "Server: new route", "prompt": "Add a /api/ping route in src/server.ts.", "acceptance": "GET /api/ping answers 200.", "after": [] },
+    { "ref": "p4", "title": "Db: new index", "prompt": "Add an index on tasks in src/db.ts.", "acceptance": "The migration runs once.", "after": [] },
+    { "ref": "p5", "title": "Sandbox: tighten profile", "prompt": "Tighten the profile in src/security/sandbox.ts.", "acceptance": "The jail denies the write.", "after": [] },
+    { "ref": "p6", "title": "Merge: fast-forward only", "prompt": "Make src/merge.ts refuse non-fast-forward landings.", "acceptance": "A diverged branch is refused.", "after": [] },
+    { "ref": "d1", "title": "Docs for the retry counter", "prompt": "Document the retry counter in the README; do not touch src/queue.ts.", "acceptance": "README names the counter.", "after": ["p1"] },
+    { "ref": "d2", "title": "Lane docs", "prompt": "Document lane order and the ping route in the README.", "acceptance": "README names both.", "after": ["p2", "p3"] },
+    { "ref": "d3", "title": "Index note", "prompt": "Write a changelog line for the new index.", "acceptance": "CHANGELOG has the line.", "after": ["p4"] },
+    { "ref": "d4", "title": "Release note", "prompt": "Write the release note for the profile and landing changes.", "acceptance": "The note lists both.", "after": ["p5", "p6"] }
+  ]
+}

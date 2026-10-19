@@ -1,0 +1,71 @@
+{
+  "name": "csv",
+  "description": "RFC 4180 CSV parsing and stringifying. Parse mode turns raw CSV text into rows (arrays, or objects when a header row is present), handling quoted fields, escaped quotes, CRLF/LF line endings, embedded newlines inside quoted fields, and ragged rows (reported in warnings instead of throwing). Parsed rows are capped at 20,000 (truncated:true if the source had more). Stringify mode turns rows back into CSV text, quoting only fields that need it and always terminating the last line, so a trailing all-empty row round-trips correctly. Use this instead of naive string.split(',') whenever the CSV might contain quoted commas, quoted newlines, or escaped quotes.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["parse", "stringify"],
+        "description": "\"parse\" turns CSV text into rows; \"stringify\" turns rows into CSV text."
+      },
+      "text": {
+        "type": "string",
+        "description": "Raw CSV text. Required for mode \"parse\"."
+      },
+      "rows": {
+        "type": "array",
+        "description": "Rows to serialise. Required for mode \"stringify\": either an array of arrays, or an array of uniform objects."
+      },
+      "columns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Stringify: explicit column order/subset for object rows, or a header row to prepend to array rows."
+      },
+      "delimiter": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1,
+        "description": "Field delimiter. Defaults to a comma."
+      },
+      "header": {
+        "type": "boolean",
+        "description": "Parse only: treat the first row as a header and return objects keyed by (deduplicated) column name. Defaults to false."
+      }
+    },
+    "required": ["mode"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "rows": {
+        "type": "array",
+        "description": "Parse: array of arrays (no header) or array of objects (header:true)."
+      },
+      "columns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Parse with header:true: the (deduplicated) column names, in order."
+      },
+      "warnings": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Non-fatal issues found while parsing: ragged rows, deduplicated header names."
+      },
+      "truncated": {
+        "type": "boolean",
+        "description": "Parse only: true if the source had more than 20,000 data rows and the result was cut to the first 20,000."
+      },
+      "text": {
+        "type": "string",
+        "description": "Stringify: the resulting CSV text. Always terminated with a trailing line ending."
+      }
+    }
+  }
+}

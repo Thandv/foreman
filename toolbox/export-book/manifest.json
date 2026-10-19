@@ -1,0 +1,95 @@
+{
+  "name": "export-book",
+  "description": "Renders a book's chapters (title + author + markdown body per chapter) into a KDP-style .docx or a valid EPUB2 .epub file, written zero-dependency from scratch (hand-built OOXML/EPUB XML plus a hand-rolled ZIP container) — no pandoc, no network. Supports the minimal markdown the source pipeline uses: paragraphs separated by blank lines, *italic*/_italic_ and **bold** inline runs, and scene breaks ('---', '***', '* * *', or '⁂' alone on a line). Call this last, once chapter markdown is finalized, to produce the deliverable file. WARNING: an existing file at 'out' is overwritten silently, with no confirmation step — check the returned 'overwrote' field if that matters to the caller.",
+  "input": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      },
+      "author": {
+        "type": "string"
+      },
+      "language": {
+        "type": "string",
+        "description": "IETF (BCP 47) language tag, e.g. 'en' or 'pt-BR', for the EPUB metadata and every XHTML page's xml:lang. Defaults to 'en'; ignored for docx. Anything not shaped like a language tag is rejected."
+      },
+      "chapters": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "title": {
+              "type": "string"
+            },
+            "markdown": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "number",
+            "title",
+            "markdown"
+          ]
+        }
+      },
+      "format": {
+        "type": "string",
+        "enum": [
+          "docx",
+          "epub"
+        ]
+      },
+      "out": {
+        "type": "string",
+        "description": "Output path, relative to the working directory. Refused if absolute or if it resolves outside the working directory."
+      }
+    },
+    "required": [
+      "title",
+      "author",
+      "chapters",
+      "format",
+      "out"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "bytes": {
+        "type": "integer"
+      },
+      "overwrote": {
+        "type": "boolean",
+        "description": "True if a file already existed at 'out' and was overwritten. This tool always overwrites silently; check this field if that matters to the caller."
+      }
+    },
+    "required": [
+      "path",
+      "bytes",
+      "overwrote"
+    ]
+  },
+  "entry": "tool.js",
+  "runtime": "node",
+  "version": 1,
+  "provenance": {
+    "taskId": null,
+    "runId": null,
+    "model": "hand-ported-by-agent",
+    "date": "2026-08-21T10:13:47.288Z"
+  },
+  "admit": {
+    "scannedAt": "2026-08-21T10:13:47.294Z",
+    "findings": []
+  }
+}

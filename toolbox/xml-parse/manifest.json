@@ -1,0 +1,25 @@
+{
+  "name": "xml-parse",
+  "description": "Offline XML-to-JSON parser. Given an XML document, returns a plain-object tree: attributes are collected under an \"@attr\" key per element when preserveAttributes is true (default), text content is placed under \"#text\" for elements that mix text and child elements, and repeated sibling elements with the same tag name become a JSON array. CDATA sections are unwrapped to their literal text; comments and the XML declaration/DOCTYPE are skipped. A hand-written char-scanner tokenizer (no regex over tag structure) makes this tolerant of odd whitespace and fast on large documents. By design this parser does NOT resolve external or parameter entities declared in a DOCTYPE (it skips the doctype block outright without interpreting it) and only decodes the five built-in XML entities plus numeric character references — so there is no billion-laughs / XXE class of attack surface here. Malformed XML (unclosed tags, mismatched end tags) is reported as a clear parse error, not silently patched. Element nesting is capped at 500 levels; a deeper document gets a clean 'nesting too deep' error instead of overflowing the call stack.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "xml": { "type": "string", "description": "The XML document text to parse." },
+      "preserveAttributes": { "type": "boolean", "description": "When true (the default), element attributes are included under an \"@attr\" key. When false, attributes are dropped entirely." }
+    },
+    "required": ["xml"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "root": { "description": "The parsed tree: { <rootTagName>: <value> }, where value is a string, or an object with \"@attr\"/\"#text\"/child-tag keys, with repeated child tags collapsed into arrays." }
+    },
+    "required": ["root"]
+  }
+}

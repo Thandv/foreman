@@ -1,0 +1,61 @@
+;; profile-worker.sb — the claude-code worker: the CLI process itself and everything it starts (Bash tool, hooks, MCP).
+;; profile-tests.sb plus: the ticket's own Claude config directory, the model API over the internet, DNS,
+;; the verify-slot socket, and (only when KEYCHAIN_HOME is given) the operator's login keychain.
+;; UNVERIFIED with the real CLI: this file was exercised with stand-in workloads only. See the smoke procedure.
+;;   CLAUDE_CFG     required  <FOREMAN_HOME>/claude-config/tasks/<ticket>: read + write (given back out of FOREMAN_HOME)
+;;   CONTROL_PORT   required  the daemon's HTTP port: never reachable
+;;   SLOT_SOCK      optional  the daemon's verify-slot unix socket: connect only
+;;   EGRESS_PORT    optional  when set, the ONLY way out is a loopback proxy on this port (no direct internet, no DNS)
+;;   KEYCHAIN_HOME  optional  the operator's real home; when set, `security` can read the login keychain.
+;;                            Anything in the sandbox can then read the sign-in. Prefer CLAUDE_CODE_OAUTH_TOKEN and leave unset.
+(version 1)
+(deny default)
+(import (string-append (param "PROFILE_DIR") "/base.sb"))
+(define (lo port) (string-append "localhost:" port))
+
+;; the ticket's own CLI state (transcripts, .claude.json). Stated after base.sb, so it outranks the FOREMAN_HOME denial.
+(read-write (param "CLAUDE_CFG"))
+
+;; loopback, as for a test command
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-bind network-outbound network-inbound
+  (subpath (param "TMP")) (subpath (param "JAIL")) (subpath (param "RUNHOME")))
+(allow system-socket)
+
+;; the way out
+(if (param "EGRESS_PORT")
+    #t                                                      ; loopback (above) already reaches the proxy; nothing else is opened
+    (begin
+      (allow network-outbound (remote tcp "*:443"))         ; SBPL cannot name a host: this is ANY host on 443
+      (allow network-outbound (literal "/private/var/run/mDNSResponder"))
+      (allow mach-lookup (global-name "com.apple.dnssd.service")
+                         (global-name "com.apple.SystemConfiguration.configd")
+                         (global-name "com.apple.SystemConfiguration.DNSConfiguration"))))
+
+;; the verify-slot lease
+(if (param "SLOT_SOCK")
+    (allow network-outbound (literal (param "SLOT_SOCK"))))
+
+;; the operator's sign-in, the keychain way
+(if (param "KEYCHAIN_HOME")
+    (begin
+      (allow-ancestors (string-append (param "KEYCHAIN_HOME") "/Library/Keychains"))
+      (allow file-read* (subpath (string-append (param "KEYCHAIN_HOME") "/Library/Keychains")))
+      (allow file-read* (literal (string-append (param "KEYCHAIN_HOME") "/Library/Preferences/com.apple.security.plist")))
+      (allow file-read* (subpath "/Library/Keychains"))
+      (allow mach-lookup (global-name "com.apple.SecurityServer")
+                         (global-name "com.apple.securityd.xpc")
+                         (global-name "com.apple.ocspd")
+                         (global-name "com.apple.system.opendirectoryd.api"))
+      (allow ipc-posix-shm-read-data (ipc-posix-name "com.apple.AppleDatabaseChanged"))
+      (allow ipc-posix-shm-write-data (ipc-posix-name "com.apple.AppleDatabaseChanged"))))
+
+;; never, whatever the rules above opened (the last match decides)
+(deny network-outbound
+  (remote ip (lo (param "CONTROL_PORT")))
+  (remote ip (lo (if (param "DENY_PORT_1") (param "DENY_PORT_1") "1")))
+  (remote ip (lo (if (param "DENY_PORT_2") (param "DENY_PORT_2") "1")))
+  (remote ip (lo (if (param "DENY_PORT_3") (param "DENY_PORT_3") "1")))
+  (remote ip (lo (if (param "DENY_PORT_4") (param "DENY_PORT_4") "1"))))

@@ -1,0 +1,37 @@
+{
+  "name": "hash-retrieve",
+  "description": "Keyword-grade document retrieval: embeds the query and each document as a hashed bag-of-words vector (32-bit FNV-1a) and ranks documents by cosine similarity, returning the top k. Zero cost, fully offline, deterministic, no model or network call. This is NOT semantic search — it has no notion of meaning, synonyms, or word order, so it will miss paraphrases and can be fooled by superficial vocabulary overlap. Use it for a cheap 'find documents that share words with this query' pass over a small local set, not as a substitute for embedding-model retrieval.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "minLength": 1, "description": "The search query." },
+      "documents": { "type": "array", "items": { "type": "string" }, "description": "Candidate documents to rank." },
+      "k": { "type": "integer", "minimum": 1, "description": "Number of top hits to return. Defaults to 5." }
+    },
+    "required": ["query", "documents"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "hits": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "index": { "type": "integer", "description": "Index into the original documents array." },
+            "score": { "type": "number", "description": "Cosine similarity, in [-1, 1] (typically [0, 1] for bag-of-words vectors)." },
+            "text": { "type": "string" }
+          },
+          "required": ["index", "score", "text"]
+        }
+      }
+    },
+    "required": ["hits"]
+  }
+}

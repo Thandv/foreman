@@ -1,0 +1,52 @@
+;; profile-tests.sb — the repo's test command, a playbook check, the `shell` runner, the post-merge check.
+;; base.sb plus: loopback networking (suites start servers and talk to them), never Foreman's control port,
+;; unix sockets only inside the run's own directories. No DNS, no internet.
+;;   CONTROL_PORT  required  the daemon's HTTP port
+;;   DENY_PORT_1 … DENY_PORT_4  optional  other loopback services a suite must not reach
+;;   ALLOW_FSEVENTS  optional  file watching (FOREMAN_SANDBOX_ALLOW=fsevents); see the rule for what it lets out
+(version 1)
+(deny default)
+(import (string-append (param "PROFILE_DIR") "/base.sb"))
+(define (lo port) (string-append "localhost:" port))
+;; loopback TCP/UDP
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+;; unix sockets, only inside the run's own directories. Written with the unix-socket filter: as tested first, a bare
+;; (subpath …) on the network operations, placed AFTER the port denial, switched that denial off whenever JAIL, TMP
+;; and RUNHOME were not all the same directory — the control port answered from inside the sandbox.
+(allow network-bind network-inbound
+  (local unix-socket (subpath (param "TMP")))
+  (local unix-socket (subpath (param "JAIL")))
+  (local unix-socket (subpath (param "RUNHOME"))))
+(allow network-outbound
+  (remote unix-socket (subpath (param "TMP")))
+  (remote unix-socket (subpath (param "JAIL")))
+  (remote unix-socket (subpath (param "RUNHOME"))))
+(allow system-socket)
+;; never, whatever the rules above opened: this stays the LAST network rule (the last match decides).
+(deny network-outbound
+  (remote ip (lo (param "CONTROL_PORT")))
+  (remote ip (lo (if (param "DENY_PORT_1") (param "DENY_PORT_1") "1")))
+  (remote ip (lo (if (param "DENY_PORT_2") (param "DENY_PORT_2") "1")))
+  (remote ip (lo (if (param "DENY_PORT_3") (param "DENY_PORT_3") "1")))
+  (remote ip (lo (if (param "DENY_PORT_4") (param "DENY_PORT_4") "1"))))
+
+;; pseudo-terminals: a suite may allocate a pty and use it (Kiln's launch tests, `script`, python's pty). Only ptys
+;; this sandbox was granted: another terminal of the same user (/dev/ttysNNN it did not allocate) stays closed.
+(allow pseudo-tty)
+(allow file-read* file-write* file-ioctl (literal "/dev/ptmx"))
+(allow file-read* file-write* file-ioctl
+  (require-all (regex #"^/dev/ttys[0-9]+$") (extension "com.apple.sandbox.pty")))
+
+;; a process may read the task of another process IN THIS SAME sandbox: AddressSanitizer's symbolizer (atos) attaches
+;; to the crashing program to turn addresses into file:line. A process outside the sandbox stays unreadable.
+(allow mach-task-read (target same-sandbox))
+
+;; file watching, only when the operator asked for it. fseventsd filters what it reports by this sandbox's read rules,
+;; with one gap (observed): a file or directory created and then deleted or renamed away DIRECTLY inside a directory
+;; above JAIL / TMP / RUNHOME / an RO tree is reported by NAME (those directories are stat-able so paths resolve).
+;; Files that stay, anything deeper, other trees and all contents are not reported. Without this, node's fs.watch on
+;; a directory fails (EMFILE) or never fires.
+(if (param "ALLOW_FSEVENTS")
+    (allow mach-lookup (global-name "com.apple.FSEvents")))

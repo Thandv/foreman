@@ -1,0 +1,29 @@
+{
+  "name": "book-lint",
+  "description": "Mechanical copyedit linter/fixer for markdown manuscripts. Scan mode reports typographical issues with line numbers (straight vs smart quotes, unbalanced dialogue quotes with the continued-dialogue convention honoured, multiple/trailing spaces, tabs, space-before-punctuation, doubled punctuation, repeated words, hyphen/en-dash used as a dash, mixed ellipsis and em-dash styles). Fix mode returns corrected file texts applying ONLY unambiguous transforms: quote smartening, ellipsis normalization to the dominant style, whitespace cleanup, space-before-punctuation removal — judgement-shaped findings (repeated words, dash style, quote balance) are never auto-fixed. Use scan first, review, then fix.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 2,
+  "provenance": { "taskId": null, "runId": null, "model": "claude-fable-5", "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "mode": { "type": "string", "enum": ["scan", "fix"], "description": "Defaults to scan." },
+      "ellipsis": { "type": "string", "enum": ["unicode", "dots"], "description": "Fix mode: force ellipsis style instead of detecting the dominant one." },
+      "files": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "text": { "type": "string" } }, "required": ["path", "text"], "additionalProperties": false } }
+    },
+    "required": ["files"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "findings": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "line": { "type": "integer" }, "rule": { "type": "string" }, "severity": { "type": "string", "enum": ["fix", "review"] }, "excerpt": { "type": "string" } } } },
+      "stats": { "type": "object" },
+      "files": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "text": { "type": "string" }, "changes": { "type": "integer" } } } },
+      "rulesApplied": { "type": "array", "items": { "type": "string" } },
+      "ellipsis": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark light" />
+<title>Foreman · mission control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🦺</text></svg>" />
+<!--
+  Three stylesheets, in dependency order: tokens, then the component
+  vocabulary that reads them, then layout. Nothing is bundled and nothing is
+  compiled — the daemon serves this directory as-is.
+-->
+<link rel="stylesheet" href="/theme.css" />
+<link rel="stylesheet" href="/components.css" />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<!--
+  The shell is built by main.js rather than authored here: the sidebar, topbar
+  and every view are constructed with createElement + textContent so no value
+  that came off the wire is ever parsed as HTML. This file is the mount point
+  and the stylesheet manifest, nothing more.
+-->
+<noscript>Foreman's board needs JavaScript — or use the CLI: <code>foreman ls</code>.</noscript>
+<script type="module" src="/main.js"></script>
+</body>
+</html>

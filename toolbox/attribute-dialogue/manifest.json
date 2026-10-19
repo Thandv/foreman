@@ -1,0 +1,85 @@
+{
+  "name": "attribute-dialogue",
+  "description": "Rule-based speaker attribution for dialogue in a markdown manuscript. Splits every paragraph into narration and quoted-dialogue segments, resolves each dialogue segment's speaker via explicit tags ('...,\" X said.' / 'X said, \"...\"' over ~45 common dialogue verbs), then falls back per scene to carrying forward the last named speaker, then to alternating between the two most recent speakers, then to NARRATOR. Cast is discovered automatically from explicit tags in the text (no pre-supplied character list). Use this on a manuscript before multi-voice narration or a character-by-character dialogue review.",
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Full manuscript markdown text."
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "speakers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Distinct non-narrator speaker names, in order of first appearance."
+      },
+      "lines": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "chapter": {
+              "type": "integer",
+              "description": "1-based chapter number."
+            },
+            "scene": {
+              "type": "integer",
+              "description": "1-based scene number within the chapter."
+            },
+            "speaker": {
+              "type": "string",
+              "description": "A cast name, or NARRATOR."
+            },
+            "confidence": {
+              "type": "string",
+              "enum": [
+                "explicit",
+                "carry",
+                "alternation",
+                "narrator"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chapter",
+            "scene",
+            "speaker",
+            "confidence",
+            "text"
+          ]
+        }
+      }
+    },
+    "required": [
+      "speakers",
+      "lines"
+    ]
+  },
+  "entry": "tool.js",
+  "runtime": "node",
+  "version": 1,
+  "provenance": {
+    "taskId": null,
+    "runId": null,
+    "model": "hand-ported-by-agent",
+    "date": "2026-08-21T10:09:48.633Z"
+  },
+  "admit": {
+    "scannedAt": "2026-08-21T10:09:48.641Z",
+    "findings": []
+  }
+}

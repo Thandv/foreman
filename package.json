@@ -1,0 +1,28 @@
+{
+  "name": "foreman",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Parallel agent mission control: queue tasks, run isolated agent workers concurrently, gate every result on a human click.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "foreman": "./src/cli.ts"
+  },
+  "scripts": {
+    "serve": "node src/cli.ts serve",
+    "test": "node --test --test-timeout=180000 \"test/*.test.ts\"",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
+    "drill": "node src/cli.ts drill",
+    "export:scope-corpus": "node scripts/export-scope-corpus.ts",
+    "verify": "bash scripts/verify.sh"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "typescript": "5.9"
+  }
+}

@@ -1,0 +1,742 @@
+{
+  "cases": [
+    {
+      "id": "31f2d3f1322b",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_01.md — do not touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "475c92acbdeb",
+      "excerpt": "Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts or src/tools/catalog.ts (protected self-change paths).\nForeman's own   proposal: 517 book-project rejections were out-of-scope edits (STYLE_SHEET.md touched when the brief said write ONLY one chapter).",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "704af712c3aa",
+      "excerpt": "You may read src/merge.ts, but Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts or src/tools/catalog.ts.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "561426d595b3",
+      "excerpt": "Do not edit STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "ccd2c517d125",
+      "excerpt": "Do NOT touch any number that the ruling above fixes, that appears in the style sheet, or that another chapter depends on.",
+      "forbidden": [],
+      "only": []
+    },
+    {
+      "id": "131407e0f618",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_15.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_15.md"
+      ]
+    },
+    {
+      "id": "c5021ea3f6fd",
+      "excerpt": "Do not touch executor.ts or server.ts.",
+      "forbidden": [
+        "executor.ts",
+        "server.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "655a08efd60d",
+      "excerpt": "Do not touch tokenize.ts, structure.ts or src/helper/*.",
+      "forbidden": [
+        "tokenize.ts",
+        "structure.ts",
+        "src/helper/*"
+      ],
+      "only": []
+    },
+    {
+      "id": "7fb0c5498ef1",
+      "excerpt": "Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts or src/tools/catalog.ts.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "f1a0681483e8",
+      "excerpt": "Do NOT touch src/, ui/logic.js or ui/outline.js.",
+      "forbidden": [
+        "src/",
+        "ui/logic.js",
+        "ui/outline.js"
+      ],
+      "only": []
+    },
+    {
+      "id": "d0a621fa4430",
+      "excerpt": "Confirm first that this is the canonical Chapter 11 — a second, shorter, divergent copy exists at  ; do not edit that one.",
+      "forbidden": [],
+      "only": []
+    },
+    {
+      "id": "31d66f3883ab",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_17.md.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_17.md"
+      ]
+    },
+    {
+      "id": "6e83ebc6916c",
+      "excerpt": "Do not edit the brief-building file; another ticket edits it.\nDo NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts or src/tools/catalog.ts.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "f5f1b14f68a9",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_13.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_13.md"
+      ]
+    },
+    {
+      "id": "01bb1126664b",
+      "excerpt": "Do not touch executor.ts.",
+      "forbidden": [
+        "executor.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "31400d6787aa",
+      "excerpt": "Do NOT touch src/helper/* or ui/.",
+      "forbidden": [
+        "src/helper/*",
+        "ui/"
+      ],
+      "only": []
+    },
+    {
+      "id": "12aef21f5894",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_11.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "d2883ad2b705",
+      "excerpt": "Do NOT touch tokenize.ts or src/helper/*.",
+      "forbidden": [
+        "tokenize.ts",
+        "src/helper/*"
+      ],
+      "only": []
+    },
+    {
+      "id": "89315ad36a49",
+      "excerpt": "Do not touch ui/index.html, ui/easy-logic.js or ui/api.js.",
+      "forbidden": [
+        "ui/index.html",
+        "ui/easy-logic.js",
+        "ui/api.js"
+      ],
+      "only": []
+    },
+    {
+      "id": "64b820b33de1",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_12.md — never create or stub another chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_12.md"
+      ]
+    },
+    {
+      "id": "3eda866f1c46",
+      "excerpt": "Write only Chapters/Book_Chapter_05.md — do NOT create, touch or stub any other chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_05.md"
+      ]
+    },
+    {
+      "id": "a7eb7ec34e5b",
+      "excerpt": "Do NOT touch server.ts, ui/, kb.ts or card JSON.",
+      "forbidden": [
+        "server.ts",
+        "ui/",
+        "kb.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "ea9987489f07",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_17.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_17.md"
+      ]
+    },
+    {
+      "id": "59b53f85b4fa",
+      "excerpt": "Do NOT touch search/searchScored; PINNED order stays identical.\nDo NOT touch ui/, helper/library/*.json or other src files.",
+      "forbidden": [
+        "ui/",
+        "helper/library/*.json"
+      ],
+      "only": []
+    },
+    {
+      "id": "b352938a03cd",
+      "excerpt": "Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts, src/tools/catalog.ts.\nUse pathsInDiff from src/improve.ts; import it, do not edit that file.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "ad2963065bf3",
+      "excerpt": "Do not touch ui/.",
+      "forbidden": [
+        "ui/"
+      ],
+      "only": []
+    },
+    {
+      "id": "dd4c08bc66db",
+      "excerpt": "Do NOT touch recipes.ts, executor.ts, cli.ts or toolchain.ts.",
+      "forbidden": [
+        "recipes.ts",
+        "executor.ts",
+        "cli.ts",
+        "toolchain.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "5ebb5304af7e",
+      "excerpt": "Do NOT touch ui/easy-logic.js, ui/style.css, src/helper/* or executor.ts.",
+      "forbidden": [
+        "ui/easy-logic.js",
+        "ui/style.css",
+        "src/helper/*",
+        "executor.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "5d89a26a5558",
+      "excerpt": "Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts, src/tools/catalog.ts.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "9ce2a4bda830",
+      "excerpt": "Write only Chapters/Book_Chapter_08.md — do NOT create, touch or stub any other chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_08.md"
+      ]
+    },
+    {
+      "id": "a31f20e87771",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_18.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_18.md"
+      ]
+    },
+    {
+      "id": "b12aa691fd54",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_16.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_16.md"
+      ]
+    },
+    {
+      "id": "4d7881c3272b",
+      "excerpt": "Read merge.ts's result, but Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts or src/tools/catalog.ts.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "1116610e3df1",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_10.md — never create or stub another chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_10.md"
+      ]
+    },
+    {
+      "id": "ff163c2407a1",
+      "excerpt": "Do not touch ui/easy-logic.js or ui/api.js.",
+      "forbidden": [
+        "ui/easy-logic.js",
+        "ui/api.js"
+      ],
+      "only": []
+    },
+    {
+      "id": "73574e8bc7b6",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_05.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "a94b5f6f3318",
+      "excerpt": "Keep the change minimal and do not touch src/, CSS or HTML.",
+      "forbidden": [
+        "src/"
+      ],
+      "only": []
+    },
+    {
+      "id": "162da2abf311",
+      "excerpt": "Do NOT edit helper/errors/cpp.json, kb.ts, fixes.ts or src/cpp/fixes/.",
+      "forbidden": [
+        "helper/errors/cpp.json",
+        "kb.ts",
+        "fixes.ts",
+        "src/cpp/fixes/"
+      ],
+      "only": []
+    },
+    {
+      "id": "f40fbe76ce92",
+      "excerpt": "Do not edit helper/ids.json, src/ or ui/.",
+      "forbidden": [
+        "helper/ids.json",
+        "src/",
+        "ui/"
+      ],
+      "only": []
+    },
+    {
+      "id": "7728f4032aa5",
+      "excerpt": "Do not touch recipes.ts or types.ts.",
+      "forbidden": [
+        "recipes.ts",
+        "types.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "02da963f1e7a",
+      "excerpt": "Write only Chapters/Book_Chapter_07.md — do NOT create, touch or stub any other chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_07.md"
+      ]
+    },
+    {
+      "id": "ea0584d94710",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_12.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "619a695c813b",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_14.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_14.md"
+      ]
+    },
+    {
+      "id": "3bde7f6fcf57",
+      "excerpt": "Do NOT touch src/server.ts, executor.ts or recipes.ts.",
+      "forbidden": [
+        "src/server.ts",
+        "executor.ts",
+        "recipes.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "088bd84d6195",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_09.md — never create or stub another chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_09.md"
+      ]
+    },
+    {
+      "id": "7f442c6489f0",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_10.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "b9943a27a383",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_02.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "6116c96f12ef",
+      "excerpt": "Do not touch run.ts or the UI.",
+      "forbidden": [
+        "run.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "b5390057fb7b",
+      "excerpt": "Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts, src/tools/catalog.ts.\nDo not edit the module that holds acceptanceBrief or any acceptance-map code; a parallel ticket owns those.\nUse pathsInDiff from src/improve.ts; import it, do not edit that file.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "3e15597b2342",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_01.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "83b3ae834004",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_15.md.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_15.md"
+      ]
+    },
+    {
+      "id": "29ed6776a40d",
+      "excerpt": "Do not touch recipes, executor or server.",
+      "forbidden": [],
+      "only": []
+    },
+    {
+      "id": "60dbf582fdf1",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_08.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "25bbeabe987b",
+      "excerpt": "Do NOT touch src/helper/run.ts, kb.ts or helper/errors/.",
+      "forbidden": [
+        "src/helper/run.ts",
+        "kb.ts",
+        "helper/errors/"
+      ],
+      "only": []
+    },
+    {
+      "id": "c592243c5bc0",
+      "excerpt": "Write only Chapters/Book_Chapter_06.md — do NOT create, touch or stub any other chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_06.md"
+      ]
+    },
+    {
+      "id": "abbc8badf8dd",
+      "excerpt": "Do NOT touch recipes.ts, executor.ts or cli.ts.",
+      "forbidden": [
+        "recipes.ts",
+        "executor.ts",
+        "cli.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "bd764c25a0ff",
+      "excerpt": "Do NOT touch src/, CSS, HTML, saveDirtyBeforeRun, S.fixFile or simpleRunNext.",
+      "forbidden": [
+        "src/"
+      ],
+      "only": []
+    },
+    {
+      "id": "2b4cb70551f0",
+      "excerpt": "Do NOT touch ui/.",
+      "forbidden": [
+        "ui/"
+      ],
+      "only": []
+    },
+    {
+      "id": "40dedc5d5f31",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_19.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_19.md"
+      ]
+    },
+    {
+      "id": "734f50e9dd2e",
+      "excerpt": "Do not edit the chapter files.",
+      "forbidden": [],
+      "only": []
+    },
+    {
+      "id": "a86a388dbad5",
+      "excerpt": "Do not edit ui/app.js or test/ui.test.ts.",
+      "forbidden": [
+        "ui/app.js",
+        "test/ui.test.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "66dfacc825cf",
+      "excerpt": "Do NOT touch executor.ts, server.ts, fixes.ts or src/cpp/.",
+      "forbidden": [
+        "executor.ts",
+        "server.ts",
+        "fixes.ts",
+        "src/cpp/"
+      ],
+      "only": []
+    },
+    {
+      "id": "26dc40ca7d94",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_11.md — never create or stub another chapter file.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_11.md"
+      ]
+    },
+    {
+      "id": "757160656949",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_09.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "8dbffb7640fd",
+      "excerpt": "Do NOT touch executor.ts, server.ts or kb.ts.",
+      "forbidden": [
+        "executor.ts",
+        "server.ts",
+        "kb.ts"
+      ],
+      "only": []
+    },
+    {
+      "id": "0dc349bd8f94",
+      "excerpt": "Do not touch src/ or ui/api.js.",
+      "forbidden": [
+        "src/",
+        "ui/api.js"
+      ],
+      "only": []
+    },
+    {
+      "id": "8963334a0516",
+      "excerpt": "Edit ONLY Chapters/Book_Chapter_07.md — do NOT touch STYLE_SHEET.md or any other chapter.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "e4687f3af761",
+      "excerpt": "Do not edit STYLE_SHEET.md as part of this check — if the style sheet lacks the entry, flag that it needs adding in a separate ticket.",
+      "forbidden": [
+        "STYLE_SHEET.md"
+      ],
+      "only": []
+    },
+    {
+      "id": "1be5ef5eeab1",
+      "excerpt": "Do NOT touch src/, ui/easy-logic.js or ui/style.css.",
+      "forbidden": [
+        "src/",
+        "ui/easy-logic.js",
+        "ui/style.css"
+      ],
+      "only": []
+    },
+    {
+      "id": "2a5c562aa92e",
+      "excerpt": "Do NOT touch tokenize.ts, structure.ts or src/helper/*.",
+      "forbidden": [
+        "tokenize.ts",
+        "structure.ts",
+        "src/helper/*"
+      ],
+      "only": []
+    },
+    {
+      "id": "d22583a8b08a",
+      "excerpt": "Do NOT touch src/helper/*, recipes.ts or ui/.",
+      "forbidden": [
+        "src/helper/*",
+        "recipes.ts",
+        "ui/"
+      ],
+      "only": []
+    },
+    {
+      "id": "ba7ad1e1726a",
+      "excerpt": "Write ONLY Chapters/Book_Chapter_20.md — never create or stub another chapter file, and add no author-query block.",
+      "forbidden": [],
+      "only": [
+        "Chapters/Book_Chapter_20.md"
+      ]
+    }
+  ],
+  "knownGaps": [
+    {
+      "id": "23cea26a0ea7",
+      "excerpt": "Do NOT touch other ui/ files, executor.ts or recipes.ts.",
+      "forbidden": [
+        "ui/",
+        "executor.ts",
+        "recipes.ts"
+      ],
+      "only": [],
+      "note": "the list runs through \"other ui/ files\"; the parser stops at the word \"other\"",
+      "parser": {
+        "forbidden": [],
+        "only": []
+      }
+    },
+    {
+      "id": "a748db357905",
+      "excerpt": "Do NOT touch src/merge.ts, src/security/, src/improve.ts, src/lock.ts or src/tools/catalog.ts.\nUnit-test the parser on these real prompts from foreman.db: Do NOT touch src/, ui/logic.js or ui/outline.js; write ONLY Chapter_11.md.",
+      "forbidden": [
+        "src/merge.ts",
+        "src/security/",
+        "src/improve.ts",
+        "src/lock.ts",
+        "src/tools/catalog.ts"
+      ],
+      "only": [],
+      "note": "the closing \"Do NOT touch src/, …; write ONLY Chapter_11.md.\" is unquoted test data, not a rule (own ticket)",
+      "parser": {
+        "forbidden": [
+          "src/merge.ts",
+          "src/security/",
+          "src/improve.ts",
+          "src/lock.ts",
+          "src/tools/catalog.ts",
+          "src/",
+          "ui/logic.js",
+          "ui/outline.js"
+        ],
+        "only": [
+          "Chapter_11.md"
+        ]
+      }
+    },
+    {
+      "id": "7c4734464598",
+      "excerpt": "Do not touch ui/easy-logic.js, ui/api.js or other src/ files.",
+      "forbidden": [
+        "ui/easy-logic.js",
+        "ui/api.js",
+        "src/"
+      ],
+      "only": [],
+      "note": "\"or other src/ files\": the parser stops at \"other\"",
+      "parser": {
+        "forbidden": [
+          "ui/easy-logic.js",
+          "ui/api.js"
+        ],
+        "only": []
+      }
+    },
+    {
+      "id": "68cbf85e4ee5",
+      "excerpt": "Do NOT edit vendor CSS, inline styles, the Output-panel link (~app.js:797), easy-logic.js or src/.",
+      "forbidden": [
+        "easy-logic.js",
+        "src/"
+      ],
+      "only": [],
+      "note": "the list opens with prose (\"vendor CSS, inline styles, …\") so the parser stops at once",
+      "parser": {
+        "forbidden": [],
+        "only": []
+      }
+    },
+    {
+      "id": "1e7311f77ca6",
+      "excerpt": "Do NOT touch src/, helper/library or search order.",
+      "forbidden": [
+        "src/",
+        "helper/library/"
+      ],
+      "only": [],
+      "note": "\"helper/library\" is a directory but has no trailing slash, so it matches only an exact file",
+      "parser": {
+        "forbidden": [
+          "src/",
+          "helper/library"
+        ],
+        "only": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "json-query",
+  "description": "Offline JMESPath-subset query engine for extracting and reshaping JSON. Given a JSON value and a query string, supports dot access (a.b), index access ([0], [-1]), wildcard projection ([*], a.*), flatten ([]), filter expressions ([?field==`value`] with ==, !=, <, <=, >, >=, &&, ||, ! and parentheses), pipes (|) to reset projections, multiselect hashes ({a: x, b: y}), and the functions length(@), keys(@), values(@), sort_by(@, &field), max_by(@, &field), min_by(@, &field), contains(@, needle), starts_with(@, prefix), join(sep, @), and to_number(@). Recursive-descent parser with position-tagged error messages; expression nesting is capped at 200 levels with a clean error. The serialized result is capped at 700,000 characters — an oversized array result is truncated to the largest prefix that fits, with a trailing marker object, and truncated:true is set. Use this to pull specific fields or filtered/sorted subsets out of a large JSON document without writing bespoke code.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "data": { "description": "Any JSON value to query." },
+      "query": { "type": "string", "description": "A JMESPath-subset query string, e.g. \"items[?price > `10`].name | sort_by(@, &name)\"." }
+    },
+    "required": ["data", "query"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "result": { "description": "The query result. null if the query matched nothing. If truncated, an array result's last element is a { truncated: true, originalLength, returned } marker object." },
+      "truncated": { "type": "boolean", "description": "true if the serialized result exceeded 700,000 characters and was cut." }
+    },
+    "required": ["result", "truncated"]
+  }
+}

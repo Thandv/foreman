@@ -1,0 +1,37 @@
+{
+  "name": "html-extract",
+  "description": "Offline HTML main-content extraction and HTML-to-text/markdown conversion. Given raw HTML, strips script/style/nav/header/footer/aside/comments and decodes entities, then either renders the whole document ('extract: all') or runs a simple readability-style density scan to pick the single best-scoring content subtree ('extract: main', the default). Renders as plain text with block-level newline semantics, or as markdown (headings, lists, links, bold/italic, code blocks). Also returns every link found in the selected content and a word count. Uses a hand-written char-scanner tokenizer, not a real DOM or regex-based HTML parsing, so it tolerates unclosed/malformed tags and runs in linear time on large or adversarial input. Never executes any script/style content — it is discarded unread. Output is bounded: `text` is capped at 400,000 characters and `links` at 2000 entries, with `truncated: true` set if either cap was hit.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "html": { "type": "string", "description": "The raw HTML document or fragment to process." },
+      "mode": { "type": "string", "enum": ["text", "markdown"], "description": "'text' renders plain prose with block-level newlines; 'markdown' additionally renders headings, lists, links and emphasis." },
+      "extract": { "type": "string", "enum": ["main", "all"], "description": "'main' scores container subtrees (paragraph count, comma count, link-density penalty) and keeps only the best-scoring one. 'all' renders the whole stripped document. Defaults to 'all'." }
+    },
+    "required": ["html", "mode"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "title": { "type": ["string", "null"], "description": "The document's <title> text, or null if none was found." },
+      "text": { "type": "string", "description": "The rendered text or markdown." },
+      "links": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": { "href": { "type": "string" }, "text": { "type": "string" } },
+          "required": ["href", "text"]
+        }
+      },
+      "wordCount": { "type": "integer" },
+      "truncated": { "type": "boolean", "description": "true if text was cut at 400,000 characters or links at 2000 entries." }
+    },
+    "required": ["title", "text", "links", "wordCount", "truncated"]
+  }
+}

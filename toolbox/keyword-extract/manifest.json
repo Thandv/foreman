@@ -1,0 +1,64 @@
+{
+  "name": "keyword-extract",
+  "description": "RAKE (Rapid Automatic Keyword Extraction, Rose et al. 2010) keyword-phrase extraction from English text. Splits text into candidate phrases at stopwords and punctuation, scores each word by (co-occurrence degree + frequency) / frequency, and scores each phrase as the sum of its words' scores. Returns ranked keyword phrases and ranked individual words. Use this to pull out the salient multi-word terms from a document or query without an LLM call.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "The text to extract keywords from."
+      },
+      "top": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum number of ranked phrases/words to return. Defaults to 50; hard-capped at 500 regardless of what is requested."
+      },
+      "language": {
+        "type": "string",
+        "enum": ["en"],
+        "description": "Stopword list to use. Only \"en\" is supported. Defaults to \"en\"."
+      }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "keywords": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "phrase": { "type": "string" },
+            "score": { "type": "number" }
+          },
+          "required": ["phrase", "score"]
+        },
+        "description": "Candidate keyword phrases, ranked by RAKE score descending."
+      },
+      "words": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "word": { "type": "string" },
+            "score": { "type": "number" }
+          },
+          "required": ["word", "score"]
+        },
+        "description": "Individual content words, ranked by (degree+frequency)/frequency descending."
+      },
+      "truncated": {
+        "type": "boolean",
+        "description": "true if the full candidate set was longer than the returned keywords/words lists (i.e. the top-N or 500-entry hard cap cut something)."
+      }
+    },
+    "required": ["keywords", "words", "truncated"]
+  }
+}

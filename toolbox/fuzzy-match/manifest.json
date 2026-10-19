@@ -1,0 +1,41 @@
+{
+  "name": "fuzzy-match",
+  "description": "Offline fuzzy string matching and ranking, fzf-style. Given a query and a list of candidate strings (or objects plus a dotted key path to a string field), scores every candidate that contains the query as a (possibly non-contiguous) subsequence of its characters, with bonuses for word-boundary starts, camelCase humps, and consecutive-character runs, and gap penalties for skipped characters. Returns matches sorted best-first with the character positions that matched, so a caller can highlight them. Use for fuzzy filename/command/symbol filtering, not for edit-distance/typo-tolerant search (there is no substitution tolerance here — every query character must appear in order). Output is bounded: at most 50 matches by default (1000 hard cap regardless of the requested limit), and any candidate whose serialized value exceeds 200 characters has its value omitted (index-only) in the result.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "The characters to fuzzy-match, in order." },
+      "candidates": { "type": "array", "description": "Strings, or objects (use 'key' to name a dotted path to a string field)." },
+      "limit": { "type": "integer", "description": "Max number of matches to return, best-first. Defaults to 50; hard-capped at 1000 regardless of what is requested.", "minimum": 1 },
+      "key": { "type": "string", "description": "Dotted path (e.g. 'meta.name') into each candidate object naming the string to match against. Required if candidates are objects." }
+    },
+    "required": ["query", "candidates"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "matches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "value": { "description": "The original candidate. null when valueOmitted is true (its serialized form exceeded 200 characters) — use index to look it up instead." },
+            "valueOmitted": { "type": "boolean", "description": "true if value was too large (>200 serialized characters) to echo back and was omitted." },
+            "index": { "type": "integer" },
+            "score": { "type": "number" },
+            "positions": { "type": "array", "items": { "type": "integer" } }
+          },
+          "required": ["value", "valueOmitted", "index", "score", "positions"]
+        }
+      },
+      "truncated": { "type": "boolean", "description": "true if there were more matches than the (default 50 / max 1000) limit returned." }
+    },
+    "required": ["matches", "truncated"]
+  }
+}

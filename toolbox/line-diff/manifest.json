@@ -1,0 +1,35 @@
+{
+  "name": "line-diff",
+  "description": "Presentation-quality line-by-line diff between two text blobs (before/after), returning a list of same/add/remove lines suitable for a side-by-side or unified review view. Uses a bounded LCS algorithm that falls back to a linear prefix/suffix diff on very large inputs (over 250k LCS cells or 4000 total lines) instead of allocating an unbounded matrix, and caps the rendered output at 4000 lines with a note when a diff is larger than that. Not a patch/merge tool — output is for review display only.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "before": { "type": "string", "description": "Original text." },
+      "after": { "type": "string", "description": "Revised text." }
+    },
+    "required": ["before", "after"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "lines": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "enum": ["same", "add", "remove", "note"] },
+            "text": { "type": "string" }
+          },
+          "required": ["kind", "text"]
+        }
+      }
+    },
+    "required": ["lines"]
+  }
+}

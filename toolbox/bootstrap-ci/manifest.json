@@ -1,0 +1,59 @@
+{
+  "name": "bootstrap-ci",
+  "description": "Moving-block bootstrap confidence interval for the mean, median, or a Sharpe-like mean/stdev ratio of a numeric series (e.g. daily returns). Preserves short-range autocorrelation by resampling whole blocks rather than single points, so the interval reflects real sampling uncertainty on serially-correlated data. Deterministic and offline: a seeded 32-bit PRNG makes the same input always produce the same output — use this to put an honest error bar on an estimate, not to generate randomness for its own sake.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "series": {
+        "type": "array",
+        "items": { "type": "number" },
+        "minItems": 2,
+        "description": "The observed series (e.g. per-period returns)."
+      },
+      "statistic": {
+        "type": "string",
+        "enum": ["mean", "median", "sharpe"],
+        "description": "Statistic to bootstrap. 'sharpe' is a raw mean/stdev(sample) ratio on the series as given — annualise separately if needed."
+      },
+      "blockSize": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Block length for the moving-block resample. Defaults to max(2, round(0.05 * len(series))). Values below 2 are raised to 2, values above len(series) lowered to it."
+      },
+      "iterations": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000,
+        "description": "Number of bootstrap resamples. Defaults to 1000."
+      },
+      "level": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence level, e.g. 0.95 for a 95% interval. Defaults to 0.95."
+      },
+      "seed": {
+        "type": "integer",
+        "description": "Seed for the deterministic PRNG. Defaults to 42 if omitted — omitting it does NOT mean random; it means the fixed default seed."
+      }
+    },
+    "required": ["series", "statistic"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "estimate": { "type": "number", "description": "The statistic computed on the original (unresampled) series." },
+      "lo": { "type": "number", "description": "Lower bound of the confidence interval." },
+      "hi": { "type": "number", "description": "Upper bound of the confidence interval." },
+      "se": { "type": "number", "description": "Bootstrap standard error (sample stdev of the resampled statistic)." },
+      "level": { "type": "number", "description": "The confidence level used." }
+    },
+    "required": ["estimate", "lo", "hi", "se", "level"]
+  }
+}

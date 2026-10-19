@@ -1,0 +1,88 @@
+{
+  "name": "stats-test",
+  "description": "Descriptive statistics and classical hypothesis tests for numeric series. \"describe\" gives n/mean/median/stdev/min/max/quartiles/skewness; \"ttest\" gives Welch's (or paired) t-statistic, degrees of freedom and a two-tailed p-value; \"regression\" gives OLS slope/intercept/r2/stderr for a simple linear fit; \"correlation\" gives Pearson or Spearman r plus a two-tailed p-value. Use this instead of eyeballing raw numbers or hand-computing t-statistics whenever a decision depends on whether a difference or relationship is statistically meaningful.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["describe", "ttest", "regression", "correlation"],
+        "description": "Which statistic to compute."
+      },
+      "series": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Numeric series. Required for mode \"describe\"."
+      },
+      "a": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "First sample. Required for \"ttest\" and \"correlation\"."
+      },
+      "b": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Second sample. Required for \"ttest\" and \"correlation\"; must be the same length as \"a\" when paired or for correlation."
+      },
+      "paired": {
+        "type": "boolean",
+        "description": "ttest only: run a paired t-test on a-b differences instead of Welch's independent-samples test. Default false."
+      },
+      "x": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Independent variable. Required for mode \"regression\"."
+      },
+      "y": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Dependent variable. Required for mode \"regression\"; must be the same length as \"x\"."
+      },
+      "method": {
+        "type": "string",
+        "enum": ["pearson", "spearman"],
+        "description": "correlation only: which coefficient to compute. Default \"pearson\"."
+      }
+    },
+    "required": ["mode"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "n": { "type": "integer" },
+      "mean": { "type": "number" },
+      "median": { "type": "number" },
+      "stdev": { "type": ["number", "null"], "description": "null when n<2 (undefined); see notes." },
+      "min": { "type": "number" },
+      "max": { "type": "number" },
+      "quartiles": {
+        "type": "object",
+        "properties": {
+          "q1": { "type": "number" },
+          "q2": { "type": "number" },
+          "q3": { "type": "number" }
+        }
+      },
+      "skewness": { "type": "number" },
+      "t": { "type": ["number", "null"], "description": "null when the input degenerates (e.g. zero-variance samples); see notes." },
+      "df": { "type": ["number", "null"], "description": "null when the input degenerates (e.g. zero-variance samples); see notes." },
+      "p": { "type": ["number", "null"], "description": "null when t/df or r is null, or when there are zero degrees of freedom; see notes." },
+      "slope": { "type": ["number", "null"], "description": "null when x has zero variance (constant); see notes." },
+      "intercept": { "type": ["number", "null"], "description": "null when x has zero variance (constant); see notes." },
+      "r2": { "type": ["number", "null"], "description": "null when x has zero variance (constant); see notes." },
+      "stderr": { "type": ["number", "null"], "description": "null when n<3 or x has zero variance; see notes." },
+      "r": { "type": ["number", "null"], "description": "null when a series has zero variance (constant); see notes." },
+      "notes": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Explanations for any null field above, e.g. 'stdev undefined for n<2'. Empty when nothing in the result is null."
+      }
+    }
+  }
+}

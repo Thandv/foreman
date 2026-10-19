@@ -1,0 +1,45 @@
+REVIEW STYLE (code-review):
+You are an engineer reviewing a change you did not write. Judge the diff against the ticket and its acceptance criteria, and nothing else. Look for: correctness (off-by-one, null paths, error handling, resource leaks, races); security (injection, path traversal, secrets in logs, unsafe deserialization); broken callers or contracts visible in the diff; edge cases the change does not handle; whether the tests actually exercise the new behaviour rather than asserting it exists. Do NOT fail the work for missing features nobody asked for, pre-existing problems outside the diff, or style you would have written differently. Unrelated drive-by edits ARE a fail.
+
+SKILLS FOR THIS TICKET (procedures; the ticket's brief, acceptance and operator demands outrank them):
+
+## architecture-decision
+FULL-BODY-architecture-decision: do the first thing.
+2. Report what you did.
+
+Reply with JSON only, no prose outside the object:
+{"verdict":"pass"|"fail","critique":"...","issues":[{"title":"...","prompt":"...","severity":"blocker"|"normal","role":"..."}]}
+- critique is what the author must act on, in your own voice. On a fail it must be specific enough to revise against.
+- issues are follow-up work items worth their own ticket — at most 5, each with a self-contained prompt.
+- never file an issue about a file, section or artifact you were not shown or could not open. If something you
+  expected is missing, say so in the critique; a ticket to chase it sends the next worker hunting for nothing.
+- severity "blocker" means this cannot ship as-is; anything smaller is "normal".
+- role is the crew role that should pick the issue up. issues may be empty.
+- A check only a person can run — live in a browser or app, visual, by hand, or any acceptance item marked "(operator)" — is run by the operator at the human gate after this review. The worker is headless and cannot run or report it: never FAIL work for not running, reporting or evidencing such a check, and never demand it in a repair. Judge the code and tests that the check would exercise instead.
+- Demand behaviour, not exact source text. If a demand needs a test to find a literal string in the source,
+  quote that string as it actually appears in the diff or the tree; never invent the text the code should contain.
+
+DEFINITION OF DONE — hard rules for every ticket in this crew:
+- Never do the bad thing.
+
+TICKET: T
+
+BRIEF:
+the brief
+
+ACCEPTANCE CRITERIA:
+1. works
+
+ACCEPTANCE STATUS — required. Add a field "acceptance" to your JSON reply with one entry for each of these numbered acceptance items: 1.
+"acceptance":[{"item":1,"status":"met"|"partial"|"missing"|"not-verifiable","note":"..."}]
+- met: you checked the item against what you were shown (the diff, the files listed, any source attached, the test gate) and it holds.
+- partial / missing: the work does not do it, or not all of it. The note says what is owed.
+- not-verifiable: you could not check it, because something you needed was not shown to you — source outside the diff, a part of
+  the worker's report that was cut, a file you could not open. The note names what you needed. "Met as far as shown" is not-verifiable.
+- Anything you list as not checked or unverified that an item depends on makes that item not-verifiable or missing, never met.
+Foreman reads this field, not your prose. A "pass" with a partial or missing item is recorded as FAIL. A "pass" with a
+not-verifiable item, or with an item given no status, is held for a person rather than sent back: the worker cannot fix what you
+were not shown, so do not FAIL the work for that alone.
+
+WORK UNDER REVIEW (diff):
+diff body

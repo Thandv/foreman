@@ -1,0 +1,100 @@
+{
+  "name": "apply-fixes",
+  "description": "Applies a batch of exact-string find/replace edits to files under the current working directory, with a never-guess guard: a fix is only applied when its 'old' string occurs exactly once in the file. Zero occurrences reports NOTFOUND (or ALREADY if 'new' is already present), more than one occurrence reports AMBIGUOUS×N and is skipped rather than guessing which one to change. Paths must be relative to the working directory and may not resolve outside it (absolute paths and '..' escapes are refused). Use this after a review pass (e.g. find-artifacts) has produced verified, exact-string fixes to apply mechanically.",
+  "input": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Path to the file, relative to the working directory."
+            },
+            "fixes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "old": {
+                    "type": "string"
+                  },
+                  "new": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "old",
+                  "new"
+                ]
+              }
+            }
+          },
+          "required": [
+            "path",
+            "fixes"
+          ]
+        }
+      }
+    },
+    "required": [
+      "files"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "integer"
+      },
+      "skipped": {
+        "type": "integer"
+      },
+      "report": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "old": {
+              "type": "string",
+              "description": "The fix's 'old' string, truncated to 70 characters."
+            },
+            "status": {
+              "type": "string",
+              "description": "One of APPLIED, ALREADY, NOTFOUND, or AMBIGUOUS×N where N is the occurrence count."
+            }
+          },
+          "required": [
+            "path",
+            "old",
+            "status"
+          ]
+        }
+      }
+    },
+    "required": [
+      "applied",
+      "skipped",
+      "report"
+    ]
+  },
+  "entry": "tool.js",
+  "runtime": "node",
+  "version": 1,
+  "provenance": {
+    "taskId": null,
+    "runId": null,
+    "model": "hand-ported-by-agent",
+    "date": "2026-08-21T10:05:26.953Z"
+  },
+  "admit": {
+    "scannedAt": "2026-08-21T10:05:26.959Z",
+    "findings": []
+  }
+}

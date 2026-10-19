@@ -1,0 +1,88 @@
+{
+  "name": "find-artifacts",
+  "description": "Scans manuscript text for draft-merge damage: exact-duplicate paragraphs, near-duplicate paragraphs pasted in from a variant draft, truncated false-start paragraphs, and lines with unbalanced markdown-italic asterisks. Returns ranked CANDIDATES only — it never edits text and never decides that something is broken, because short repeated lines are often an intentional refrain, not damage. Call this before apply-fixes whenever a manuscript may have been assembled from multiple draft passes, then have a human or model judge each candidate.",
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Full manuscript text, one paragraph per non-empty line (matches the source manuscript's line model)."
+      },
+      "window": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200,
+        "description": "Sliding-window size (in paragraphs) for near-duplicate scanning. Defaults to 10."
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "paragraphs": {
+        "type": "integer",
+        "description": "Total number of paragraphs (non-empty, non-heading lines) scanned."
+      },
+      "candidates": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "exact-duplicate",
+                "near-duplicate",
+                "truncated-false-start",
+                "truncation-or-unbalanced"
+              ]
+            },
+            "index": {
+              "type": "integer",
+              "description": "0-based position of this candidate in the ranked list."
+            },
+            "line": {
+              "type": "integer",
+              "description": "Primary 1-based source line number for this candidate."
+            },
+            "snippet": {
+              "type": "string"
+            },
+            "detail": {
+              "type": "object",
+              "description": "Kind-specific evidence: lines, tag (likely-artifact | maybe-refrain), and similarity/words/flags/snippet2 depending on kind."
+            }
+          },
+          "required": [
+            "kind",
+            "index",
+            "line",
+            "snippet",
+            "detail"
+          ]
+        }
+      }
+    },
+    "required": [
+      "paragraphs",
+      "candidates"
+    ]
+  },
+  "entry": "tool.js",
+  "runtime": "node",
+  "version": 1,
+  "provenance": {
+    "taskId": null,
+    "runId": null,
+    "model": "hand-ported-by-agent",
+    "date": "2026-08-21T10:04:20.599Z"
+  },
+  "admit": {
+    "scannedAt": "2026-08-21T10:04:20.606Z",
+    "findings": []
+  }
+}

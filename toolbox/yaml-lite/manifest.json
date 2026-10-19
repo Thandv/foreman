@@ -1,0 +1,25 @@
+{
+  "name": "yaml-lite",
+  "description": "Offline parser for a deliberate SUBSET of YAML (full YAML is a large, ambiguous spec and is explicitly out of scope). Supports nested block maps and lists by indentation, inline flow collections ([a, b] and {k: v}), scalars (strings, numbers, booleans, null, quoted strings with backslash escapes), comments, and multi-line block scalars (| literal and > folded). Refuses — with a clear error rather than a wrong-but-plausible parse — anything from full YAML that this subset does not implement: anchors/aliases (&name / *name), tags (!!type), multi-document streams (---), and merge keys (<<). Because anchors/aliases are refused outright, the 'billion laughs' exponential-expansion class of YAML attack is structurally impossible here, not just mitigated. Returns both the parsed data and a list of any non-fatal warnings (e.g. a bare tab used for indentation, which YAML forbids). Both block-indentation nesting and inline flow-collection nesting are capped at 500 levels; a deeper document gets a clean 'nesting too deep' error instead of overflowing the call stack.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "The YAML-subset document text to parse." }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "data": { "description": "The parsed value: an object, array, string, number, boolean, or null." },
+      "warnings": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["data", "warnings"]
+  }
+}

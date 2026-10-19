@@ -1,0 +1,4 @@
+;; profile-git.sb — a git command Foreman itself runs IN a jail (add, write-tree, diff, bundle): no network at all.
+(version 1)
+(deny default)
+(import (string-append (param "PROFILE_DIR") "/base.sb"))

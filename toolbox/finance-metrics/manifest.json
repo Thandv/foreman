@@ -1,0 +1,58 @@
+{
+  "name": "finance-metrics",
+  "description": "Descriptive analysis only — not financial advice, and this tool never places an order. Computes standard portfolio/return risk metrics (volatility, Sharpe, Sortino, max drawdown, total/annualised return) from prices or a returns series you provide, a Pearson correlation matrix across multiple return series, and per-strategy win-rate/expectancy/Kelly-fraction stats from a list of recorded trades. Use it to sanity-check numbers on data you already have, not to fetch market data or decide what to trade.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "prices": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "A single price series. If 'returns' is omitted, returns are derived from consecutive prices."
+      },
+      "returns": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Per-period returns (e.g. 0.01 = 1%). Takes precedence over deriving returns from 'prices'."
+      },
+      "returnsByAsset": {
+        "type": "object",
+        "description": "Map of asset name -> per-period returns, all the same length, for a correlation matrix."
+      },
+      "trades": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "strategy": { "type": "string" },
+            "pnlPct": { "type": "number", "description": "P&L for the trade as a fraction, e.g. 0.02 = 2%." }
+          },
+          "required": ["strategy", "pnlPct"]
+        },
+        "description": "Recorded trades, for a per-strategy win-rate/expectancy/Kelly-fraction summary."
+      },
+      "riskFreeRate": { "type": "number", "description": "Annual risk-free rate used in Sharpe/Sortino. Defaults to 0." },
+      "periodsPerYear": { "type": "integer", "minimum": 1, "description": "Periods per year for annualisation. Defaults to 252 (trading days)." }
+    },
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "n": { "type": "integer" },
+      "totalReturn": { "type": "number" },
+      "annualizedReturn": { "type": "number" },
+      "volatility": { "type": "number" },
+      "sharpe": { "type": ["number", "null"] },
+      "sortino": { "type": ["number", "null"] },
+      "maxDrawdown": { "type": "number" },
+      "correlationMatrix": { "type": "object" },
+      "strategySummary": { "type": "object" },
+      "notes": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

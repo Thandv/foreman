@@ -1,0 +1,36 @@
+{
+  "name": "numeral-tic",
+  "description": "Counts the spelled numbers a manuscript leans on, per chapter and overall, so a repeated-numeral tic can be found and swept. Prose says 'eleven wagons', not '11 wagons', so spelled forms are what it counts; compounds like 'forty-one' are counted whole rather than as their parts, and 'one' is excluded because it is a pronoun far more often than a quantity. Reports uses per thousand words so a long chapter is not flagged merely for being long, and names the chapters where a sweep buys the most. Counting only - it never edits and cannot know which figures are load-bearing, so the judgement stays with a person. Feed every chapter of the book in one call.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": "claude-opus-5", "date": "2026-08-24T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-24T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "chapters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": { "path": { "type": "string" }, "text": { "type": "string" } },
+          "required": ["path", "text"],
+          "additionalProperties": false
+        }
+      },
+      "topN": { "type": "integer", "description": "How many numerals to report per chapter. Default 8." },
+      "minRate": { "type": "number", "description": "Uses per 1,000 words at or above which a numeral counts as leaned on. Default 2." }
+    },
+    "required": ["chapters"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "chapters": { "type": "integer" },
+      "overall": { "type": "array" },
+      "perChapter": { "type": "array" },
+      "worstChapters": { "type": "array" }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+node_modules
+# Runtime state (db, traces, tool usage/quarantine state, work jails) lives here
+# and is never tracked. The forged-tool catalog lives in toolbox/ and IS tracked.
+.foreman/
+*.db
+*.db-wal
+*.db-shm
+.foreman-cowork/

@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"sess-jail-out","cwd":"__JAIL__","tools":["Bash","Edit","Read","Write"],"mcp_servers":[],"permissionMode":"acceptEdits"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will record what I learned for next time."}],"usage":{"input_tokens":120,"output_tokens":15}},"session_id":"sess-jail-out"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Edit","input":{"file_path":"__JAIL__/README.md","old_string":"base","new_string":"base, edited"}}],"usage":{"input_tokens":11,"output_tokens":4}},"session_id":"sess-jail-out"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"The file __JAIL__/README.md has been updated."}]},"session_id":"sess-jail-out"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Write","input":{"file_path":"__OUTSIDE__/memory/notes.md","content":"remember: this repo uses tabs\n"}}],"usage":{"input_tokens":13,"output_tokens":9}},"session_id":"sess-jail-out"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","content":"File created successfully at: __OUTSIDE__/memory/notes.md"}]},"session_id":"sess-jail-out"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-jail-out","result":"Done. README updated and a note saved for next time.","total_cost_usd":0.0312,"num_turns":3}

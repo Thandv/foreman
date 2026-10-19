@@ -1,0 +1,31 @@
+{
+  "name": "continuity-check",
+  "description": "Cross-chapter consistency scanner for a multi-file book. Verifies chapter heading sequence (digits or spelled ordinals like 'Chapter Twenty-Three') against file order, unique non-empty chapter titles, and per-chapter word counts against an optional expected list; harvests proper nouns (capitalized mid-sentence at least once) and flags rare names within edit distance 1-2 of frequent ones as likely typos; tallies British/American and hyphenation spelling-variant pairs (grey/gray, toward/towards, defence/defense...) that appear in BOTH forms. Scan only — never edits. Feed every chapter of the book in reading order in one call.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": "claude-fable-5", "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "chapters": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "text": { "type": "string" } }, "required": ["path", "text"], "additionalProperties": false } },
+      "expectedCount": { "type": "integer" },
+      "expectedWords": { "type": "array", "items": { "type": "integer" } },
+      "minNameFreq": { "type": "integer", "description": "Names at/above this total count are 'established'; below it they are typo candidates. Default 5." }
+    },
+    "required": ["chapters"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "chapters": { "type": "integer" },
+      "sequenceIssues": { "type": "array" },
+      "titleIssues": { "type": "array" },
+      "wordCounts": { "type": "array" },
+      "nameVariants": { "type": "array" },
+      "spellingVariants": { "type": "array" }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "position-size",
+  "description": "Descriptive analysis only — not financial advice, and this tool never places an order. Computes a fractional-Kelly position-size multiplier from win-rate/avg-win/avg-loss statistics, a volatility-targeting multiplier, and an asymmetric risk-off de-risking multiplier, plus their product as a single combined multiplier. Use it to size a position you are already considering against your own risk caps, not to decide what to trade.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "winRate": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction of trades that were winners, e.g. 0.55." },
+      "avgWin": { "type": "number", "description": "Average winning trade magnitude (positive), as a fraction, e.g. 0.02." },
+      "avgLoss": { "type": "number", "description": "Average losing trade magnitude (non-negative; a signed value like -0.015 is rejected), as a fraction, e.g. 0.015." },
+      "samples": { "type": "integer", "minimum": 0, "description": "Number of closed trades this edge estimate is based on." },
+      "annualizedVol": { "type": "number", "description": "Recent annualised volatility of the position, for volatility-targeting sizing." },
+      "targetVol": { "type": "number", "description": "Target annualised volatility. 0 or omitted disables volatility-targeting (1.0x)." },
+      "riskOffScore": { "type": "number", "minimum": 0, "maximum": 1, "description": "Macro risk-off score in [0,1] (fraction of leading indicators firing). Omit for 1.0x (unknown = fail-safe)." },
+      "config": {
+        "type": "object",
+        "description": "Optional overrides for the sizing curve; see README for defaults.",
+        "properties": {
+          "fraction": { "type": "number" },
+          "targetKelly": { "type": "number" },
+          "minMult": { "type": "number" },
+          "maxMult": { "type": "number" },
+          "minSamples": { "type": "number" },
+          "volMinMult": { "type": "number" },
+          "volMaxMult": { "type": "number" },
+          "keepFullBelow": { "type": "number" },
+          "floorMult": { "type": "number" },
+          "aggressiveness": { "type": "number" },
+          "calmBoost": { "type": "number" }
+        }
+      }
+    },
+    "required": ["winRate", "avgWin", "avgLoss", "samples"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "kellyF": { "type": "number", "description": "Raw Kelly fraction f* = p - (1-p)/R. Negative means no edge." },
+      "kellyMult": { "type": "number", "description": "Clamped fractional-Kelly size multiplier. 1.0x if samples < minSamples." },
+      "volMult": { "type": "number", "description": "Volatility-targeting size multiplier. 1.0x if targetVol/annualizedVol unknown." },
+      "riskOffMult": { "type": "number", "description": "Risk-off de-risking multiplier. 1.0x if riskOffScore is omitted." },
+      "combined": { "type": "number", "description": "Product of kellyMult * volMult * riskOffMult." }
+    },
+    "required": ["kellyF", "kellyMult", "volMult", "riskOffMult", "combined"]
+  }
+}

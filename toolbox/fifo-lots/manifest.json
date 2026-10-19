@@ -1,0 +1,89 @@
+{
+  "name": "fifo-lots",
+  "description": "FIFO (first-in-first-out) lot matcher for a list of buy/sell orders in one or more symbols. Matches each sell against the oldest open buy lots, converting cost and proceeds via an optional per-order or per-date FX rate (defaulting to 1, i.e. no conversion, when no fx map is given at all). Useful for realised-gain/cost-basis bookkeeping on trade history you already have. An oversell (a sell exceeding the lots on hand) is reported as a structured error, not thrown, so the rest of the match still comes back. If a non-empty fx map IS given, any leg (buy or sell) whose own date has no per-order fx and no entry in the map is skipped and reported as a structured error naming the symbol and date, rather than silently defaulting to rate 1 and fabricating a gain or loss. Each event also reports buyFx/sellFx separately for auditability. Descriptive bookkeeping only — not tax or financial advice.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "orders": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "symbol": { "type": "string", "minLength": 1 },
+            "side": { "type": "string", "enum": ["buy", "sell"] },
+            "qty": { "type": "number" },
+            "price": { "type": "number" },
+            "date": { "type": "string", "description": "ISO date string, e.g. 2026-01-15. Orders are processed in date order." },
+            "fx": { "type": "number", "exclusiveMinimum": 0, "description": "Per-order FX override (a positive rate). Takes precedence over the top-level fx map." }
+          },
+          "required": ["symbol", "side", "qty", "price", "date"]
+        }
+      },
+      "fx": {
+        "type": "object",
+        "description": "Map of date -> FX rate, applied to any order on that date without its own 'fx'. When omitted entirely (or given as an empty object), every leg defaults to 1 (no conversion). When given non-empty, a leg (buy or sell) with no per-order 'fx' and no entry for its own date is NOT defaulted to 1 — it is skipped and reported in 'errors' instead, to avoid fabricating a gain or loss from a missing rate."
+      }
+    },
+    "required": ["orders"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "events": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "symbol": { "type": "string" },
+            "qty": { "type": "number" },
+            "buyDate": { "type": "string" },
+            "sellDate": { "type": "string" },
+            "cost": { "type": "number" },
+            "proceeds": { "type": "number" },
+            "gain": { "type": "number" },
+            "buyFx": { "type": "number", "description": "The FX rate applied to the buy leg's cost, for auditability." },
+            "sellFx": { "type": "number", "description": "The FX rate applied to the sell leg's proceeds, for auditability." }
+          },
+          "required": ["symbol", "qty", "buyDate", "sellDate", "cost", "proceeds", "gain", "buyFx", "sellFx"]
+        }
+      },
+      "leftoverLots": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "symbol": { "type": "string" },
+            "qty": { "type": "number" },
+            "price": { "type": "number" },
+            "date": { "type": "string" },
+            "fx": { "type": "number" }
+          },
+          "required": ["symbol", "qty", "price", "date", "fx"]
+        },
+        "description": "Buy lots not yet fully matched against a sell, oldest first."
+      },
+      "errors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "symbol": { "type": "string" },
+            "date": { "type": "string" },
+            "side": { "type": "string" },
+            "message": { "type": "string" }
+          },
+          "required": ["symbol", "date", "side", "message"]
+        },
+        "description": "Oversells and skipped orders, reported instead of thrown."
+      }
+    },
+    "required": ["events", "leftoverLots", "errors"]
+  }
+}

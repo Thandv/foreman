@@ -1,0 +1,107 @@
+{
+  "name": "parse-manuscript",
+  "description": "Parses a markdown manuscript into structured chapters, scenes, paragraphs and inline spans (plain vs italic). Recognizes chapter headings (PROLOGUE, CHAPTER N, INTERLUDE, CODA, PART X, EPILOGUE), a subtitle/dateline immediately under a heading, '---' scene breaks, and markdown italics ('*..*' / '_.._') while leaving bold ('**..**') as plain text. Use this first when a downstream tool (e.g. attribute-dialogue) needs the manuscript's structure rather than raw text.",
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Full manuscript markdown text."
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Book title, if a top-level '# Title' heading (not itself a chapter heading) appears in the first 15 lines."
+      },
+      "chapters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "subtitle": {
+              "type": "string"
+            },
+            "dateline": {
+              "type": "string"
+            },
+            "scenes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paragraphs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "spans": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "text": {
+                                "type": "string"
+                              },
+                              "italic": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "italic"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "spans"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "paragraphs"
+                ]
+              }
+            }
+          },
+          "required": [
+            "number",
+            "title",
+            "scenes"
+          ]
+        }
+      }
+    },
+    "required": [
+      "chapters"
+    ]
+  },
+  "entry": "tool.js",
+  "runtime": "node",
+  "version": 1,
+  "provenance": {
+    "taskId": null,
+    "runId": null,
+    "model": "hand-ported-by-agent",
+    "date": "2026-08-21T10:06:35.091Z"
+  },
+  "admit": {
+    "scannedAt": "2026-08-21T10:06:35.097Z",
+    "findings": []
+  }
+}

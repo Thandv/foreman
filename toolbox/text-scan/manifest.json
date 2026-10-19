@@ -1,0 +1,41 @@
+{
+  "name": "text-scan",
+  "description": "Static prose scanner for text you are about to trust (fetched pages, pasted documents, tool output, memory content). Flags prompt-injection phrasing (e.g. instructions to disregard prior context, fake embedded tool-call markup, chat-template role overrides, instructions to send data to an external URL) and suspicious invisible/bidi Unicode characters used to hide text. Deliberately narrower than a general security scanner: command-shaped concerns (piped installers, destructive shell commands, credential exfiltration) are already covered by Foreman's own admission gate and are not duplicated here. Never executes or evaluates the scanned text.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "The text to scan." },
+      "mode": { "type": "string", "enum": ["text", "markdown"], "description": "'markdown' additionally annotates findings that fall inside a fenced code block. Defaults to 'text'." }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "line": { "type": "integer" },
+            "rule": { "type": "string" },
+            "severity": { "type": "string", "enum": ["block", "warn"] },
+            "description": { "type": "string" },
+            "excerpt": { "type": "string" }
+          },
+          "required": ["line", "rule", "severity", "description", "excerpt"]
+        }
+      },
+      "worst": { "type": ["string", "null"], "enum": ["block", "warn", null], "description": "The worst severity across ALL findings, even ones dropped by the 'findings' cap below." },
+      "truncated": { "type": "boolean", "description": "True if more than 200 findings were found and the 'findings' array was capped." },
+      "totalFindings": { "type": "integer", "description": "The true total number of findings, before the 200-item cap on the 'findings' array." }
+    },
+    "required": ["findings", "worst", "truncated", "totalFindings"]
+  }
+}

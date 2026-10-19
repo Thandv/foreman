@@ -1,0 +1,44 @@
+{
+  "name": "fdr-correct",
+  "description": "Benjamini-Hochberg false-discovery-rate correction for a batch of p-values from simultaneous hypothesis tests (e.g. many asset/timeframe/estimator cells tested at once). Given raw p-values and a significance level, returns which tests survive FDR control and each test's q-value. Use whenever you have more than a handful of p-values and need to avoid inflated false-positive rates from multiple comparisons — do not eyeball raw p-values against alpha in that situation.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "pvalues": {
+        "type": "array",
+        "items": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minItems": 1,
+        "description": "Raw p-values, one per hypothesis test."
+      },
+      "alpha": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Target false-discovery-rate level. Defaults to 0.05."
+      }
+    },
+    "required": ["pvalues"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "rejected": {
+        "type": "array",
+        "items": { "type": "boolean" },
+        "description": "Per test, whether it is rejected (declared a discovery) at the given FDR level. Same order as the input pvalues."
+      },
+      "qvalues": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Per test, the BH q-value (smallest FDR at which it would be rejected). Same order as the input pvalues."
+      }
+    },
+    "required": ["rejected", "qvalues"]
+  }
+}

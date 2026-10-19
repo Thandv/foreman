@@ -1,0 +1,47 @@
+{
+  "name": "glob-match",
+  "description": "Glob pattern matching against a list of paths, supporting *, ?, ** (directory-spanning), {a,b} brace expansion, [ranges] character classes and leading ! negation. Returns which paths matched which pattern, and which paths matched nothing. Use this instead of ad-hoc string matching whenever you need shell-glob-style filtering of file paths.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "patterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "description": "Glob patterns to test, e.g. \"src/**/*.ts\" or \"!**/*.test.ts\" (leading ! negates)."
+      },
+      "paths": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "description": "Slash-separated paths to test the patterns against."
+      },
+      "dot": {
+        "type": "boolean",
+        "description": "When false (default), * and ** do not match path segments starting with a dot (dotfile default-exclusion, as in most shells)."
+      }
+    },
+    "required": ["patterns", "paths"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "matches": {
+        "type": "object",
+        "description": "Map from each non-negated pattern to the array of paths it matched (after applying any negation patterns)."
+      },
+      "unmatched": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Paths that no pattern matched."
+      }
+    },
+    "required": ["matches", "unmatched"]
+  }
+}

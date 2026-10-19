@@ -1,0 +1,28 @@
+{
+  "name": "prose-gate",
+  "description": "Runnable implementation of an AI-tics and prose-gate checklist for any markdown/plain-text manuscript. Reports 'ban' findings (coined not-X words, contrast formulas, negation catalogues, padded kind/sort/particular wrappers — fix all) and 'review' findings (the-way similes, as-if/for-a-moment crutches, gerund-as-noun, stock body-reaction kit, telling adverbs, copula dodges, AI vocabulary, trailing-participle analysis, false suspense, cliches, coordination chains, fragment stacks, rule-of-three triads), plus density stats (em-dash/thing/intensifier/filter-word counts per 1000 words) and cadence stats (sentence-length burstiness, monotone runs, low-punctuation long sentences). Findings on System-readout lines (bold-only or ALL-CAPS) carry formatException:true per the gate's format exception. Scan only — never edits.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": "claude-fable-5", "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "Manuscript text (markdown or plain)." },
+      "label": { "type": "string", "description": "Echoed back, e.g. a chapter filename." }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "label": { "type": ["string", "null"] },
+      "words": { "type": "integer" },
+      "findings": { "type": "array", "items": { "type": "object", "properties": { "line": { "type": "integer" }, "rule": { "type": "string" }, "severity": { "type": "string", "enum": ["ban", "review"] }, "excerpt": { "type": "string" }, "formatException": { "type": "boolean" } } } },
+      "density": { "type": "object" },
+      "cadence": { "type": "object" }
+    }
+  }
+}

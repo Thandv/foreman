@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "foreman",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["FOREMAN_HOME=.foreman", "node", "src/cli.ts", "serve"],
+      "port": 4100
+    }
+  ]
+}

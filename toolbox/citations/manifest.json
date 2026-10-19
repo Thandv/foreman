@@ -1,0 +1,71 @@
+{
+  "name": "citations",
+  "description": "Two offline modes for checking that a document's claims trace to real sources, without ever fetching a URL itself. Mode 'extract': given markdown text, finds every link and every quoted claim (>= 8 words) near a link, so you know what needs verifying. Mode 'match': given claimed quotes and page text YOU supply for each source URL, checks whether each quote actually appears on that page (normalized substring match). This tool does no network access — you must obtain page text yourself (e.g. with a fetch tool) and pass it in for mode 'match'.",
+  "runtime": "node",
+  "entry": "tool.js",
+  "version": 1,
+  "provenance": { "taskId": null, "runId": null, "model": null, "date": "2026-08-21T00:00:00.000Z" },
+  "admit": { "scannedAt": "2026-08-21T00:00:00.000Z", "findings": [] },
+  "input": {
+    "type": "object",
+    "properties": {
+      "mode": { "type": "string", "enum": ["extract", "match"] },
+      "markdown": { "type": "string", "description": "Required for mode 'extract': the markdown document text." },
+      "claims": {
+        "type": "array",
+        "description": "Required for mode 'match': claims to verify.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "quote": { "type": "string" },
+            "sourceUrl": { "type": "string" }
+          },
+          "required": ["quote", "sourceUrl"]
+        }
+      },
+      "sources": {
+        "type": "object",
+        "description": "Required for mode 'match': map of url -> page text you already fetched. May be raw HTML; tags are stripped before comparison."
+      }
+    },
+    "required": ["mode"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "links": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": { "url": { "type": "string" }, "line": { "type": "integer" } },
+          "required": ["url", "line"]
+        }
+      },
+      "claims": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "quote": { "type": "string" },
+            "line": { "type": "integer" },
+            "sourceUrl": { "type": "string" }
+          },
+          "required": ["quote", "line", "sourceUrl"]
+        }
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "quote": { "type": "string" },
+            "sourceUrl": { "type": "string" },
+            "found": { "type": "boolean" }
+          },
+          "required": ["quote", "sourceUrl", "found"]
+        }
+      }
+    }
+  }
+}

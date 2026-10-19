@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"sess-jail-in","cwd":"__JAIL__","tools":["Bash","Edit","Read","Write"],"mcp_servers":[],"permissionMode":"acceptEdits"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will update the README."}],"usage":{"input_tokens":120,"output_tokens":15}},"session_id":"sess-jail-in"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"__OUTSIDE__/reference.md"}}],"usage":{"input_tokens":9,"output_tokens":3}},"session_id":"sess-jail-in"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Edit","input":{"file_path":"__JAIL__/README.md","old_string":"base","new_string":"base, edited"}}],"usage":{"input_tokens":11,"output_tokens":4}},"session_id":"sess-jail-in"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","content":"The file __JAIL__/README.md has been updated."}]},"session_id":"sess-jail-in"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_03","name":"Write","input":{"file_path":"docs/notes.md","content":"in the jail, by a relative path\n"}}],"usage":{"input_tokens":13,"output_tokens":9}},"session_id":"sess-jail-in"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-jail-in","result":"Done. README updated.","total_cost_usd":0.0212,"num_turns":3}

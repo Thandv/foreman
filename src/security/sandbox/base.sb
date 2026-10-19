@@ -1,0 +1,98 @@
+;; base.sb — the part every Foreman sandbox profile shares. Imported, never used alone:
+;;   (import (string-append (param "PROFILE_DIR") "/base.sb"))
+;; SBPL facts this file relies on, all observed on macOS 14.7.8 (see results.md):
+;;   * the LAST rule that matches an operation decides it, so order below is the policy;
+;;   * paths are matched as the kernel resolves them: pass REAL paths (/private/tmp, /private/var, never /tmp, /var);
+;;   * a sandbox is inherited by every child and can only be tightened by a nested one.
+;;
+;; Parameters (-D NAME=value), every path already through realpath:
+;;   JAIL          required  the run's working directory: read + write
+;;   TMP           required  the run's private TMPDIR: read + write
+;;   RUNHOME       required  the run's private HOME: read + write
+;;   FOREMAN_HOME  required  Foreman's state directory: no read, no write (the jail inside it is given back)
+;;   REAL_REPO     optional  the repository the jail was cloned from: only its .git/objects is readable (alternates)
+;;   REAL_GIT      optional  a WORKTREE jail's real git directory (<repo>/.git): readable, never writable, so
+;;                           `git status`/`log`/`diff` work in the jail and `git add`/`commit`/`update-ref` cannot touch the real repo
+;;   RO_1 … RO_4   optional  extra read-only trees (Foreman's own source for the slot wrapper, a toolchain under the home)
+;;   RW_1, RW_2    optional  extra read-write trees (use sparingly; each one is a hole)
+
+(define (opt name) (if (param name) (param name) "/var/empty/foreman-sandbox-unset"))
+
+;; "/a/b/c" -> ("/a" "/a/b"): the directories above a path. A tool that resolves a path (node's realpath, git, getcwd)
+;; stats each of them; it must not be able to LIST them.
+(define (ancestors p)
+  (let loop ((i (- (string-length p) 1)) (acc '()))
+    (cond ((<= i 0) acc)
+          ((char=? (string-ref p i) #\/) (loop (- i 1) (cons (substring p 0 i) acc)))
+          (else (loop (- i 1) acc)))))
+(define (allow-ancestors p)
+  (for-each (lambda (a) (allow file-read-metadata (literal a))) (ancestors p)))
+(define (read-only p) (allow-ancestors p) (allow file-read* (subpath p)))
+(define (read-write p) (allow-ancestors p) (allow file-read* file-write* (subpath p)))
+
+;; ---------------------------------------------------------------- processes
+(allow process-fork)
+(allow process-exec)
+;; launchd answers a sandboxed launchctl: job creation, kill and kickstart are refused by launchd itself, but
+;; `launchctl bootout gui/<uid>/<label>` unloaded a LaunchAgent from inside this sandbox (observed). No SBPL rule
+;; covers the bootstrap port, so the tool is refused; a copy of it is killed by the OS at exec (observed).
+;; This refuses the PROGRAM only: a program that makes the same request itself is not stopped (README, "Known
+;; limits of the test sandbox").
+(deny process-exec (literal "/bin/launchctl"))
+;; signals and process inspection: only among the processes of this same sandbox
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow sysctl-read)
+
+;; ---------------------------------------------------------------- reads
+;; 1. The operating system and the toolchains (/System, /usr, /bin, /Library, /opt/homebrew, /Applications,
+;;    /private/etc, /private/var/db/timezone, the dyld cache under /System/Volumes/Preboot): readable.
+(allow file-read*)
+;; 2. Everywhere a person's data lives: not readable, not listable, not stat-able.
+(deny file-read*
+  (subpath "/Users")
+  (subpath "/Volumes")
+  (subpath "/System/Volumes/Data/Users")
+  (subpath "/System/Volumes/Data/Volumes")
+  (subpath "/System/Volumes/Data/private/tmp")
+  (subpath "/System/Volumes/Data/private/var/folders")
+  (subpath "/private/tmp")
+  (subpath "/private/var/folders")
+  ;; /var/tmp is the third world-writable temp dir: any program of the user's may leave a file there. It was left
+  ;; readable (probe: a sandboxed `cat /private/var/tmp/<file the user owns>` printed it; `ls` listed the directory).
+  ;; Nothing sandboxed can have written there, so nothing a suite made is lost by closing it.
+  (subpath "/private/var/tmp")
+  (subpath "/System/Volumes/Data/private/var/tmp")
+  (subpath "/private/var/root")
+  (subpath "/private/var/db/sudo")
+  (subpath "/opt/homebrew/var")
+  (subpath "/usr/local/var")
+  (subpath "/Library/Keychains"))
+;; 3. Read-only things given back.
+;; The two roots themselves can be stat-ed, never listed or read into: a program that refuses to work on "/Users" or
+;; "/Volumes" has to be able to see that they are directories. Probe: Kiln's gate (test/workspaces.test.ts) opens
+;; both and expects "refused: a system directory" (403); with stat denied it got "no such folder" (400) and failed.
+(allow file-read-metadata (literal "/Users") (literal "/Volumes"))
+(read-only (opt "RO_1"))
+(read-only (opt "RO_2"))
+(read-only (opt "RO_3"))
+(read-only (opt "RO_4"))
+(read-only (string-append (opt "REAL_REPO") "/.git/objects"))
+(read-only (opt "REAL_GIT"))
+;; 4. Foreman's own state, wherever it is and whatever step 3 gave back around it.
+(deny file-read* file-write* (subpath (param "FOREMAN_HOME")))
+
+;; ---------------------------------------------------------------- writes (an allow-list; nothing else is writable)
+(read-write (param "JAIL"))
+(read-write (param "TMP"))
+(read-write (param "RUNHOME"))
+(read-write (opt "RW_1"))
+(read-write (opt "RW_2"))
+(allow file-write-data (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") (literal "/dev/tty"))
+(allow file-ioctl (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))
+
+;; ---------------------------------------------------------------- system services (mach)
+;; The smallest set found: with NO mach-lookup at all, node --test, npm, git commit, make + clang++ and swiftc still ran;
+;; only user-name lookups failed (os.userInfo(), id -un, python getpass). This one service restores them.
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo"))
