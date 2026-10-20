@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config } from './config.ts';
 import { PINNED, pinnedEnv } from './isolate.ts';
@@ -66,7 +66,22 @@ export function installIsCurrent(repoDir: string): boolean {
   return fs.statSync(hidden).mtimeMs >= fs.statSync(lock).mtimeMs;
 }
 
-/** Is node_modules ignored here? If it is tracked, we must not touch it. */
+/**
+ * Does git track anything under `rel`? Only a tracked tree is already in the worktree. Answered by exit status with
+ * the listing discarded, so a huge tracked tree costs no buffer; null when git could not say (exit 1 alone means
+ * "no match").
+ */
+function isTracked(repoDir: string, rel: string): Promise<boolean | null> {
+  return new Promise((resolve) => {
+    const child = spawn('git', [...PINNED, 'ls-files', '--error-unmatch', '--', rel], {
+      cwd: repoDir, env: pinnedEnv(), stdio: 'ignore',
+    });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => resolve(code === 0 ? true : code === 1 ? false : null));
+  });
+}
+
+/** Is node_modules ignored here? */
 async function isIgnored(repoDir: string, rel: string): Promise<boolean> {
   try {
     // Pinned (isolate.ts): the repo's config is the one every jail can write, and `check-ignore` reads the index,
@@ -75,6 +90,26 @@ async function isIgnored(repoDir: string, rel: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * node_modules is not ignored, so the tree placed in the jail would show up as untracked files in its diff. Exclude it
+ * through the repository's info/exclude (shared by its worktrees, never committed). Returns the sentence for the reason.
+ */
+async function keepOutOfDiff(jailDir: string): Promise<string> {
+  const note = '; node_modules is not ignored by git, so it is excluded from the diff via .git/info/exclude';
+  try {
+    const { stdout } = await exec('git', [...PINNED, 'rev-parse', '--git-path', 'info/exclude'], { cwd: jailDir, env: pinnedEnv() });
+    const file = path.resolve(jailDir, stdout.trim());
+    const have = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    if (!have.split('\n').includes('/node_modules')) {
+      await fsp.mkdir(path.dirname(file), { recursive: true });
+      await fsp.appendFile(file, `${have === '' || have.endsWith('\n') ? '' : '\n'}/node_modules\n`);
+    }
+    return note;
+  } catch {
+    return '; node_modules is not ignored by git, so it may show up in the diff (could not exclude it)';
   }
 }
 
@@ -320,9 +355,11 @@ export async function provisionDeps(
   // show up as a change the operator never made. Checked before the
   // existence test so the operator gets the specific reason, not just
   // "something is already there".
-  if (!(await isIgnored(repoDir, 'node_modules'))) {
-    return done(false, null, 'node_modules is tracked by git; leaving it alone');
-  }
+  const tracked = await isTracked(repoDir, 'node_modules');
+  if (tracked === null) return done(false, null, 'could not determine whether node_modules is tracked by git; leaving it alone');
+  if (tracked) return done(false, null, 'node_modules is tracked by git; leaving it alone');
+  // Neither tracked nor ignored: the placed tree would be an untracked change in the jail's diff.
+  const unignored = !(await isIgnored(repoDir, 'node_modules'));
   // A tree from before links were copied as written is replaced, once a tree to replace it with is in hand: its
   // tools are links out of the jail, dead under the sandbox and shared with every other jail without it.
   const stale = mode === 'clone' && hasLinksOut(target, jailDir);
@@ -335,7 +372,8 @@ export async function provisionDeps(
   const put = async (from: string): Promise<string> => {
     const how = await place(from, target, mode, say, opts.cloneBin === undefined ? cloneBinFor() : opts.cloneBin);
     return (how === 'copy' ? ' by plain copy (no copy-on-write here)' : '') +
-      (stale ? ', replacing a tree whose .bin links led out of the jail' : '');
+      (stale ? ', replacing a tree whose .bin links led out of the jail' : '') +
+      (unignored ? await keepOutOfDiff(jailDir) : '');
   };
 
   // 1. The repo's own tree, when it matches its lockfile.
