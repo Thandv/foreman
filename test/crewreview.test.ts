@@ -2007,30 +2007,27 @@ test('a daemon stop during the non-binding shadow review interrupts nothing: the
 test("a reviewer cut off by the run's own deadline is recorded as missing, not passed over in silence", { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
   const { dir } = slowAdvocate();
-  // The stub says when each call has begun, so the deadline is fired by what the chain is doing, not by a timer:
-  // the advocate is open and the other reviewer has answered. The advocate sleeps far past the test's own timeout.
+  // The deadline is fired by what the chain is doing, not by a timer: the advocate's call is open (the stub says so)
+  // and the other reviewer's answer is on record — its 'review' receipt is written as its call returns, so from then
+  // on it is a survivor whatever the deadline does. A marker the stub writes after its reply is not enough: the abort
+  // can beat the parent reading that reply, and then no reviewer survives and the split is never reached.
+  // The advocate sleeps far past the test's own timeout.
   const started = path.join(dir, 'advocate-started');
-  const answered = path.join(dir, 'senior-answered');
-  fs.writeFileSync(
-    path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 120;; esac\ncat "${dir}/pass.json"\ntouch "${answered}"\n`,
-  );
+  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 120;; esac\ncat "${dir}/pass.json"\n`);
   const store = new Store(':memory:');
   try {
     const { task, runId } = ticket(store);
     const ac = new AbortController();
     const review = crewReview({ task, runId, store, diff: DIFF, council: null, signal: ac.signal });
-    while (!(fs.existsSync(started) && fs.existsSync(answered))) await new Promise((r) => setImmediate(r));
+    const answered = (): boolean => store.receiptsForTask(task.id).some((r) => String(r['kind']) === 'review');
+    while (!(fs.existsSync(started) && answered())) await new Promise((r) => setTimeout(r, 10));
     abortFor(ac, 'deadline');
     const out = await review;
-    // Under load the fast reviewer can miss the deadline too. Either way the absence is recorded, and the chain does
-    // not pass: with a survivor it is a split (the survivor passed, which is not the chain passing); with none it
-    // gives no verdict at all and the council's stands.
+    // The absence is recorded, and the chain does not pass: the survivor passed, which is not the chain passing.
     const kinds = store.receiptsForTask(task.id).map((r) => String(r['kind']));
-    assert.ok(kinds.includes('review:incomplete') || kinds.includes('review:unavailable'), kinds.join(','));
-    if (kinds.includes('review:incomplete')) assert.equal(out?.verdict, 'split', 'the survivor passed, which is not the chain passing');
-    else assert.equal(out, null, 'no reviewer answered: no chain verdict');
-    assert.ok(store.eventsForTask(task.id).some((e) => e.type === 'error' && /crew review (incomplete|unusable)/.test(e.message)));
+    assert.ok(kinds.includes('review:incomplete'), kinds.join(','));
+    assert.equal(out?.verdict, 'split', 'the survivor passed, which is not the chain passing');
+    assert.ok(store.eventsForTask(task.id).some((e) => e.type === 'error' && /crew review incomplete/.test(e.message)));
   } finally {
     store.close();
     cleanup([pbDir, dir]);
