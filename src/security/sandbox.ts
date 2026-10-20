@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '../config.ts';
+import { nodeInstall, type NodeInstall } from './nodeRoot.ts';
 
 export type SandboxMode = 'off' | 'tests' | 'all';
 export type SandboxKind = 'git' | 'tests' | 'worker';
@@ -37,9 +38,11 @@ const MAX_LIST = 4;
 // profile does not compile" can be driven without touching /usr/bin.
 let execPath = '/usr/bin/sandbox-exec';
 let profileDirOverride: string | null = null;
-export function _setSandboxSeamsForTest(seams: { exec?: string; profileDir?: string | null } | null): void {
+let nodeExecOverride: string | null = null;
+export function _setSandboxSeamsForTest(seams: { exec?: string; profileDir?: string | null; nodeExec?: string | null } | null): void {
   execPath = seams?.exec ?? '/usr/bin/sandbox-exec';
   profileDirOverride = seams?.profileDir ?? null;
+  nodeExecOverride = seams?.nodeExec ?? null;
   available = null;
 }
 
@@ -167,6 +170,66 @@ async function closedRoots(home: string, jail: string, opts: WrapOptions): Promi
   return roots.map(([p, what]) => [short(p), what]);
 }
 
+/** The trees base.sb closes to reads (its step 2), in the short spelling. Kept in step with base.sb by hand. */
+const PROFILE_CLOSED: [string, string][] = [
+  ['/Users', '/Users'],
+  ['/Volumes', '/Volumes'],
+  ['/private/tmp', 'the shared temp dir /tmp'],
+  ['/private/var/folders', 'the per-user temp dirs'],
+  ['/private/var/tmp', 'the shared temp dir /var/tmp'],
+  ['/private/var/root', "root's home"],
+  ['/private/var/db/sudo', "sudo's records"],
+  ['/opt/homebrew/var', "Homebrew's service data (/opt/homebrew/var)"],
+  ['/usr/local/var', "Homebrew's service data (/usr/local/var)"],
+  ['/Library/Keychains', 'the system keychains'],
+];
+
+/** What the sandbox does about the running node: a root to give back read-only (NODE_ROOT), and/or a line to say. */
+export interface NodeGiveBack {
+  root: string | null;
+  note: string | null;
+}
+
+/**
+ * The running node's install root, given back READ-ONLY so a sandboxed `node`/`npm` can start when node lives where
+ * the sandbox closes reads (nvm/fnm/volta under the home, a tarball in a temp dir). Separate from FOREMAN_SANDBOX_RO:
+ * it never takes one of the four places. Nothing is added when node is already readable (Homebrew, /usr/local,
+ * the system). It is added only when it is a node install and nothing else (nodeRoot.ts), is not inside Foreman's
+ * home or the real repository, and is not, and does not contain, a tree the sandbox closes (closedRoots: /, /Users,
+ * your home, the temp dir roots, Foreman's home, the jails' directory, the repository). Otherwise nothing is added
+ * and `note` says sandboxed commands may not find node and what to do. Pure: a test passes in what it needs.
+ */
+export function nodeGiveBack(inst: NodeInstall, foremanHome: string, closed: [string, string][]): NodeGiveBack {
+  const tree = short(inst.tree);
+  const shut = PROFILE_CLOSED.find(([c]) => inside(tree, c)) ?? (inside(tree, short(foremanHome)) ? [foremanHome, "Foreman's home"] : null);
+  if (!shut) return { root: null, note: null };
+  const lead = `sandboxed commands may not find node: ${inst.exe} is under ${shut[1]}, which the sandbox closes,`;
+  if (inside(tree, short(foremanHome))) {
+    return { root: null, note: `${lead} and it is inside Foreman's home (${foremanHome}), which is never given back. Install node outside FOREMAN_HOME.` };
+  }
+  const repo = closed.find(([c, what]) => what === 'the real repository' && inside(tree, c));
+  const hit = repo ?? closed.find(([c]) => inside(c, tree));
+  if (hit) {
+    return {
+      root: null,
+      note: `${lead} and its install directory ${inst.tree} was not given back: it ${repo ? 'is inside' : 'is, or contains,'} ${hit[1]}${hit[1] === hit[0] ? '' : ` (${hit[0]})`}. ` +
+        'Install node in a directory of its own (a version manager such as nvm does), or name the tree holding bin/node and lib/node_modules in FOREMAN_SANDBOX_RO',
+    };
+  }
+  if (!inst.root) {
+    return {
+      root: null,
+      note: `${lead} and ${inst.tree} was not given back because it does not look like a node install only (${inst.why}). ` +
+        `If it holds nothing private, name it: FOREMAN_SANDBOX_RO=${inst.tree}`,
+    };
+  }
+  return { root: inst.root, note: null };
+}
+
+async function nodeFor(home: string, closed: [string, string][]): Promise<NodeGiveBack> {
+  return nodeGiveBack(await nodeInstall(nodeExecOverride ?? process.execPath, process.env['PATH'] ?? ''), home, closed);
+}
+
 function run(cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number | null; stderr: string; error: string | null }> {
   return new Promise((resolve) => {
     execFile(cmd, args, { timeout: timeoutMs, killSignal: 'SIGKILL', env: { PATH: '/usr/bin:/bin' }, cwd: '/' }, (err, _stdout, stderr) => {
@@ -242,7 +305,8 @@ export interface WrapOptions {
  * The argv that runs `cmd args…` inside the `kind` sandbox. Throws SandboxError on a relative path, on more than
  * four read-only trees or denied ports, on a read-only tree inside Foreman's home, on one that is or contains a
  * tree the sandbox closes (closedRoots), and when Foreman's home sits inside a directory the command may write
- * (the give-back would hand it the database).
+ * (the give-back would hand it the database). The running node's install root is added read-only on its own
+ * (NODE_ROOT, nodeGiveBack), never counted against the four.
  */
 export async function wrap(kind: SandboxKind, opts: WrapOptions, cmd: string, args: string[]): Promise<{ cmd: string; args: string[] }> {
   const home = await real(config.home);
@@ -270,6 +334,9 @@ export async function wrap(kind: SandboxKind, opts: WrapOptions, cmd: string, ar
     if (!ro.includes(r)) ro.push(r);
   }
   if (ro.length > MAX_LIST) throw new SandboxError(`at most ${MAX_LIST} read-only trees (FOREMAN_SANDBOX_RO), got ${ro.length}`);
+  // The running node's install root, outside the four places; nothing when node is readable already or the root is
+  // too broad (then sandboxSummary says so at serve and in doctor).
+  const node = await nodeFor(home, closed);
   const ports = denyPorts();
   const allowances = sandboxAllowances();
   // Port 0 is "pick one" (the test suite's daemon): there is no fixed control port to close, and the profile needs a number.
@@ -286,6 +353,7 @@ export async function wrap(kind: SandboxKind, opts: WrapOptions, cmd: string, ar
   if (opts.realGit) defs.push(['REAL_GIT', await real(opts.realGit)]);
   if (opts.realRepo) defs.push(['REAL_REPO', await real(opts.realRepo)]);
   ro.forEach((p, i) => defs.push([`RO_${i + 1}`, p]));
+  if (node.root) defs.push(['NODE_ROOT', node.root]);
   ports.forEach((p, i) => defs.push([`DENY_PORT_${i + 1}`, String(p)]));
   for (const a of allowances) defs.push([`ALLOW_${a.toUpperCase()}`, '1']);
   if (opts.claudeCfg) defs.push(['CLAUDE_CFG', await real(opts.claudeCfg)]);
@@ -391,7 +459,23 @@ export async function sandboxSummary(): Promise<string> {
   } catch (err) {
     return `sandbox ${mode}: FAILING — ${(err as Error).message}`;
   }
-  return `sandbox ${mode}: ok (${covers}; closed loopback ports ${ports}${extra ? `; allowed: ${extra}` : ''})`;
+  const line = `sandbox ${mode}: ok (${covers}; closed loopback ports ${ports}${extra ? `; allowed: ${extra}` : ''})`;
+  const node = await sandboxNodeNote();
+  return node ? `${line}\nsandbox ${mode}: ${node}` : line;
+}
+
+/**
+ * The line `foreman doctor` and `serve` add when the running node's install root is closed to sandboxed commands
+ * and is not given back (nodeGiveBack), else null. Judged as wrap() judges it, for a jail under the jails' directory.
+ */
+export async function sandboxNodeNote(): Promise<string | null> {
+  try {
+    const home = await real(config.home);
+    const jail = path.join(await real(config.workRoot), 'jail');
+    return (await nodeFor(home, await closedRoots(home, jail, { jail, tmp: jail, home: jail }))).note;
+  } catch (err) {
+    return `cannot tell whether sandboxed commands can find node: ${(err as Error).message}`;
+  }
 }
 
 /** Appended to a failed sandboxed test run, so a suite that needs something outside the jail says where to look. */

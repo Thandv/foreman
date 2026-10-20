@@ -14,6 +14,8 @@
 ;;   REAL_GIT      optional  a WORKTREE jail's real git directory (<repo>/.git): readable, never writable, so
 ;;                           `git status`/`log`/`diff` work in the jail and `git add`/`commit`/`update-ref` cannot touch the real repo
 ;;   RO_1 … RO_4   optional  extra read-only trees (Foreman's own source for the slot wrapper, a toolchain under the home)
+;;   NODE_ROOT     optional  the running node's install root when it sits where step 2 closes reads (nvm under the
+;;                           home, a tarball in a temp dir): read-only, outside the four RO places (sandbox.ts nodeGiveBack)
 ;;   RW_1, RW_2    optional  extra read-write trees (use sparingly; each one is a hole)
 
 (define (opt name) (if (param name) (param name) "/var/empty/foreman-sandbox-unset"))
@@ -77,6 +79,7 @@
 (read-only (opt "RO_2"))
 (read-only (opt "RO_3"))
 (read-only (opt "RO_4"))
+(read-only (opt "NODE_ROOT"))
 (read-only (string-append (opt "REAL_REPO") "/.git/objects"))
 (read-only (opt "REAL_GIT"))
 ;; 4. Foreman's own state, wherever it is and whatever step 3 gave back around it.
