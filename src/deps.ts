@@ -94,23 +94,17 @@ async function isIgnored(repoDir: string, rel: string): Promise<boolean> {
 }
 
 /**
- * node_modules is not ignored, so the tree placed in the jail would show up as untracked files in its diff. Exclude it
- * through the repository's info/exclude (shared by its worktrees, never committed). Returns the sentence for the reason.
+ * node_modules is not ignored, so the tree placed in the jail would be untracked files in its diff, and `git add -A`
+ * at the landing would commit it. It is kept out by an ignore file inside the placed tree itself (`*` matches that
+ * file too), so nothing outside the jail changes: the repository's info/exclude is shared by every worktree, the
+ * operator's own checkout included, and would outlive the run. Throws when the file cannot be written. A tree the
+ * worker replaces whole (`npm ci`) loses the file and then shows in the diff, as in a repo nothing was provisioned for.
  */
-async function keepOutOfDiff(jailDir: string): Promise<string> {
-  const note = '; node_modules is not ignored by git, so it is excluded from the diff via .git/info/exclude';
-  try {
-    const { stdout } = await exec('git', [...PINNED, 'rev-parse', '--git-path', 'info/exclude'], { cwd: jailDir, env: pinnedEnv() });
-    const file = path.resolve(jailDir, stdout.trim());
-    const have = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-    if (!have.split('\n').includes('/node_modules')) {
-      await fsp.mkdir(path.dirname(file), { recursive: true });
-      await fsp.appendFile(file, `${have === '' || have.endsWith('\n') ? '' : '\n'}/node_modules\n`);
-    }
-    return note;
-  } catch {
-    return '; node_modules is not ignored by git, so it may show up in the diff (could not exclude it)';
-  }
+async function keepOutOfDiff(target: string): Promise<void> {
+  const file = path.join(target, '.gitignore');
+  // Removed first, so the write never goes through a link the copied tree holds at that name.
+  await fsp.rm(file, { force: true });
+  await fsp.writeFile(file, '*\n', { flag: 'wx' });
 }
 
 const within = (child: string, parent: string): boolean => child === parent || child.startsWith(`${parent}${path.sep}`);
@@ -360,6 +354,9 @@ export async function provisionDeps(
   if (tracked) return done(false, null, 'node_modules is tracked by git; leaving it alone');
   // Neither tracked nor ignored: the placed tree would be an untracked change in the jail's diff.
   const unignored = !(await isIgnored(repoDir, 'node_modules'));
+  if (unignored && mode === 'symlink') {
+    return done(false, null, 'node_modules is not ignored by git, and a linked tree cannot carry its own ignore file, so it would show up in the diff; leaving it alone (FOREMAN_DEPS_MODE=clone provisions it)');
+  }
   // A tree from before links were copied as written is replaced, once a tree to replace it with is in hand: its
   // tools are links out of the jail, dead under the sandbox and shared with every other jail without it.
   const stale = mode === 'clone' && hasLinksOut(target, jailDir);
@@ -369,17 +366,26 @@ export async function provisionDeps(
     else process.stderr.write(`foreman: ${line}\n`);
   };
   // What is appended to the reason: a plain copy is said (it costs the tree's size again, on every jail).
-  const put = async (from: string): Promise<string> => {
+  const put = async (from: string, source: DepsResult['source'], said: string): Promise<DepsResult> => {
     const how = await place(from, target, mode, say, opts.cloneBin === undefined ? cloneBinFor() : opts.cloneBin);
-    return (how === 'copy' ? ' by plain copy (no copy-on-write here)' : '') +
+    if (unignored) {
+      try {
+        await keepOutOfDiff(target);
+      } catch (err) {
+        // Not left in the jail to land with the work: taken back out, and said.
+        await fsp.rm(target, { recursive: true, force: true }).catch(() => {});
+        return done(false, null, `node_modules is not ignored by git and could not be kept out of the diff (${(err as Error).message.slice(0, 200)}); leaving it out`);
+      }
+    }
+    return done(true, source, said +
+      (how === 'copy' ? ' by plain copy (no copy-on-write here)' : '') +
       (stale ? ', replacing a tree whose .bin links led out of the jail' : '') +
-      (unignored ? await keepOutOfDiff(jailDir) : '');
+      (unignored ? '; node_modules is not ignored by git, so the placed tree carries its own .gitignore to stay out of the diff' : ''));
   };
 
   // 1. The repo's own tree, when it matches its lockfile.
   if (installIsCurrent(repoDir)) {
-    const replaced = await put(path.join(repoDir, 'node_modules'));
-    return done(true, 'repo', `${mode}d the repo's node_modules${replaced}`);
+    return put(path.join(repoDir, 'node_modules'), 'repo', `${mode}d the repo's node_modules`);
   }
 
   const lock = lockfileIn(jailDir);
@@ -389,8 +395,7 @@ export async function provisionDeps(
   const key = lockHash(lock);
   const cached = path.join(depsCacheRoot(), key, 'node_modules');
   if (fs.existsSync(cached)) {
-    const replaced = await put(cached);
-    return done(true, 'cache', `${mode}d the cached install for lockfile ${key}${replaced}`);
+    return put(cached, 'cache', `${mode}d the cached install for lockfile ${key}`);
   }
 
   if (!opts.allowInstall) return done(false, null, `no cached install for lockfile ${key}`);
@@ -422,8 +427,7 @@ export async function provisionDeps(
         await fsp.rm(partial, { recursive: true, force: true });
       });
     });
-    const replaced = await put(cached);
-    return done(true, 'install', `installed and cached lockfile ${key}${replaced}`);
+    return await put(cached, 'install', `installed and cached lockfile ${key}`);
   } catch (err) {
     return done(false, null, `dependency install failed: ${(err as Error).message.slice(0, 300)}`);
   } finally {

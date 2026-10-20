@@ -599,7 +599,7 @@ test('node_modules tracked by git is left alone, and the reason says tracked', a
   execFileSync('git', ['commit', '-qm', 'track modules'], { cwd: repo, stdio: 'ignore' });
   const result = await provisionDeps(jailFrom(repo), repo);
   assert.equal(result.provisioned, false);
-  assert.match(result.reason, /tracked by git/);
+  assert.match(result.reason, /^node_modules is tracked by git/);
 });
 
 test('node_modules ignored by git is provisioned without mention of tracking or the diff', async () => {
@@ -611,13 +611,52 @@ test('node_modules ignored by git is provisioned without mention of tracking or 
 
 test('node_modules neither tracked nor ignored is provisioned, said so, and kept out of the jail diff', async () => {
   const repo = npmRepo({ ignoreModules: false });
+  const exclude = path.join(repo, '.git', 'info', 'exclude');
+  const excludeBefore = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : null;
+  const statusBefore = porcelain(repo);
   const jail = jailFrom(repo);
   const result = await provisionDeps(jail, repo);
   assert.equal(result.provisioned, true, result.reason);
   assert.doesNotMatch(result.reason, /tracked by git/);
-  assert.match(result.reason, /not ignored by git.*excluded from the diff/);
+  assert.match(result.reason, /not ignored by git, so the placed tree carries its own \.gitignore to stay out of the diff/);
   assert.equal(fs.existsSync(path.join(jail, 'node_modules', 'dep', 'index.js')), true);
   assert.equal(porcelain(jail), '', 'the placed tree is not an untracked change in the jail');
+  execFileSync('git', ['add', '-A', '-N'], { cwd: jail });
+  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd: jail, encoding: 'utf8' }), '', 'nor in the diff');
+  // Nothing outside the jail changed: the operator's checkout still shows its own untracked tree, after the jail too.
+  assert.equal(fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : null, excludeBefore);
+  execFileSync('git', ['worktree', 'remove', '--force', jail], { cwd: repo });
+  assert.equal(porcelain(repo), statusBefore);
+  assert.match(statusBefore, /node_modules/);
+});
+
+test('node_modules not ignored is left alone in symlink mode, which cannot keep a linked tree out of the diff', async () => {
+  const before = process.env['FOREMAN_DEPS_MODE'];
+  process.env['FOREMAN_DEPS_MODE'] = 'symlink';
+  try {
+    const repo = npmRepo({ ignoreModules: false });
+    const jail = jailFrom(repo);
+    const result = await provisionDeps(jail, repo);
+    assert.equal(result.provisioned, false);
+    assert.match(result.reason, /not ignored by git.*leaving it alone/);
+    assert.equal(fs.lstatSync(path.join(jail, 'node_modules'), { throwIfNoEntry: false }), undefined);
+    assert.equal(porcelain(jail), '');
+  } finally {
+    if (before === undefined) delete process.env['FOREMAN_DEPS_MODE'];
+    else process.env['FOREMAN_DEPS_MODE'] = before;
+  }
+});
+
+test('node_modules not ignored whose ignore file cannot be written is taken back out, and said', async () => {
+  const repo = npmRepo({ ignoreModules: false });
+  // A directory where the ignore file goes: the copied tree holds it, and the write fails.
+  fs.mkdirSync(path.join(repo, 'node_modules', '.gitignore'));
+  const jail = jailFrom(repo);
+  const result = await provisionDeps(jail, repo);
+  assert.equal(result.provisioned, false);
+  assert.match(result.reason, /not ignored by git and could not be kept out of the diff/);
+  assert.equal(fs.existsSync(path.join(jail, 'node_modules')), false);
+  assert.equal(porcelain(jail), '');
 });
 
 test('a repo with no node_modules at all and none ignored is not reported as tracked', async () => {
