@@ -661,11 +661,16 @@ test('node_modules not ignored whose ignore file cannot be written is taken back
 
 test('a repo with no node_modules at all and none ignored is not reported as tracked', async () => {
   const repo = npmRepo({ ignoreModules: false, withModules: false });
-  const result = await provisionDeps(jailFrom(repo), repo);
+  const jail = jailFrom(repo);
+  const result = await provisionDeps(jail, repo);
   assert.equal(result.provisioned, false);
+  assert.equal(result.mode, 'clone');
   assert.equal(result.source, null);
   assert.equal(result.reason, `no cached install for lockfile ${lockHash(path.join(repo, 'package-lock.json'))}`);
   assert.doesNotMatch(result.reason, /tracked|diff|ignored/);
+  // Not provisioned means nothing placed: no tree, and no ignore file standing in for one, in the jail.
+  assert.equal(fs.lstatSync(path.join(jail, 'node_modules'), { throwIfNoEntry: false }), undefined);
+  assert.equal(porcelain(jail), '');
 });
 
 test('when git cannot say whether node_modules is tracked, it is left alone and the reason says so', async () => {
