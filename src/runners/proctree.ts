@@ -193,13 +193,21 @@ export function parseSidLines(text: string): Map<number, number> {
 }
 
 /** The environment ps and perl run with: nothing inherited that changes their output or what they load. */
-const TOOL_ENV: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' };
+const TOOL_ENV: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C', TZ: 'UTC' };
 
-function run(cmd: string, args: string[], input: string | null, timeoutMs: number): Promise<string | null> {
+/**
+ * The env ps receives: `base` with TOOL_ENV's keys forced over it. TZ is one of them: lstart is printed in the
+ * system zone, so a zone change would otherwise change the identity the reaper holds for its own groups.
+ */
+export function toolEnv(base: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return { ...base, ...TOOL_ENV };
+}
+
+function run(cmd: string, args: string[], input: string | null, timeoutMs: number, base: NodeJS.ProcessEnv = {}): Promise<string | null> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof execFile>;
     try {
-      child = execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env: TOOL_ENV }, (err, stdout) =>
+      child = execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env: toolEnv(base) }, (err, stdout) =>
         resolve(err ? null : String(stdout)),
       );
     } catch {
@@ -297,6 +305,8 @@ export async function readProcFs(procRoot = '/proc', timeoutMs = 5_000): Promise
 export interface ProcSource {
   platform?: NodeJS.Platform;
   procRoot?: string;
+  /** The env ps starts from, before toolEnv forces its keys over it; a test varies the zone here. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -307,7 +317,7 @@ export interface ProcSource {
  */
 export async function snapshotProcs(timeoutMs = 5_000, source: ProcSource = {}): Promise<ProcRow[] | null> {
   if ((source.platform ?? process.platform) === 'linux') return readProcFs(source.procRoot ?? '/proc', timeoutMs);
-  const out = await run('ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], null, timeoutMs);
+  const out = await run('ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], null, timeoutMs, source.env);
   if (out === null) return null;
   const rows = parseProcRows(out);
   if (rows.length === 0) return null;

@@ -3,6 +3,18 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// The homes that are not the sandbox, as this process started, for test/helpers/procguard.ts to watch: the FOREMAN_HOME
+// it was started with, the default ~/.foreman, and FOREMAN_TEST_REAL_HOME when it names a path (as a flag, '1', it
+// means the real HOME, whose ~/.foreman is already listed). Read before the clearing below.
+const testRealHome = process.env['FOREMAN_TEST_REAL_HOME'];
+export const realHomes: string[] = [
+  ...new Set(
+    [process.env['FOREMAN_HOME'], testRealHome && path.isAbsolute(testRealHome) ? testRealHome : undefined, path.join(os.homedir(), '.foreman')]
+      .filter((h): h is string => !!h)
+      .map((h) => path.resolve(h)),
+  ),
+];
+
 // The suites run with a known configuration, not the caller's: a Foreman test stage runs them with the daemon's own
 // environment (FOREMAN_FAILED_JAIL_RETAIN_DAYS, FOREMAN_SKILLS_DIR, ...), and every default a test pins would then
 // read the daemon's tuning instead. A test that needs a setting sets it itself.
