@@ -14,6 +14,7 @@ import { sandboxMode, sandboxSummary, selfTest } from './security/sandbox.ts';
 import { probeCloud } from './models.ts';
 import { skillVariantFor, tierModel } from './roles.ts';
 import { workerSuiteInJail } from './doctorJail.ts';
+import { doctorTimingLine } from './doctorTiming.ts';
 import { formatSkillList, skillBlock, skillsDoctorLine, skillsFor } from './skills.ts';
 import { acquireDaemonLock } from './lock.ts';
 import { Store } from './queue.ts';
@@ -1858,7 +1859,7 @@ async function main(): Promise<number> {
       }
       // Read before /api/doctor: its liveness pings load every local model, so residency read after them reported
       // doctor's own loads as warm (a boot warm that failed everywhere still showed every model).
-      process.stdout.write('checking models: up to 45s for each one that does not answer, 4 minutes in all…\n');
+      process.stdout.write(`${doctorTimingLine()}\n`);
       const resident = await residentSummary();
       const d = await apiCall('/api/doctor');
       // As THIS shell's environment has it: the daemon reads FOREMAN_SANDBOX from its own, at start.

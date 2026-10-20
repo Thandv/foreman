@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.ts';
+import { DOCTOR_DEADLINE_MS, DOCTOR_PING_TIMEOUT_MS } from './doctorTiming.ts';
 import type { ReceiptWindow, Store } from './queue.ts';
 import { REVIEW_SOURCE_MAX } from './queue.ts';
 import type { Scheduler } from './scheduler.ts';
@@ -982,7 +983,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       // One deadline for the whole endpoint: the CLI's request gives up at
       // 300s, and a swapping machine — the one doctor most needs to diagnose —
       // is exactly where every cold load is slow.
-      const deadline = Date.now() + 240_000;
+      const deadline = Date.now() + DOCTOR_DEADLINE_MS;
       const left = (): number => deadline - Date.now();
       await probeCloud().catch(() => null);
       const { chat, TruncatedReply } = await import('./models.ts');
@@ -997,7 +998,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         try {
           await chat({
             alias: spec.alias, messages: [{ role: 'user', content: 'ping' }], sensitivity: 'S1', maxTokens: 1,
-            timeoutMs: Math.min(45_000, left() - 15_000),
+            timeoutMs: Math.min(DOCTOR_PING_TIMEOUT_MS, left() - 15_000),
           });
           return { ...spec, ok: true, latencyMs: Date.now() - started, error: null };
         } catch (err) {

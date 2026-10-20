@@ -36,8 +36,8 @@ foreman stop               # stop the daemon and wait for it to exit
 
 `demo` only queues the tasks and prints the board URL; watch them run on the board or with
 `foreman watch`. One demo task ("Broken migration check") fails on purpose; `foreman ls --all` shows
-it. `doctor` can take a few minutes when local models are unreachable or memory is short: each model
-that does not answer waits up to 45 seconds, and the model checks stop after 4 minutes. It prints
+it. `doctor` can take a few minutes when local models are slow to answer, as when memory is short: each
+model that does not answer waits up to 45 seconds, and the model checks stop after 4 minutes. It prints
 that first.
 
 Without `npm link`, use `alias foreman='node /path/to/foreman/src/cli.ts'`, or run
