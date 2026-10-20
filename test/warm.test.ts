@@ -1,7 +1,40 @@
 import './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prewarmRoster, warmTargets } from '../src/warm.ts';
+import { prewarmRoster, residentSummary, warmSummary, warmTargets } from '../src/warm.ts';
+
+test('residentSummary reports resident models, and the reason when Ollama is unreachable', async () => {
+  const fast = (await import('../src/models.ts')).resolveSpec('local-fast').model;
+  assert.equal(
+    await residentSummary(['local-fast', 'local-code'], async () => new Set([fast])),
+    'local-fast — failed: local-code (not loaded)',
+  );
+  assert.equal(
+    await residentSummary(['local-fast'], async () => { throw new Error('fetch failed'); }),
+    '(none) — failed: local-fast (fetch failed)',
+  );
+});
+
+const res = (alias: string, ok: boolean, error: string | null = null) =>
+  ({ alias, model: alias, ok, ms: 1, error });
+
+test('warmSummary lists every model when all warmed', () => {
+  assert.equal(warmSummary([res('local-fast', true), res('local-code', true)]), 'local-fast, local-code');
+});
+
+test('warmSummary lists the warmed models and names the failed ones with the reason', () => {
+  assert.equal(
+    warmSummary([res('local-fast', true), res('local-code', false, 'fetch failed')]),
+    'local-fast — failed: local-code (fetch failed)',
+  );
+});
+
+test('warmSummary lists no model as warmed when all failed', () => {
+  assert.equal(
+    warmSummary([res('local-fast', false, 'fetch failed'), res('local-code', false, 'fetch failed')]),
+    '(none) — failed: local-fast (fetch failed); local-code (fetch failed)',
+  );
+});
 
 test('the warm list is rung-0 only, and Ollama-only', () => {
   const targets = warmTargets('S1');

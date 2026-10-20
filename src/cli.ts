@@ -22,7 +22,7 @@ import { listen } from './server.ts';
 import { Tracer } from './trace.ts';
 import { benchModels, benchPath } from './bench.ts';
 import { Broker } from './budget.ts';
-import { checkOllamaParallelism, prewarmRoster, warmTargets } from './warm.ts';
+import { checkOllamaParallelism, prewarmRoster, residentSummary } from './warm.ts';
 import { computeLatencyReport, formatDuration } from './latency.ts';
 import { formatPlaybookWarning, getPlaybook, playbooksDir } from './playbooks.ts';
 import { planNoteHome } from './assistant/crewPlan.ts';
@@ -1904,7 +1904,7 @@ async function main(): Promise<number> {
         `\nollama parallelism: ${parallelism.numParallel ?? 'unknown'}` +
           `${parallelism.ok ? '' : `  ⚠ ${parallelism.advice}`}\n`,
       );
-      process.stdout.write(`pre-warmed at boot: ${warmTargets().join(', ') || '(none)'}\n`);
+      process.stdout.write(`warm models resident now: ${await residentSummary()}\n`);
       // Read here, from this shell's FOREMAN_SKILLS_DIR: the daemon reads its
       // own environment, and its /api/doctor does not report skills.
       process.stdout.write(`${skillsDoctorLine()}\n`);
