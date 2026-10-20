@@ -581,7 +581,8 @@ test('wrap: every path goes in as a real path in its own -D argv entry; relative
   const w = await withEnv({ FOREMAN_SANDBOX_RO: undefined, FOREMAN_SANDBOX_DENY_PORTS: '' }, () =>
     sbx.wrap('tests', { jail: viaVar, tmp: tmpDir, home: viaVar, readOnly: [roDir] }, '/bin/sh', ['-c', 'echo "a b"; (c)']));
   assert.equal(w.cmd, '/usr/bin/sandbox-exec');
-  const defs = w.args.filter((_, i) => w.args[i - 1] === '-D');
+  // NODE_ROOT (the running node's install root) depends on where this node lives; it has tests of its own.
+  const defs = w.args.filter((_, i) => w.args[i - 1] === '-D').filter((d) => !d.startsWith('NODE_ROOT='));
   assert.deepEqual(defs, [
     `PROFILE_DIR=${fs.realpathSync(path.join(SRC_ROOT, 'src', 'security', 'sandbox'))}`,
     `JAIL=${dir}`, `TMP=${fs.realpathSync(tmpDir)}`, `RUNHOME=${dir}`, `FOREMAN_HOME=${fs.realpathSync(testHome)}`,
@@ -803,6 +804,197 @@ test('the profile itself keeps Foreman\'s home shut under a read-only tree that 
   assert.ok(!output.includes('DECOY-OTHER-JAIL-3310'), `nor another run's jail:\n${output}`);
   assert.deepEqual(outLines(output), ['OUT db write rc=1', 'OUT jail in'], 'no listing, no stat, no write; the run\'s own jail inside Foreman\'s home still works');
   assert.equal(fs.readFileSync(db, 'utf8'), `${DB_DECOY}\n`);
+});
+
+// ------------------------------------------------------------------------- the running node's install root
+
+const { nodeInstall } = await import('../src/security/nodeRoot.ts');
+
+/** cp with clonefile where the filesystem has it (APFS), a plain copy elsewhere. */
+function cpTree(src: string, dst: string): void {
+  try {
+    execFileSync('cp', ['-Rc', src, dst], { stdio: 'ignore' });
+  } catch {
+    fs.cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
+  }
+}
+
+/** The npm package directory of the running node: beside it, else the one the PATH resolves. null when there is none. */
+function npmPackageDir(): string | null {
+  const beside = path.join(path.dirname(path.dirname(fs.realpathSync(process.execPath))), 'lib', 'node_modules', 'npm');
+  if (fs.existsSync(path.join(beside, 'package.json'))) return beside;
+  for (const dir of (process.env['PATH'] ?? '').split(':').filter((d) => path.isAbsolute(d))) {
+    let p: string;
+    try {
+      p = fs.realpathSync(path.join(dir, 'npm'));
+    } catch {
+      continue;
+    }
+    for (; p !== path.dirname(p); p = path.dirname(p)) {
+      if (path.basename(p) === 'npm' && path.basename(path.dirname(p)) === 'node_modules' && fs.existsSync(path.join(p, 'package.json'))) return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * A node install at `root` in the nodejs.org tarball layout that nvm, fnm and volta unpack: bin/node (the running
+ * binary, with its libnode if it has one), lib/node_modules/npm, bin/npm and bin/npx. Real enough to run.
+ */
+function nodeInstallAt(root: string): void {
+  const exe = fs.realpathSync(process.execPath);
+  const npm = npmPackageDir();
+  assert.ok(npm, 'precondition: an npm to copy beside node');
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'lib', 'node_modules'), { recursive: true });
+  cpTree(exe, path.join(root, 'bin', 'node'));
+  const lib = path.join(path.dirname(path.dirname(exe)), 'lib');
+  for (const name of fs.existsSync(lib) ? fs.readdirSync(lib) : []) if (/^libnode\./.test(name)) cpTree(path.join(lib, name), path.join(root, 'lib', name));
+  cpTree(npm, path.join(root, 'lib', 'node_modules', 'npm'));
+  fs.symlinkSync('../lib/node_modules/npm/bin/npm-cli.js', path.join(root, 'bin', 'npm'));
+  fs.symlinkSync('../lib/node_modules/npm/bin/npx-cli.js', path.join(root, 'bin', 'npx'));
+}
+
+/** The layout alone (an empty bin/node), for checks that never run it. */
+function nodeLayoutAt(root: string, extraDirs: string[] = []): string {
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'lib', 'node_modules', 'npm'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'bin', 'node'), '');
+  fs.writeFileSync(path.join(root, 'lib', 'node_modules', 'npm', 'package.json'), '{}\n');
+  for (const d of extraDirs) fs.mkdirSync(path.join(root, d), { recursive: true });
+  return path.join(root, 'bin', 'node');
+}
+
+const SYS_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+
+test('nodeInstall: the nodejs.org layout is a node install; a binary outside bin/, no npm, or a root holding more than node is not', async (t) => {
+  const base = scratch(t, 'fsbx-nodeinst-');
+  const ok = path.join(base, 'v24.0.0');
+  const r = nodeLayoutAt(ok);
+  {
+    assert.deepEqual(await nodeInstall(r, SYS_PATH), { exe: r, root: ok, why: null, tree: ok });
+    // Homebrew's Cellar keeps npm elsewhere: accepted when the npm on PATH lives under the root.
+    const brew = path.join(base, 'cellar-node');
+    const b = nodeLayoutAt(brew);
+    fs.rmSync(path.join(brew, 'lib', 'node_modules'), { recursive: true });
+    assert.match((await nodeInstall(b, SYS_PATH)).why ?? '', /no npm/);
+    fs.mkdirSync(path.join(brew, 'libexec', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(brew, 'libexec', 'bin', 'npm'), '');
+    assert.equal((await nodeInstall(b, `${path.join(brew, 'libexec', 'bin')}:${SYS_PATH}`)).root, brew);
+    // A prefix such as ~/.local: more than a node install.
+    const local = path.join(base, 'local');
+    const l = nodeLayoutAt(local, ['state', 'lib/python3.12']);
+    const lw = await nodeInstall(l, SYS_PATH);
+    assert.equal(lw.root, null);
+    assert.match(lw.why ?? '', /state\//);
+    fs.rmSync(path.join(local, 'state'), { recursive: true });
+    assert.match((await nodeInstall(l, SYS_PATH)).why ?? '', /lib\/ also holds python3\.12/);
+    // Not in a bin/ directory.
+    const loose = path.join(base, 'loose');
+    fs.mkdirSync(loose);
+    fs.writeFileSync(path.join(loose, 'node'), '');
+    const lo = await nodeInstall(path.join(loose, 'node'), SYS_PATH);
+    assert.deepEqual([lo.root, lo.tree], [null, base]);
+    assert.match(lo.why ?? '', /not in a bin\/ directory/);
+    // A symlink is followed: the root is the real one.
+    const link = path.join(base, 'link-node');
+    fs.symlinkSync(r, link);
+    assert.equal((await nodeInstall(link, SYS_PATH)).root, ok);
+  }
+});
+
+test('nodeGiveBack: Homebrew and system node add nothing; a version-manager root under the home is given back; a root that is or holds a closed tree, or sits in Foreman\'s home or the repository, is not and says why', () => {
+  const inst = (root: string | null, tree: string, exe = path.join(tree, 'bin', 'node')) => ({ exe, root, why: root ? null : 'it also holds state/, which a node install does not', tree });
+  const fh = '/Users/someone/.foreman';
+  const closed: [string, string][] = [
+    ['/', 'the filesystem root'], ['/Users', '/Users'], ['/private/var/folders', 'the per-user temp dirs'], [fh, "Foreman's home"],
+    ['/Users/someone', 'your home directory'], ['/private/var/folders/xy/T', 'the temp dir the private homes live in'],
+    ['/Users/someone/src/app', 'the real repository'], ['/Users/someone/src', 'the directory above the real repository'],
+  ];
+  const none = { root: null, note: null };
+  // Homebrew (the Cellar keeps npm elsewhere, so it is not even a node-only install), /usr/local, the system: readable already.
+  assert.deepEqual(sbx.nodeGiveBack(inst(null, '/opt/homebrew/Cellar/node/24.1.0'), fh, closed), none);
+  assert.deepEqual(sbx.nodeGiveBack(inst('/usr/local', '/usr/local'), fh, closed), none);
+  assert.deepEqual(sbx.nodeGiveBack(inst(null, '/usr', '/usr/bin/node'), fh, closed), none);
+  // nvm, volta, a tarball in a temp dir, and the Data-volume spelling of the home: given back.
+  for (const root of ['/Users/someone/.nvm/versions/node/v24.0.0', '/Users/someone/.volta/tools/image/node/24.0.0', '/private/var/folders/xy/T/node-v24.0.0-darwin-arm64', '/System/Volumes/Data/Users/someone/.nvm/versions/node/v24.0.0']) {
+    assert.deepEqual(sbx.nodeGiveBack(inst(root, root), fh, closed), { root, note: null }, root);
+  }
+  const say = (root: string | null, tree: string): string => {
+    const g = sbx.nodeGiveBack(inst(root, tree), fh, closed);
+    assert.equal(g.root, null, tree);
+    assert.match(g.note ?? '', /^sandboxed commands may not find node: .* which the sandbox closes/, tree);
+    return g.note!;
+  };
+  assert.match(say('/Users/someone', '/Users/someone'), /was not given back: it is, or contains, (your home directory|Foreman's home) .*FOREMAN_SANDBOX_RO$/);
+  assert.match(say('/Users', '/Users'), /is, or contains, \/Users/);
+  assert.match(say('/private/var/folders/xy/T', '/private/var/folders/xy/T'), /the temp dir the private homes live in/);
+  assert.match(say('/Users/someone/src/app/node', '/Users/someone/src/app/node'), /is inside the real repository/);
+  assert.match(say('/Users/someone/.foreman/node', '/Users/someone/.foreman/node'), /inside Foreman's home .*outside FOREMAN_HOME/);
+  assert.match(say(null, '/Users/someone/.local'), /does not look like a node install only \(it also holds state\/.*FOREMAN_SANDBOX_RO=\/Users\/someone\/\.local$/);
+  assert.doesNotMatch(say(null, '/Users/someone'), /FOREMAN_SANDBOX_RO=/, 'never a hint to open the home');
+});
+
+test('the running node\'s install root under the home (nvm) or in a temp dir: node and npm start sandboxed; the rest of the home and the temp dir stay closed; the root is not writable and takes no FOREMAN_SANDBOX_RO place', T, async (t) => {
+  const f = fixture(t);
+  t.after(() => sbx._setSandboxSeamsForTest(null));
+  const nvm = path.join(HOME, '.nvm', 'versions', 'node', 'v24.0.0');
+  t.after(() => fs.rmSync(path.join(HOME, '.nvm'), { recursive: true, force: true }));
+  for (const root of [nvm, path.join(scratch(t, 'fsbx-node-'), 'node-v24.0.0-darwin-arm64')]) {
+    nodeInstallAt(root);
+    const sibling = path.join(path.dirname(root), 'beside.txt');
+    fs.writeFileSync(sibling, 'NODE-SIBLING-DECOY-8812\n');
+    const planted = path.join(root, 'bin', 'planted');
+    const cmd =
+      `echo "OUT which $(command -v node)"; node -e 0 && echo OUT node ok; npm --version > /dev/null && echo OUT npm ok; ` +
+      `cat ${q(sibling)}; cat ${q(path.join(HOME, '.ssh', 'id_x'))}; ls ${q(path.dirname(root))} | sed 's/^/OUT ls /'; ` +
+      `echo x > ${q(planted)}; echo OUT write rc=$?; echo x >> ${q(path.join(root, 'bin', 'node'))}; echo OUT write node rc=$?`;
+    const env = { ...ON, PATH: `${path.join(root, 'bin')}:${SYS_PATH}`, FOREMAN_SANDBOX_RO: '/opt/fsbx-a:/opt/fsbx-b:/opt/fsbx-c:/opt/fsbx-d' };
+    // Control: node readable elsewhere (no give-back), so this root stays closed and `node` is not found.
+    sbx._setSandboxSeamsForTest({ nodeExec: '/usr/bin/true' });
+    const closed = await withEnv(env, () => runTests(f.jail, cmd, guard()));
+    assert.ok(!outLines(closed.output).includes('OUT node ok'), `precondition: without the give-back node does not start:\n${closed.output}`);
+    sbx._setSandboxSeamsForTest({ nodeExec: path.join(root, 'bin', 'node') });
+    const w = await withEnv(env, () => sbx.wrap('tests', { jail: f.jail, tmp: f.jail, home: f.jail }, '/usr/bin/true', []));
+    assert.ok(w.args.includes(`NODE_ROOT=${fs.realpathSync(root)}`), w.args.join(' '));
+    assert.equal(w.args.filter((a) => /^RO_\d=/.test(a)).length, 4, 'the four FOREMAN_SANDBOX_RO places are all still the user\'s');
+    const r = await withEnv(env, () => runTests(f.jail, cmd, guard()));
+    assert.deepEqual(outLines(r.output), [`OUT which ${path.join(root, 'bin', 'node')}`, 'OUT node ok', 'OUT npm ok', 'OUT write rc=1', 'OUT write node rc=1'], r.output);
+    assert.ok(!r.output.includes('NODE-SIBLING-DECOY-8812'), `a file beside the root stays unreadable:\n${r.output}`);
+    assert.ok(!r.output.includes(DECOYS['.ssh/id_x']!), `the home stays unreadable:\n${r.output}`);
+    assert.equal(fs.existsSync(planted), false, 'nothing was written into the root');
+    assert.equal(await sbx.sandboxNodeNote(), null, 'nothing to say when it is given back');
+  }
+});
+
+test('a node root too broad to give back (the home itself, or more than a node install) is not added, node stays closed, and doctor/serve say how to fix it', T, async (t) => {
+  const f = fixture(t);
+  t.after(() => sbx._setSandboxSeamsForTest(null));
+  // HOME is a node install itself (bin/, lib/ and nothing else beside the decoy-free layout).
+  const bare = scratch(t, 'fsbx-nodehome-');
+  const bareExe = nodeLayoutAt(bare);
+  fs.writeFileSync(path.join(bare, 'HOME-DECOY.txt'), 'NODE-HOME-DECOY-7731\n');
+  // And a prefix that is more than node, under the fake home.
+  const local = path.join(HOME, '.local');
+  t.after(() => fs.rmSync(local, { recursive: true, force: true }));
+  const localExe = nodeLayoutAt(local, ['state']);
+  for (const [exe, home, want] of [
+    [bareExe, bare, /is, or contains, your home directory .*FOREMAN_SANDBOX_RO$/],
+    [localExe, HOME, /does not look like a node install only \(it also holds state\/.*FOREMAN_SANDBOX_RO=/],
+  ] as const) {
+    sbx._setSandboxSeamsForTest({ nodeExec: exe });
+    const env = { ...ON, HOME: home, FOREMAN_SANDBOX_RO: undefined };
+    const w = await withEnv(env, () => sbx.wrap('tests', { jail: f.jail, tmp: f.jail, home: f.jail }, '/usr/bin/true', []));
+    assert.ok(!w.args.some((a) => a.startsWith('NODE_ROOT=')), w.args.join(' '));
+    const note = await withEnv(env, () => sbx.sandboxNodeNote());
+    assert.match(note ?? '', /^sandboxed commands may not find node: /);
+    assert.match(note!, want);
+    const summary = await withEnv(env, () => sbx.sandboxSummary());
+    assert.deepEqual(summary.split('\n').slice(1), [`sandbox tests: ${note}`], 'one line after the status line, in doctor and at serve');
+    const r = await withEnv(env, () => runTests(f.jail, `cat ${q(path.join(bare, 'HOME-DECOY.txt'))}; ls ${q(path.dirname(exe))} | sed 's/^/OUT ls /'; echo OUT ran`, guard()));
+    assert.deepEqual(outLines(r.output), ['OUT ran'], r.output);
+    assert.ok(!r.output.includes('NODE-HOME-DECOY-7731'), r.output);
+  }
 });
 
 // ------------------------------------------------------------------------------------------ legitimate flows
