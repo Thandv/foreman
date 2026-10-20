@@ -1419,7 +1419,7 @@ local, $0.00, every one on the receipts ledger.
 
 ## License and contributing
 
-Foreman is licensed under the [Apache License 2.0](LICENSE) (see also [NOTICE](NOTICE)).
+Copyright 2026 Gokul P M. Foreman is licensed under the [Apache License 2.0](LICENSE) (see also [NOTICE](NOTICE)).
 [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and how to propose a change;
 [SECURITY.md](SECURITY.md) covers how to report a vulnerability privately.
 
