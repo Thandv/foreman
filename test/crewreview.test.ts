@@ -1664,7 +1664,7 @@ test('a three-reviewer chain that lost one and split the rest fails — one PASS
 
 test('a cancel landing while one reviewer is still out is not a lost reviewer', async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  // The devil's advocate takes five seconds; the task is canceled once its call is open.
+  // The devil's advocate never answers on its own; the task is canceled once its call is open.
   const { dir, started } = slowAdvocate();
   const store = new Store(':memory:');
   try {
@@ -1815,7 +1815,7 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *devils-advocate*) cat "${dir}/junk.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 30; cat "${dir}/chair.json";; *devils-advocate*) cat "${dir}/junk.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -1847,14 +1847,15 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
 });
 
 /**
- * A claude stand-in whose devil's advocate takes five seconds, so a run can be stopped mid-chain. `started` appears
- * once the advocate's call is really open: gate a stop, cancel or deadline on it, not on a timer.
+ * A claude stand-in whose devil's advocate sleeps past any test (only an abort ends it), so a run can be stopped
+ * mid-chain. `started` appears once the advocate's call is really open: gate a stop, cancel or deadline on it, not on
+ * a timer.
  */
 function slowAdvocate(): { dir: string; started: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-slowadv-'));
   const started = path.join(dir, 'advocate-started');
   fs.writeFileSync(path.join(dir, 'pass.json'), reviewReply('pass', 'fine'));
-  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 5;; esac\ncat "${dir}/pass.json"\n`);
+  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 30;; esac\ncat "${dir}/pass.json"\n`);
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
   return { dir, started };
@@ -2049,7 +2050,7 @@ test('a cancel while the chair is deciding writes no crew verdict', { timeout: 6
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 30; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2080,7 +2081,7 @@ test("a deadline while the chair is deciding keeps the chain's FAIL: out of time
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('pass', 'fine'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 30; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2125,8 +2126,10 @@ test('a daemon stop mid-fan-out is not a lost reviewer either', async () => {
 test("a run that reaches its own deadline mid-review parks with the verdict it has — it is not requeued", { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
   const { dir, started } = slowAdvocate();
-  // The advocate sleeps far past the test; the deadline is hand-fired once its call is open (test/fakeclock.ts).
-  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 120;; esac\ncat "${dir}/pass.json"\n`);
+  // Both reviewers sleep far past the test; the deadline is hand-fired once both calls are open (test/fakeclock.ts),
+  // so the review has not settled when it comes: the case where a deadline must not be read as a daemon stop.
+  const seniorStarted = path.join(dir, 'senior-started');
+  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 120;; *) touch "${seniorStarted}"; sleep 120;; esac\n`);
   const repo = fixtureRepo();
   const store = new Store(':memory:');
   const op = (verdict: 'pass' | 'fail') => ({ model: verdict, provider: 'ollama', local: true, verdict, confidence: 0.8, critique: verdict, costUsd: 0, latencyMs: 1 });
@@ -2146,7 +2149,7 @@ test("a run that reaches its own deadline mid-review parks with the verdict it h
       title: 'touch the readme', prompt: "printf 'x\\n' >> README.md", kind: 'code', runner: 'shell',
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
-    await settle(sched, () => fs.existsSync(started));
+    await settle(sched, () => fs.existsSync(started) && fs.existsSync(seniorStarted));
     deadline.expire();
     await settle(sched, () => {
       const run = store.latestRun(t.id);
@@ -2154,7 +2157,8 @@ test("a run that reaches its own deadline mid-review parks with the verdict it h
     });
     assert.equal(store.getTask(t.id)!.status, 'awaiting-approval', 'out of time is the degrade path, not a daemon stop');
     const kinds = store.receiptsForTask(t.id).map((r) => String(r['kind']));
-    assert.ok(kinds.includes('review:incomplete') || kinds.includes('review:unavailable'), `the cut-off review is on record: ${kinds.join(',')}`);
+    assert.ok(kinds.includes('review:unavailable'), `the cut-off review is on record: ${kinds.join(',')}`);
+    assert.ok(store.eventsForTask(t.id).some((e) => /crew review unusable/.test(e.message)), 'and it parks with the council verdict it has');
   } finally {
     await sched.stop();
     store.close();
@@ -2214,7 +2218,7 @@ test('a cancel that lands after the deadline still reads as a cancel: no verdict
   // A chair that shrugs off SIGTERM, so the chain is still settling when the cancel lands.
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) trap '' TERM; touch "${dir}/chair-started"; sleep 3; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) trap '' TERM; touch "${dir}/chair-started"; sleep 30; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2226,10 +2230,14 @@ test('a cancel that lands after the deadline still reads as a cancel: no verdict
     const before = store.verdictsForTask(task.id).length;
     const ac = new AbortController();
     const review = crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    let reviewSettled = false;
+    void review.then(() => { reviewSettled = true; }, () => { reviewSettled = true; });
     await waitUntil(() => fs.existsSync(path.join(dir, 'chair-started')));
     abortFor(ac, 'deadline');
-    // The chair ignores SIGTERM, so the chain is still settling when the cancel is recorded; both causes are on the
-    // signal before the chain reads them, in whichever order they arrive.
+    // Let the deadline's abort run its course first (listeners, the SIGTERM the chair shrugs off), then cancel. The
+    // chair only ends at the SIGKILL escalation, seconds later, so the chain is provably still settling here.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(reviewSettled, false, 'the cancel lands while the deadline-cut chain is still settling');
     abortFor(ac, 'cancel');
     const out = await review;
     assert.equal(out, null);
@@ -2319,7 +2327,7 @@ test('a daemon stop while the crew chair is deciding writes no crew verdict, and
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 30; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
