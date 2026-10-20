@@ -31,8 +31,8 @@ but a way to make them worse than described is in scope.
 
 - **The `claude-code` and `codex-cli` workers themselves are not sandboxed yet.** A worker session
   runs as you, with your files and the daemon's API in reach. Only test commands, playbook checks,
-  `shell` tickets, the `api` runner's shell and tool calls, and the post-merge check run under the
-  sandbox. `FOREMAN_SANDBOX=all` currently behaves as `tests`.
+  `shell` tickets, the `api` runner's shell and tool calls, the post-merge check and a worker's own
+  suite run (`src/verify/testSlot.ts`) run under the sandbox. `FOREMAN_SANDBOX=all` currently behaves as `tests`.
 - The HTTP API has **no authentication**. It binds to loopback only unless
   `FOREMAN_ALLOW_REMOTE=1` is set; it is a local tool.
 - The sandbox is macOS-only (`sandbox-exec`), does not limit CPU, memory or disk, and leaves the

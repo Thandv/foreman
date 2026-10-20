@@ -34,7 +34,7 @@ foreman doctor             # what models, runners and agents are actually availa
 foreman stop               # stop the daemon and wait for it to exit
 ```
 
-`demo` only queues the tasks and prints the board URL; watch them run on the board or with
+`demo` only queues the tasks and prints their ids and the board URL; watch them run on the board or with
 `foreman watch`. One demo task ("Broken migration check") fails on purpose; `foreman ls --all` shows
 it. `doctor` can take a few minutes when local models are slow to answer, as when memory is short: each
 model that does not answer waits up to 45 seconds, and the model checks stop after 4 minutes. It prints
@@ -527,9 +527,9 @@ JSON on stdin/stdout, and are quarantined after three consecutive failures.
 Registered tools live in a git-tracked **`toolbox/`** subfolder of the repo (see
 `toolbox/README.md`), so Foreman can both use and improve its own tools. Only
 tool *source* is stored there — usage stats and quarantine state are kept in
-`~/.foreman/tool-state.json`, out of version control, so the toolbox stays clean
+`$FOREMAN_HOME/tool-state.json`, out of version control, so the toolbox stays clean
 for git. Set `FOREMAN_TOOLBOX` to point the catalog elsewhere. A pre-existing
-`~/.foreman/tools` catalog is migrated into `toolbox/` once, on first start.
+`$FOREMAN_HOME/tools` catalog is migrated into `toolbox/` once, on first start.
 
 ## Self-improvement
 
@@ -896,8 +896,9 @@ at the gate, running, queued or blocked is never touched.
 `node_modules`, so the test gate used to run against an uninstalled tree — not
 merely paying an install, but *failing*, turning a good change into a `fail`
 verdict and a wasted repair round. Jails are now provisioned from the repo's own
-tree when it matches its lockfile, else from a lockfile-keyed cache, else one
-cached `npm ci`. The default is a copy rather than a symlink, because a symlink is
+tree when it matches its lockfile, else from a lockfile-keyed cache
+(`$FOREMAN_HOME/deps-cache`), else one cached `npm ci --ignore-scripts`; `foreman prune` keeps the
+newest five cached installs (`--keep-deps N`). The default is a copy rather than a symlink, because a symlink is
 writable through — a runner could edit the operator's dependencies, which is the
 one thing the jail promises it cannot do. On macOS the copy is made with
 `/bin/cp -c -R`, which on APFS is a copy-on-write clone: measured on Kiln's
@@ -907,6 +908,10 @@ the full 27.6 MB, every jail), so it is only the fallback — Linux, a volume th
 cannot clone, a failed `cp` — and the run's `deps:` line then says "by plain
 copy". The tree is built beside the jail and renamed into place, so a copy that
 fails half-way leaves no partial `node_modules` for the next run to trust.
+A `node_modules` that git tracks is left alone. One the repo does not ignore is
+still provisioned, carrying its own `.gitignore` (`*`) inside the placed tree so
+it stays out of the diff; nothing outside the jail is changed (with
+`FOREMAN_DEPS_MODE=symlink` such a repo gets nothing).
 `FOREMAN_DEPS_MODE=symlink|off` overrides.
 
 **Two-lane scheduler.** A worker slot covers admit→test; the council stage is
@@ -921,8 +926,10 @@ different settings.
 
 **Roster pre-warm.** At boot, rung-0's models are warmed sequentially and the
 loop stops as soon as a load evicts a model it just warmed (measured: warming
-three in parallel on this machine left exactly one resident). `doctor` reports
-whether `OLLAMA_NUM_PARALLEL` lets both advisors share one load.
+three in parallel on this machine left exactly one resident). `FOREMAN_PREWARM=off`
+skips it. `doctor` reports whether `OLLAMA_NUM_PARALLEL` lets both advisors share one load,
+and which of those models were resident before its own checks loaded them
+(`warm models resident before doctor pinged them: …`).
 
 **Fast-verify tier** (`FOREMAN_FAST_VERIFY=1`, default off). The one change here
 that trades thoroughness for speed. Docs/whitespace/config-only diffs under a
@@ -1147,7 +1154,7 @@ receipts    spend ledger — today, or one task
 verdict     the council's opinions for a task
 memory      list / add / rm learned facts (scoped per repo, with belief revision)
 schedule    add / ls / rm / toggle recurring batches ("every 30m", "daily 07:30", "weekly mon 09:00")
-prune       drop worktrees and branches of finished tasks (approved work only once it has landed)
+prune       drop worktrees and branches of finished tasks (approved work only once it has landed), closed tasks' receipts and verdicts older than `--days` (90), and all but `--keep-deps` (5) dep caches
 trace       full JSON reconstruction of a task
 debrief     what one finished epic shows: collected facts, findings, at most 3 suggestions (see Self-improvement)
 service     print a launchd plist for this install
@@ -1196,7 +1203,7 @@ and its re-run; it does not cover tests a worker runs inside its own session) ·
 `FOREMAN_API_ALLOW_SHELL=0` · `FOREMAN_TRACE_SINK` / `_KEY` · `FOREMAN_GATE=human|owner` (human) · `FOREMAN_LOCAL_ONLY=auto|1|0` (auto) ·
 `FOREMAN_MODEL_ROUTER` (haiku) · `FOREMAN_DOWNSHIFT=off` · `FOREMAN_PAGING_ALLOWANCE_GB` (7) ·
 `FOREMAN_RECHECK_MS` (60s; negative = off) ·
-`FOREMAN_ASSIGNEE=ai|human` (ai) · `FOREMAN_ARCHIVE_AFTER_DAYS` (7) · `FOREMAN_JAIL_RETAIN_DAYS` (3) · `FOREMAN_FAILED_JAIL_RETAIN_DAYS` (14) ·
+`FOREMAN_ASSIGNEE=ai|human` (ai) · `FOREMAN_BACKUP=off` · `FOREMAN_BACKUP_DIR` (`$FOREMAN_HOME/backups`) · `FOREMAN_BACKUP_COPY_DIR` (unset: `serve` warns; a second copy on another disk) · `FOREMAN_PREWARM=off` · `FOREMAN_ARCHIVE_AFTER_DAYS` (7) · `FOREMAN_JAIL_RETAIN_DAYS` (3) · `FOREMAN_FAILED_JAIL_RETAIN_DAYS` (14) ·
 `FOREMAN_LOCAL_MAX_OUTPUT_TOKENS` · `FOREMAN_LOCAL_NUM_CTX` · `FOREMAN_SHADOW_LOCAL` ·
 `FOREMAN_IGNORE_TRAINING_LOCK` · `FOREMAN_TEST_TIMEOUT_MIN` (30) · `FOREMAN_TEST_REAL_HOME=1` · `FOREMAN_TEST_KEEP_ENV` ·
 `FOREMAN_REVERT_TESTS=on` (off) — see [The revert check, per test](#the-revert-check-per-test-foreman_revert_tests) ·
@@ -1291,8 +1298,9 @@ inside its own directories, and pseudo-terminals it allocates itself. Read the t
 process in the same sandbox (how AddressSanitizer names a file and line).
 If the node Foreman runs on is installed under your home or a temp dir (nvm, an unpacked
 tarball), its install root (`<root>/bin/node`) is readable too, never writable, and does not take
-a `FOREMAN_SANDBOX_RO` place. It is opened only when it holds a node install and nothing else and
-neither is nor contains your home, a temp dir root or Foreman's home; otherwise `foreman doctor`
+a `FOREMAN_SANDBOX_RO` place. It is opened only when it holds a node install and nothing else, is not inside
+Foreman's home, the real repository or the jails' directory, and neither is nor contains your
+home, a temp dir root or Foreman's home; otherwise `foreman doctor`
 and `serve` print `sandboxed commands may not find node: …` with the fix. A version manager that
 puts a shim or symlink directory on `PATH` instead (volta, fnm) needs that directory in `FOREMAN_SANDBOX_RO`.
 
@@ -1446,7 +1454,7 @@ parked are unaffected either way.
 ## Tests
 
 ```bash
-npm run verify    # typecheck, then the whole suite (about 2,400 tests); the gate to run before a commit
+npm run verify    # typecheck, then the whole suite (about 2,450 tests); the gate to run before a commit
 npm test          # the suite alone
 npm run typecheck      # the native compiler (tsgo, @typescript/native-preview), the one the gate runs
 npm run typecheck:tsc  # tsc 5.9, the reference: run it when the two might disagree
