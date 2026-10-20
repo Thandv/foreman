@@ -3,7 +3,8 @@
  * the temp dirs, so a node installed by a version manager (nvm, fnm, volta, asdf: `~/.nvm/versions/node/v24.x/…`)
  * or unpacked into a temp dir cannot start inside it: `/bin/sh: node: command not found`. sandbox.ts gives this
  * root back read-only when it is narrow; this file only says what the root is, and whether it looks like a node
- * install and nothing else.
+ * install and nothing else. A version manager whose PATH entry is a shim or symlink directory elsewhere under the
+ * home (volta's ~/.volta/bin, fnm's multishell links) is not covered by this: that directory stays closed.
  *
  * A root is `<root>` for `<root>/bin/node`, accepted only when:
  *  - `<root>/bin/node` is the running binary (after realpath);
