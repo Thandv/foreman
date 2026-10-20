@@ -36,8 +36,8 @@ import { openLedgerForReceipt, openLedgerReadOnly, runDebrief, renderShort } fro
 
 const USAGE = `foreman — parallel agent mission control
 
-  foreman serve                          start the daemon + board
-  foreman stop                            stop the daemon and wait for it to exit (${daemonUrl(config.host, config.port)})
+  foreman serve                          start the daemon + board (${daemonUrl(config.host, config.port)})
+  foreman stop                            stop the daemon and wait for it to exit
   foreman add <title> --prompt <text>     queue a task
         [--kind code|writing|research|general] [--runner echo|shell|claude-code|codex-cli|api]
         [--repo <path>] [--priority N] [--after <id>[,<id>]] [--sensitivity S0|S1|S2]
@@ -1858,6 +1858,7 @@ async function main(): Promise<number> {
       }
       // Read before /api/doctor: its liveness pings load every local model, so residency read after them reported
       // doctor's own loads as warm (a boot warm that failed everywhere still showed every model).
+      process.stdout.write('checking models: up to 45s for each one that does not answer, 4 minutes in all…\n');
       const resident = await residentSummary();
       const d = await apiCall('/api/doctor');
       // As THIS shell's environment has it: the daemon reads FOREMAN_SANDBOX from its own, at start.

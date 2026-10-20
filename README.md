@@ -21,13 +21,24 @@ npm link                   # puts `foreman` on your PATH (package.json `bin`)
 foreman serve              # daemon + board on http://127.0.0.1:4100; startup prints `home <absolute path>` (the resolved `FOREMAN_HOME`; the `foreman up` line names the db)
 ```
 
+`npm link` writes to npm's global prefix. With a system-installed Node that may be a directory you
+cannot write to; set a user prefix first, e.g. `npm_config_prefix=~/.npm-global npm link`, and put
+`~/.npm-global/bin` on your PATH. If port 4100 is taken, start with `FOREMAN_PORT=<port>` (and keep it
+set for the other commands) to move the board.
+
 Open <http://127.0.0.1:4100> for the board. In a second terminal:
 
 ```bash
-foreman demo               # seed a batch and watch it run in parallel
+foreman demo               # seed a batch of echo-runner tasks; nothing prints while they run
 foreman doctor             # what models, runners and agents are actually available
 foreman stop               # stop the daemon and wait for it to exit
 ```
+
+`demo` only queues the tasks and prints the board URL; watch them run on the board or with
+`foreman watch`. One demo task ("Broken migration check") fails on purpose; `foreman ls --all` shows
+it. `doctor` can take a few minutes when local models are unreachable or memory is short: each model
+that does not answer waits up to 45 seconds, and the model checks stop after 4 minutes. It prints
+that first.
 
 Without `npm link`, use `alias foreman='node /path/to/foreman/src/cli.ts'`, or run
 `node src/cli.ts <command>` from the checkout. Every `foreman …` command in this README is the same
