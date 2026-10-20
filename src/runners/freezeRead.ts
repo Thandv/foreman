@@ -9,7 +9,11 @@ import type { FreezeRecord } from './freezeRecord.ts';
  * what to do about a dead recorder's groups is the caller's. Scope: one host, a recorder named by pid + start only.
  */
 
-/** At most this many files are read and classified per call; the cursor carries the sweep on to the rest. */
+/**
+ * At most this many directory entries are read and classified per call; the cursor carries the sweep on to the rest.
+ * Only names a record can have count (freezeRecord's parseRecordName): a stale `<name>.json.tmp` or any other entry
+ * is never read, reported or counted, so it cannot use up the window.
+ */
 export const FREEZE_READ_MAX_FILES = 64;
 
 export interface FreezeFound {
@@ -66,11 +70,11 @@ function readRecordFile(dir: string, name: string): Read {
   }
 }
 
-/** The `.json` names under `<home>/frozen`, sorted; none when the directory is absent, not a real directory or unreadable. */
+/** The record names under `<home>/frozen`, sorted; none when the directory is absent, not a real directory or unreadable. */
 function listNames(dir: string): string[] {
   try {
     if (!fs.lstatSync(dir).isDirectory()) return [];
-    return fs.readdirSync(dir).filter((n) => n.endsWith('.json')).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return fs.readdirSync(dir).filter((n) => parseRecordName(n) !== null).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   } catch {
     return [];
   }
@@ -86,8 +90,12 @@ function windowAfter(names: string[], cursor: string | null): string[] {
  * One sweep step. `procs` is the injected process snapshot (null: unavailable, so nothing is known and nothing is
  * returned). `held` is exactly: (1) every group named by a valid record whose recorder is alive; (2) any pgid equal
  * to the pid of a live process whose presence marker (its own record file, matching pid AND start) exists.
- * Records of live recorders outside this call's window are still read for `held` (there are at most as many as live
- * processes) but are reported only when the window reaches them, so the cap bounds what is classified, not what is held.
+ * `held` is exact whatever the window: the cap bounds the scan of the directory (what is classified and reported),
+ * not the safety set. A live recorder's file is found by the one name its snapshot row gives (pid + start key), not by
+ * scanning, so beyond the window at most one more file per live process with a file present is read, whatever else
+ * the directory holds. Clause (2) rests on the marker existing, not on its content being readable: a live process's
+ * own group is held even when its file cannot be read (when in doubt, hold). Clause (1) needs the groups, so a live
+ * recorder's record that cannot be read adds nothing beyond clause (2).
  */
 export function readFrozen(home: string, procs: readonly ProcRow[] | null, cursor: string | null): FreezeReadResult {
   const result: FreezeReadResult = { actionable: [], kept: [], skipped: [], held: new Set(), cursor };
@@ -100,10 +108,6 @@ export function readFrozen(home: string, procs: readonly ProcRow[] | null, curso
   const inWindow = new Set(window);
 
   for (const name of window) {
-    if (!parseRecordName(name)) {
-      result.skipped.push({ file: name, reason: 'not a record file name' });
-      continue;
-    }
     const r = readRecordFile(dir, name);
     if (!r.ok) {
       result.skipped.push({ file: name, reason: r.reason });
@@ -115,15 +119,16 @@ export function readFrozen(home: string, procs: readonly ProcRow[] | null, curso
     }
   }
 
-  // Live recorders: clause (2) for every live process, clause (1) for records the window did not reach.
+  // Live recorders, by exact name: clause (2) for every live process with a marker, clause (1) for records the window
+  // did not reach (those it reached were held above).
   const present = new Set(names);
   for (const p of procs) {
     const name = recordFileName(p);
     if (!present.has(name)) continue;
-    const r = readRecordFile(dir, name);
-    if (!r.ok || r.record.recorder.pid !== p.pid || r.record.recorder.start !== p.start) continue;
     result.held.add(p.pid);
-    if (!inWindow.has(name)) for (const g of r.record.groups) result.held.add(g.pgid);
+    if (inWindow.has(name)) continue;
+    const r = readRecordFile(dir, name);
+    if (r.ok && r.record.recorder.start === p.start) for (const g of r.record.groups) result.held.add(g.pgid);
   }
   return result;
 }

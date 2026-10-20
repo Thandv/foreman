@@ -63,8 +63,29 @@ test('a symbolic link is skipped, and what it points at is not read', (t) => {
   fs.symlinkSync(target, path.join(g.home, 'frozen', '5001-x.json'));
   const r = readFrozen(g.home, [], null);
   assert.deepEqual(r.actionable, []);
-  assert.equal(r.skipped.length, 1);
-  assert.match(r.skipped[0]!.reason, /symbolic link/);
+  assert.deepEqual(r.skipped, [{ file: '5001-x.json', reason: 'a symbolic link' }]);
+});
+
+test('a frozen/ that is a symbolic link to a directory reads as empty', (t) => {
+  const g = procGuard(t);
+  const real = path.join(g.home, 'elsewhere');
+  fs.mkdirSync(real);
+  fs.writeFileSync(path.join(real, '5001-x.json'), json({ pid: 5001, start: 'x' }));
+  fs.symlinkSync(real, path.join(g.home, 'frozen'));
+  const r = readFrozen(g.home, [], null);
+  assert.deepEqual([r.actionable, r.kept, r.skipped, r.cursor], [[], [], [], null]);
+});
+
+test('names no record can have (stale .json.tmp, other .json) are not read, reported or counted toward the cap', (t) => {
+  const g = procGuard(t);
+  for (let i = 0; i < FREEZE_READ_MAX_FILES; i++) {
+    put(g.home, `${100 + i}-a.json.tmp`, '{garbage');
+    put(g.home, `junk${i}.json`, '{garbage');
+  }
+  putRecord(g.home, { pid: 9000, start: 'a' }, GROUPS); // valid, dead; sorts after every junk name
+  const r = readFrozen(g.home, [], null);
+  assert.deepEqual(r.actionable.map((a) => a.file), ['9000-a.json']);
+  assert.deepEqual([r.kept, r.skipped, r.cursor], [[], [], '9000-a.json']);
 });
 
 test('a directory and a fifo named like a record are skipped as not regular files', (t) => {
@@ -149,6 +170,36 @@ test('held (2) negative: a live process with no marker, or a marker with another
   const r = readFrozen(g.home, [child], null);
   assert.deepEqual([...r.held], []);
   assert.equal(r.actionable.length, 1);
+});
+
+test('held stays exact for a live recorder whose record is outside the window', { ...NEEDS_PS }, async (t) => {
+  const g = procGuard(t);
+  const child = await liveChild(g);
+  resetFreezeRecorderForTest();
+  const rec = installFreezeRecorder(g.home, { pid: child.pid, start: child.start });
+  assert.equal(rec.ok, true);
+  assert.equal(rec.recorder!.record([{ pgid: 4321, members: [[4322, 's']] }]).ok, true);
+  resetFreezeRecorderForTest();
+  for (let i = 0; i < FREEZE_READ_MAX_FILES; i++) {
+    if (i % 2 === 0) put(g.home, `${100 + i}-a.json`, '{garbage');
+    else putRecord(g.home, { pid: 100 + i, start: 'a' }, [{ pgid: 6000 + i, members: [] }]); // dead recorders
+  }
+  const own = recordFileName(child);
+  const r = readFrozen(g.home, [child], own); // the window is the 64 others; the child's record is the 65th
+  assert.equal(r.skipped.length + r.actionable.length, FREEZE_READ_MAX_FILES);
+  assert.deepEqual(r.kept, []);
+  assert.ok(![...r.skipped, ...r.actionable].some((x) => x.file === own), 'the live record is outside this window');
+  assert.deepEqual([...r.held].sort(), [child.pid, 4321].sort());
+});
+
+test('held (2) rests on the marker existing: a live process whose marker cannot be read still holds its own pgid', { ...NEEDS_PS }, async (t) => {
+  const g = procGuard(t);
+  const child = await liveChild(g);
+  put(g.home, recordFileName(child), '{torn');
+  const r = readFrozen(g.home, [child], null);
+  assert.deepEqual([...r.held], [child.pid]);
+  assert.deepEqual([r.actionable, r.kept], [[], []]);
+  assert.deepEqual(r.skipped.map((s) => s.reason), ['not a valid freeze record']);
 });
 
 test('64 kept files and 1 valid dead record: the dead one is returned within two calls', (t) => {
