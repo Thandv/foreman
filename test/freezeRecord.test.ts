@@ -103,6 +103,47 @@ test('a failed write at install installs a FAILED recorder', (t) => {
   assert.equal(r.ok, false);
   assert.equal(activeRecorder()!.failed, true);
   assert.equal(activeRecorder()!.record([group(10)]).ok, false);
+  // Once the cause is gone, a FAILED recorder still writes nothing: it holds no file to write.
+  fs.rmSync(path.join(g.home, 'frozen'));
+  assert.equal(activeRecorder()!.record([group(10)]).ok, false);
+  assert.equal(activeRecorder()!.forget([10]).ok, false);
+  assert.deepEqual(fs.readdirSync(g.home), [], 'a FAILED recorder wrote nothing');
+  resetFreezeRecorderForTest();
+});
+
+test('the file is 0600 and the dir 0700 whatever the umask, and a stale temp file does not stop the write', (t) => {
+  const g = procGuard(t);
+  resetFreezeRecorderForTest();
+  fs.mkdirSync(path.join(g.home, 'frozen'));
+  fs.writeFileSync(path.join(g.home, 'frozen', `${FILE}.tmp`), 'left by a write that died');
+  const old = process.umask(0o277);
+  try {
+    assert.equal(installFreezeRecorder(g.home, SELF).ok, true);
+  } finally {
+    process.umask(old);
+  }
+  assert.equal(fs.statSync(path.join(g.home, 'frozen')).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(g.home, 'frozen', FILE)).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(path.join(g.home, 'frozen')), [FILE]);
+  resetFreezeRecorderForTest();
+});
+
+test('the exit cleanup is registered once, however many installs', (t) => {
+  const g = procGuard(t);
+  const before = process.listenerCount('exit');
+  for (let i = 0; i < 3; i++) {
+    resetFreezeRecorderForTest();
+    installFreezeRecorder(g.home, SELF);
+  }
+  assert.ok(process.listenerCount('exit') - before <= 1, `${process.listenerCount('exit') - before} exit listeners were added`);
+  resetFreezeRecorderForTest();
+});
+
+test('a recorder start with no letter or digit installs a FAILED recorder (its file name would carry no start)', (t) => {
+  const g = procGuard(t);
+  resetFreezeRecorderForTest();
+  assert.equal(installFreezeRecorder(g.home, { pid: 4242, start: ' :: ' }).ok, false);
+  assert.equal(fs.existsSync(path.join(g.home, 'frozen')), false);
   resetFreezeRecorderForTest();
 });
 
@@ -213,11 +254,14 @@ test('the read contract: a record parses, a bad one does not, and the name must 
     JSON.stringify({ v: 1, recorder: SELF }),
     JSON.stringify({ v: 1, recorder: SELF, groups: [group(10, FREEZE_MEMBERS_MAX + 1)] }),
     JSON.stringify({ v: 1, recorder: SELF, groups: [{ pgid: -1, members: [] }] }),
-  ]) assert.equal(parseFreezeRecord(bad), null, bad);
+    JSON.stringify({ v: 1, recorder: { pid: 2 ** 32, start: 'a' }, groups: [] }),
+    JSON.stringify({ v: 1, recorder: SELF, groups: Array.from({ length: FREEZE_MAX_GROUPS + 1 }, (_, i) => group(i + 1)) }),
+  ]) assert.equal(parseFreezeRecord(bad), null, bad.slice(0, 80));
   assert.equal(startKey(SELF.start), 'FriOct162000002026');
   assert.equal(recordFileName(SELF), FILE);
   assert.deepEqual(parseRecordName(FILE), { pid: 4242, key: 'FriOct162000002026' });
   assert.equal(parseRecordName('../4242-a.json'), null);
+  assert.equal(parseRecordName(`${FILE}.tmp`), null, 'a temp file is not a record');
   assert.equal(nameMatchesRecord(FILE, rec), true);
   assert.equal(nameMatchesRecord('4243-FriOct162000002026.json', rec), false, 'another pid');
   assert.equal(nameMatchesRecord('4242-FriOct162000002027.json', rec), false, 'another start');
