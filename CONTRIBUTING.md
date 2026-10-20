@@ -9,6 +9,8 @@ it. The [README](README.md) describes the whole system; read the parts you inten
 
 Foreman is dependency-free at runtime and uses Node built-ins only (`node:sqlite`, `node:http`,
 native TypeScript execution). You need **Node 24 or later** (`engines` in `package.json`) and git.
+A Node under your home (nvm) or in a temp dir works in the test sandbox: its install root is
+opened read-only for sandboxed commands, and `foreman doctor` says so if it cannot be.
 
 ```bash
 npm ci            # dev-only dependencies: the TypeScript compilers and @types/node

@@ -1238,6 +1238,12 @@ it: `git add`, `commit` and `update-ref` there fail (a repository the suite make
 inside the jail or under `TMPDIR`, takes commits normally). Use loopback networking, unix sockets
 inside its own directories, and pseudo-terminals it allocates itself. Read the task of another
 process in the same sandbox (how AddressSanitizer names a file and line).
+If the node Foreman runs on is installed under your home or a temp dir (nvm, an unpacked
+tarball), its install root (`<root>/bin/node`) is readable too, never writable, and does not take
+a `FOREMAN_SANDBOX_RO` place. It is opened only when it holds a node install and nothing else and
+neither is nor contains your home, a temp dir root or Foreman's home; otherwise `foreman doctor`
+and `serve` print `sandboxed commands may not find node: …` with the fix. A version manager that
+puts a shim or symlink directory on `PATH` instead (volta, fnm) needs that directory in `FOREMAN_SANDBOX_RO`.
 
 **What it cannot do.** Write anywhere else. Read, list or stat anything under `/Users`,
 `/Volumes`, the shared temp dirs (`/tmp`, `/var/tmp`, `/var/folders`), or Foreman's home (the
