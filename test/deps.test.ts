@@ -588,3 +588,51 @@ test('off macOS /bin/cp is never run: `cp -c` is another command there, and the 
   assert.equal(fs.readlinkSync(path.join(f.jail, 'node_modules', '.bin', 'tool')), '../tool/bin/tool');
   f.done();
 });
+
+// ------------------------------------------- tracked / ignored / not ignored
+
+const porcelain = (dir: string): string => execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+
+test('node_modules tracked by git is left alone, and the reason says tracked', async () => {
+  const repo = npmRepo({ ignoreModules: false });
+  execFileSync('git', ['add', '-f', 'node_modules'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', 'track modules'], { cwd: repo, stdio: 'ignore' });
+  const result = await provisionDeps(jailFrom(repo), repo);
+  assert.equal(result.provisioned, false);
+  assert.match(result.reason, /tracked by git/);
+});
+
+test('node_modules ignored by git is provisioned without mention of tracking or the diff', async () => {
+  const repo = npmRepo();
+  const result = await provisionDeps(jailFrom(repo), repo);
+  assert.equal(result.provisioned, true, result.reason);
+  assert.doesNotMatch(result.reason, /tracked|diff/);
+});
+
+test('node_modules neither tracked nor ignored is provisioned, said so, and kept out of the jail diff', async () => {
+  const repo = npmRepo({ ignoreModules: false });
+  const jail = jailFrom(repo);
+  const result = await provisionDeps(jail, repo);
+  assert.equal(result.provisioned, true, result.reason);
+  assert.doesNotMatch(result.reason, /tracked by git/);
+  assert.match(result.reason, /not ignored by git.*excluded from the diff/);
+  assert.equal(fs.existsSync(path.join(jail, 'node_modules', 'dep', 'index.js')), true);
+  assert.equal(porcelain(jail), '', 'the placed tree is not an untracked change in the jail');
+});
+
+test('a repo with no node_modules at all and none ignored is not reported as tracked', async () => {
+  const repo = npmRepo({ ignoreModules: false, withModules: false });
+  const result = await provisionDeps(jailFrom(repo), repo);
+  assert.equal(result.provisioned, false);
+  assert.match(result.reason, /no cached install for lockfile/);
+});
+
+test('when git cannot say whether node_modules is tracked, it is left alone and the reason says so', async () => {
+  const repo = npmRepo({ ignoreModules: false });
+  const jail = jailFrom(repo);
+  fs.writeFileSync(path.join(repo, '.git', 'index'), 'not an index');
+  const result = await provisionDeps(jail, repo);
+  assert.equal(result.provisioned, false);
+  assert.match(result.reason, /could not determine whether node_modules is tracked/);
+  assert.equal(fs.existsSync(path.join(jail, 'node_modules')), false);
+});
