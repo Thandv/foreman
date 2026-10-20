@@ -137,6 +137,12 @@ worker's cwd, its jail, and the sandbox then refuses the suite run with `the run
 home`. Inside a worker run the CLI is refused (see Commands), so a worker's `foreman` command does not reach the ledger
 by accident.
 
+When a freeze recorder is installed (`src/runners/freezeRecord.ts`), `LeftoverReaper` writes the process groups it
+is about to SIGSTOP to `<FOREMAN_HOME>/frozen/` first and forgets them once the reap has settled. If that write is
+refused (a FAILED recorder, or a sandbox that keeps a jail out of Foreman's home), nothing is stopped: the leftovers
+get SIGTERM, the grace and SIGKILL without a freeze, and the daemon log says `freeze record failed, leftovers are
+ended without a freeze`. With no recorder installed (the default) nothing is written and the reap is unchanged.
+
 Out of scope and unchanged: a worker can still reach the daemon's HTTP API through `FOREMAN_PORT` (the
 `x-foreman-run` header is unauthenticated), and an unsandboxed `claude-code` worker can still open
 `<home>/foreman.db` directly (`node:sqlite`, `sqlite3`). `FOREMAN_SANDBOX=all` is meant to close that, but in this build

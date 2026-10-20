@@ -1,6 +1,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { constants as fsConstants, promises as fsp } from 'node:fs';
 import path from 'node:path';
+import { FREEZE_MEMBERS_MAX, activeRecorder, type FreezeGroup, type FreezeRecorder } from './freezeRecord.ts';
 
 /**
  * Process-tree reaping. Killing a child's recorded process group is not enough:
@@ -668,6 +669,29 @@ export class LeftoverReaper {
     }
     let groups = leftoverGroups(rows, root, this.seen, rootAlive, forbidden, this.recent);
     if (!groups.length) return { groups, killed: [], survivors: [], noTable: false, timedOut: false, error: null };
+    // The freeze record (none installed: nothing is written and the reap is as it was). Forgotten once the reap settles.
+    const recorder = activeRecorder();
+    const recorded = new Set<number>();
+    try {
+      return await this.freezeAndEnd(root, rootAlive, rows, groups, forbidden, recorder, recorded);
+    } finally {
+      // After the grace and the SIGKILL, on every path (normal, end-for-good, the bound, an error); never at release().
+      if (recorder && recorded.size) {
+        const r = recorder.forget([...recorded]);
+        if (!r.ok) console.error(`foreman: could not clear the freeze record: ${r.error}`);
+      }
+    }
+  }
+
+  private async freezeAndEnd(
+    root: number,
+    rootAlive: boolean,
+    rows: ProcRow[],
+    groups: number[],
+    forbidden: Set<number>,
+    recorder: FreezeRecorder | null,
+    recorded: Set<number>,
+  ): Promise<ReapReport> {
     // Freeze first: a stopped process forks nothing, so a fresh look then finds
     // every child made since the last one, still under a living parent.
     const stopped = new Set<number>();
@@ -682,6 +706,15 @@ export class LeftoverReaper {
         // Past the bound the freeze is over (release() has run): no SIGSTOP from here, the reap goes on without one.
         if (!fresh.length || this.gaveUp) break;
         assertSignallable(fresh, forbidden);
+        if (recorder) {
+          // Written before the SIGSTOP; if it cannot be, nothing is stopped (the TERM below still goes out).
+          const res = recorder.record(freezeGroups(rows, fresh));
+          if (!res.ok) {
+            console.error(`foreman: freeze record failed, leftovers are ended without a freeze: ${res.error}`);
+            break;
+          }
+          for (const g of fresh) recorded.add(g);
+        }
         for (const g of fresh) {
           stopped.add(g);
           this.frozen.add(g);
@@ -737,6 +770,14 @@ export class LeftoverReaper {
     const survivors = await this.waitEmpty(left, this.opts.killWaitMs);
     return { groups: groups.sort((a, b) => a - b), killed: left.sort((a, b) => a - b), survivors, noTable: false, timedOut: false, error: null };
   }
+}
+
+/** The record entries for `pgids`: each group and up to FREEZE_MEMBERS_MAX of its members as the snapshot has them. */
+function freezeGroups(rows: ProcRow[], pgids: number[]): FreezeGroup[] {
+  return pgids.map((pgid) => ({
+    pgid,
+    members: rows.filter((r) => r.pgid === pgid).slice(0, FREEZE_MEMBERS_MAX).map((r): [number, string] => [r.pid, r.start]),
+  }));
 }
 
 /** One line for the daemon's log about a reap, or null when there is nothing to say. */
