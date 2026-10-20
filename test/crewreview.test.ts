@@ -287,6 +287,15 @@ async function settle(sched: Scheduler, until: () => boolean, ms = 30_000): Prom
   }
 }
 
+/** Poll a condition (a marker file, a recorded receipt) rather than guess how long the machine needs. */
+async function waitUntil(until: () => boolean, ms = 30_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!until()) {
+    if (Date.now() > deadline) throw new Error('waitUntil timed out');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function fixtureRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-repo-'));
   const git = (...args: string[]): void => {
@@ -1655,22 +1664,17 @@ test('a three-reviewer chain that lost one and split the rest fails — one PASS
 
 test('a cancel landing while one reviewer is still out is not a lost reviewer', async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  // The devil's advocate takes five seconds; the task is canceled at one.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-slow-'));
-  fs.writeFileSync(path.join(dir, 'pass.json'), reviewReply('pass', 'fine'));
-  fs.writeFileSync(
-    path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *devils-advocate*) sleep 5;; esac\ncat "${dir}/pass.json"\n`,
-  );
-  fs.chmodSync(path.join(dir, 'claude'), 0o755);
-  process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
+  // The devil's advocate takes five seconds; the task is canceled once its call is open.
+  const { dir, started } = slowAdvocate();
   const store = new Store(':memory:');
   try {
     const { task, runId } = ticket(store);
     const ac = new AbortController();
-    setTimeout(() => abortFor(ac, 'cancel'), 1_000);
     const notes: string[] = [];
-    const out = await crewReview({ task, runId, store, diff: DIFF, council: null, signal: ac.signal, onNote: (l) => notes.push(l) });
+    const review = crewReview({ task, runId, store, diff: DIFF, council: null, signal: ac.signal, onNote: (l) => notes.push(l) });
+    await waitUntil(() => fs.existsSync(started));
+    abortFor(ac, 'cancel');
+    const out = await review;
     assert.equal(out, null);
     const kinds = store.receiptsForTask(task.id).map((r) => String(r['kind']));
     assert.ok(!kinds.includes('review:incomplete') && !kinds.includes('review:unavailable'), kinds.join(','));
@@ -1811,7 +1815,7 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) sleep 5; cat "${dir}/chair.json";; *devils-advocate*) cat "${dir}/junk.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *devils-advocate*) cat "${dir}/junk.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -1832,7 +1836,7 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
     await settle(sched, () => store.eventsForTask(t.id).some((e) => /crew review incomplete/.test(e.message)));
-    await new Promise((r) => setTimeout(r, 1_000)); // the chair is out
+    await settle(sched, () => fs.existsSync(path.join(dir, 'chair-started'))); // the chair is out
     await sched.stop();
     assert.doesNotMatch(store.getTask(t.id)!.error ?? '', /a crew reviewer passed it/);
   } finally {
@@ -1842,14 +1846,18 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
   }
 });
 
-/** A claude stand-in whose devil's advocate takes five seconds, so a run can be stopped mid-chain. */
-function slowAdvocate(): { dir: string } {
+/**
+ * A claude stand-in whose devil's advocate takes five seconds, so a run can be stopped mid-chain. `started` appears
+ * once the advocate's call is really open: gate a stop, cancel or deadline on it, not on a timer.
+ */
+function slowAdvocate(): { dir: string; started: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-slowadv-'));
+  const started = path.join(dir, 'advocate-started');
   fs.writeFileSync(path.join(dir, 'pass.json'), reviewReply('pass', 'fine'));
-  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) sleep 5;; esac\ncat "${dir}/pass.json"\n`);
+  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 5;; esac\ncat "${dir}/pass.json"\n`);
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
-  return { dir };
+  return { dir, started };
 }
 
 test('a cancel during the crew chain, after a council FAIL, is not undone by a repair round', { timeout: 60_000 }, async () => {
@@ -1874,7 +1882,7 @@ test('a cancel during the crew chain, after a council FAIL, is not undone by a r
     });
     assert.ok(store.getTask(t.id)!.maxRepairs >= 1, 'a repair round is available, so only the guard can stop one');
     await settle(sched, () => store.eventsForTask(t.id).some((e) => e.type === 'stage' && e.message === 'crew review'));
-    await new Promise((r) => setTimeout(r, 1_000)); // the devil's advocate is still out
+    await settle(sched, () => fs.existsSync(path.join(dir, 'advocate-started'))); // the devil's advocate is out
     store.cancel(t.id);
     // Wait for the run itself to end — not activeCount, which counts only the
     // work lane — and without ticking, so a wrongly requeued task cannot start.
@@ -1914,7 +1922,7 @@ test('a daemon stop during the crew chain requeues the ticket for when the daemo
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
     await settle(sched, () => store.eventsForTask(t.id).some((e) => e.type === 'stage' && e.message === 'crew review'));
-    await new Promise((r) => setTimeout(r, 1_000));
+    await settle(sched, () => fs.existsSync(path.join(dir, 'advocate-started')));
     await sched.stop(); // a launchd restart, an upgrade
     const after = store.getTask(t.id)!;
     assert.equal(after.status, 'queued', 'half a review is not parked as a review; the task runs again');
@@ -1948,7 +1956,7 @@ test('a cancel then an immediate retry: the canceled run neither parks nor repai
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
     await settle(sched, () => store.eventsForTask(t.id).some((e) => e.type === 'stage' && e.message === 'crew review'));
-    await new Promise((r) => setTimeout(r, 1_000));
+    await settle(sched, () => fs.existsSync(path.join(dir, 'advocate-started')));
     const canceledRun = store.latestRun(t.id)!.id;
     store.cancel(t.id);
     store.retry(t.id); // back-to-back: the task is `queued` before the old run reaches the gate
@@ -2041,7 +2049,7 @@ test('a cancel while the chair is deciding writes no crew verdict', { timeout: 6
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2053,8 +2061,10 @@ test('a cancel while the chair is deciding writes no crew verdict', { timeout: 6
     const passed = council(store, runId, task.id, 'pass'); // the crew will disagree, so the chair is called
     const before = store.verdictsForTask(task.id).length;
     const ac = new AbortController();
-    setTimeout(() => abortFor(ac, 'cancel'), 1_500);
-    const out = await crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    const review = crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    await waitUntil(() => fs.existsSync(path.join(dir, 'chair-started')));
+    abortFor(ac, 'cancel');
+    const out = await review;
     assert.equal(out, null);
     assert.equal(store.verdictsForTask(task.id).length, before, 'no crew row for a canceled task');
   } finally {
@@ -2070,7 +2080,7 @@ test("a deadline while the chair is deciding keeps the chain's FAIL: out of time
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('pass', 'fine'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2080,8 +2090,10 @@ test("a deadline while the chair is deciding keeps the chain's FAIL: out of time
     process.env['FOREMAN_CREW_REVIEW'] = 'always'; // or the unanimous council pass skips the chain
     const passed = council(store, runId, task.id, 'pass');
     const ac = new AbortController();
-    setTimeout(() => abortFor(ac, 'deadline'), 1_500);
-    const out = await crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    const review = crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    await waitUntil(() => fs.existsSync(path.join(dir, 'chair-started')));
+    abortFor(ac, 'deadline');
+    const out = await review;
     assert.equal(out?.verdict, 'fail', 'the chain said FAIL; the chair never ruled');
     assert.equal(store.verdictsForTask(task.id)[0]!.source, 'crew', 'and that is the newest row the gate reads');
   } finally {
@@ -2097,8 +2109,10 @@ test('a daemon stop mid-fan-out is not a lost reviewer either', async () => {
   try {
     const { task, runId } = ticket(store);
     const ac = new AbortController();
-    setTimeout(() => abortFor(ac, 'stop'), 1_000);
-    const out = await crewReview({ task, runId, store, diff: DIFF, council: null, signal: ac.signal });
+    const review = crewReview({ task, runId, store, diff: DIFF, council: null, signal: ac.signal });
+    await waitUntil(() => fs.existsSync(path.join(dir, 'advocate-started')));
+    abortFor(ac, 'stop');
+    const out = await review;
     assert.equal(out, null);
     const kinds = store.receiptsForTask(task.id).map((r) => String(r['kind']));
     assert.ok(!kinds.includes('review:incomplete') && !kinds.includes('review:unavailable'), kinds.join(','));
@@ -2110,14 +2124,18 @@ test('a daemon stop mid-fan-out is not a lost reviewer either', async () => {
 
 test("a run that reaches its own deadline mid-review parks with the verdict it has — it is not requeued", { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  const { dir } = slowAdvocate();
+  const { dir, started } = slowAdvocate();
+  // The advocate sleeps far past the test; the deadline is hand-fired once its call is open (test/fakeclock.ts).
+  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 120;; esac\ncat "${dir}/pass.json"\n`);
   const repo = fixtureRepo();
   const store = new Store(':memory:');
   const op = (verdict: 'pass' | 'fail') => ({ model: verdict, provider: 'ollama', local: true, verdict, confidence: 0.8, critique: verdict, costUsd: 0, latencyMs: 1 });
+  const deadline = new HandFiredDeadline();
   const sched = new Scheduler(store, {
     tickMs: 5,
     maxWorkers: 1,
-    taskTimeoutMs: 2_500,
+    taskTimeoutMs: 600_000,
+    runClock: deadline.clock,
     verify: async ({ task, runId }) => store.addVerdict({
       runId, taskId: task.id, verdict: 'pass', disagreement: true, chairSummary: 'the FAIL misread the diff', critique: 'ok',
       council: [op('pass'), op('fail')],
@@ -2128,6 +2146,8 @@ test("a run that reaches its own deadline mid-review parks with the verdict it h
       title: 'touch the readme', prompt: "printf 'x\\n' >> README.md", kind: 'code', runner: 'shell',
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
+    await settle(sched, () => fs.existsSync(started));
+    deadline.expire();
     await settle(sched, () => {
       const run = store.latestRun(t.id);
       return Boolean(run) && run!.status !== 'running';
@@ -2194,7 +2214,7 @@ test('a cancel that lands after the deadline still reads as a cancel: no verdict
   // A chair that shrugs off SIGTERM, so the chain is still settling when the cancel lands.
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) trap '' TERM; sleep 3; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) trap '' TERM; touch "${dir}/chair-started"; sleep 3; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2205,9 +2225,13 @@ test('a cancel that lands after the deadline still reads as a cancel: no verdict
     const passed = council(store, runId, task.id, 'pass');
     const before = store.verdictsForTask(task.id).length;
     const ac = new AbortController();
-    setTimeout(() => abortFor(ac, 'deadline'), 1_000);
-    setTimeout(() => abortFor(ac, 'cancel'), 1_500);
-    const out = await crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    const review = crewReview({ task, runId, store, diff: DIFF, council: passed, signal: ac.signal });
+    await waitUntil(() => fs.existsSync(path.join(dir, 'chair-started')));
+    abortFor(ac, 'deadline');
+    // The chair ignores SIGTERM, so the chain is still settling when the cancel is recorded; both causes are on the
+    // signal before the chain reads them, in whichever order they arrive.
+    abortFor(ac, 'cancel');
+    const out = await review;
     assert.equal(out, null);
     assert.equal(store.verdictsForTask(task.id).length, before, 'no crew row for a canceled task');
     assert.equal(store.childrenOf(task.id).length, 0, 'no follow-up ticket escapes the cancel');
@@ -2277,7 +2301,7 @@ test('a daemon stop while the crew chain leads asks no fallback council either',
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
     await settle(sched, () => store.eventsForTask(t.id).some((e) => e.type === 'stage' && e.message === 'crew review'));
-    await new Promise((r) => setTimeout(r, 1_000));
+    await settle(sched, () => fs.existsSync(path.join(dir, 'advocate-started')));
     await sched.stop();
     assert.equal(councilCalls, 0);
     assert.equal(store.getTask(t.id)!.status, 'queued');
@@ -2295,7 +2319,7 @@ test('a daemon stop while the crew chair is deciding writes no crew verdict, and
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\ncase "$*" in *"You chair the"*) sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
+    `#!/bin/sh\ncase "$*" in *"You chair the"*) touch "${dir}/chair-started"; sleep 5; cat "${dir}/chair.json";; *) cat "${dir}/fail.json";; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
@@ -2309,7 +2333,7 @@ test('a daemon stop while the crew chair is deciding writes no crew verdict, and
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
     await settle(sched, () => store.receiptsForTask(t.id).filter((r) => String(r['kind']) === 'review').length >= 2);
-    await new Promise((r) => setTimeout(r, 800)); // the chair (called on the first failure) is out
+    await settle(sched, () => fs.existsSync(path.join(dir, 'chair-started'))); // the chair (called on the first failure) is out
     await sched.stop();
     assert.equal(store.verdictsForTask(t.id).filter((v) => v.source === 'crew').length, 0);
     assert.equal(store.getTask(t.id)!.status, 'queued');
@@ -2341,7 +2365,7 @@ test('a run canceled while the crew chain leads asks no fallback council', { tim
       repo, role: 'dev', playbook: 'soft', acceptance: 'the readme mentions it',
     });
     await settle(sched, () => store.eventsForTask(t.id).some((e) => e.type === 'stage' && e.message === 'crew review'));
-    await new Promise((r) => setTimeout(r, 1_000));
+    await settle(sched, () => fs.existsSync(path.join(dir, 'advocate-started')));
     store.cancel(t.id);
     await sched.stop();
     assert.equal(councilCalls, 0, 'nobody would act on what a fallback council said');
