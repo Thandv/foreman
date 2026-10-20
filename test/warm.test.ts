@@ -1,7 +1,48 @@
 import './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { prewarmRoster, residentSummary, warmSummary, warmTargets } from '../src/warm.ts';
+import { testHome } from './env.ts';
+
+test('doctor reads residency before its /api/doctor pings, which load models, so it never reports its own loads', async () => {
+  // One stand-in for both the daemon and Ollama: nothing is resident until /api/doctor is asked, which (like the real
+  // endpoint's liveness pings) loads every model.
+  const { specs } = await import('../src/models.ts');
+  const resident = new Set<string>();
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/doctor') {
+      for (const spec of specs().values()) resident.add(spec.model);
+      res.end(JSON.stringify({
+        home: testHome, workers: { active: 0, max: 1, verifying: 0, verifyLane: 1 }, mode: 'test',
+        tiers: { owner: 'x', senior: 'x', worker: 'x' }, budget: { spentToday: 0, dailyCapUsd: 1 },
+        models: [], runners: [], agents: [], refusedAgents: [], bench: null,
+      }));
+    } else if (req.url === '/api/ps') {
+      res.end(JSON.stringify({ models: [...resident].map((name) => ({ name, model: name })) }));
+    } else {
+      res.statusCode = 404;
+      res.end('{}');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const out = await new Promise<string>((resolve) => {
+      execFile(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'cli.ts'), 'doctor'], {
+        env: { ...process.env, FOREMAN_PORT: String(port), FOREMAN_OLLAMA_URL: `http://127.0.0.1:${port}` },
+        timeout: 60_000,
+      }, (_err, stdout, stderr) => resolve(`${stdout}${stderr}`));
+    });
+    const line = out.split('\n').find((l) => l.startsWith('warm models resident')) ?? out;
+    assert.equal(line, `warm models resident before doctor pinged them: (none) — failed: ${
+      warmTargets().map((alias) => `${alias} (not loaded)`).join('; ')}`);
+  } finally {
+    server.close();
+  }
+});
 
 test('residentSummary reports resident models, and the reason when Ollama is unreachable', async () => {
   const fast = (await import('../src/models.ts')).resolveSpec('local-fast').model;

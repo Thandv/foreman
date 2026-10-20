@@ -128,7 +128,8 @@ export function warmSummary(results: WarmResult[]): string {
 /**
  * Read-only check of the warm targets against what Ollama holds resident now.
  * The daemon's boot-warm results are not exposed to doctor (its endpoint is
- * server-side), so doctor reports this instead and labels it as "now".
+ * server-side), so doctor reports this instead, read before its /api/doctor
+ * request: that request pings, and so loads, every local model.
  */
 export async function residentSummary(
   aliases: string[] = warmTargets(),

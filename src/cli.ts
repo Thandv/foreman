@@ -1856,6 +1856,9 @@ async function main(): Promise<number> {
         }
         return 0;
       }
+      // Read before /api/doctor: its liveness pings load every local model, so residency read after them reported
+      // doctor's own loads as warm (a boot warm that failed everywhere still showed every model).
+      const resident = await residentSummary();
       const d = await apiCall('/api/doctor');
       // As THIS shell's environment has it: the daemon reads FOREMAN_SANDBOX from its own, at start.
       process.stdout.write(`${await sandboxSummary()}\n`);
@@ -1904,7 +1907,7 @@ async function main(): Promise<number> {
         `\nollama parallelism: ${parallelism.numParallel ?? 'unknown'}` +
           `${parallelism.ok ? '' : `  ⚠ ${parallelism.advice}`}\n`,
       );
-      process.stdout.write(`warm models resident now: ${await residentSummary()}\n`);
+      process.stdout.write(`warm models resident before doctor pinged them: ${resident}\n`);
       // Read here, from this shell's FOREMAN_SKILLS_DIR: the daemon reads its
       // own environment, and its /api/doctor does not report skills.
       process.stdout.write(`${skillsDoctorLine()}\n`);
