@@ -192,7 +192,7 @@ export interface NodeGiveBack {
 
 /**
  * The running node's install root, given back READ-ONLY so a sandboxed `node`/`npm` can start when node lives where
- * the sandbox closes reads (nvm/fnm/volta under the home, a tarball in a temp dir). Separate from FOREMAN_SANDBOX_RO:
+ * the sandbox closes reads (nvm under the home, a tarball in a temp dir). Separate from FOREMAN_SANDBOX_RO:
  * it never takes one of the four places. Nothing is added when node is already readable (Homebrew, /usr/local,
  * the system). It is added only when it is a node install and nothing else (nodeRoot.ts), is not inside Foreman's
  * home or the real repository, and is not, and does not contain, a tree the sandbox closes (closedRoots: /, /Users,
