@@ -663,7 +663,9 @@ test('a repo with no node_modules at all and none ignored is not reported as tra
   const repo = npmRepo({ ignoreModules: false, withModules: false });
   const result = await provisionDeps(jailFrom(repo), repo);
   assert.equal(result.provisioned, false);
-  assert.match(result.reason, /no cached install for lockfile/);
+  assert.equal(result.source, null);
+  assert.equal(result.reason, `no cached install for lockfile ${lockHash(path.join(repo, 'package-lock.json'))}`);
+  assert.doesNotMatch(result.reason, /tracked|diff|ignored/);
 });
 
 test('when git cannot say whether node_modules is tracked, it is left alone and the reason says so', async () => {
