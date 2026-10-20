@@ -117,6 +117,34 @@ export async function prewarmRoster(opts: PrewarmOptions = {}): Promise<WarmResu
   return results;
 }
 
+/** The doctor's one-line account of a warm attempt: what loaded, and why the rest did not. */
+export function warmSummary(results: WarmResult[]): string {
+  if (!results.length) return '(none)';
+  const ok = results.filter((r) => r.ok).map((r) => r.alias);
+  const failed = results.filter((r) => !r.ok).map((r) => `${r.alias} (${r.error ?? 'unknown error'})`);
+  return `${ok.length ? ok.join(', ') : '(none)'}${failed.length ? ` — failed: ${failed.join('; ')}` : ''}`;
+}
+
+/**
+ * Read-only check of the warm targets against what Ollama holds resident now.
+ * The daemon's boot-warm results are not exposed to doctor (its endpoint is
+ * server-side), so doctor reports this instead and labels it as "now".
+ */
+export async function residentSummary(
+  aliases: string[] = warmTargets(),
+  readResident: () => Promise<Set<string>> = loadedModels,
+): Promise<string> {
+  let resident: Set<string> | null = null;
+  let reason = '';
+  try { resident = await readResident(); } catch (err) { reason = (err as Error).message.slice(0, 200); }
+  return warmSummary(aliases.map((alias) => {
+    let model = alias;
+    try { model = resolveSpec(alias).model; } catch { /* unknown alias: reported as not resident */ }
+    const ok = resident?.has(model) ?? false;
+    return { alias, model, ok, ms: 0, error: ok ? null : (resident ? 'not loaded' : reason) };
+  }));
+}
+
 /** Which models Ollama currently has resident. */
 async function loadedModels(): Promise<Set<string>> {
   const base = process.env['FOREMAN_OLLAMA_URL'] ?? 'http://127.0.0.1:11434';
