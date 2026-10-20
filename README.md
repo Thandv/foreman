@@ -10,11 +10,30 @@ mode, self-improvement, alignment, model roster). Foreman is **dependency-free a
 Node 24+ built-ins only (`node:sqlite`, `node:http`, native TypeScript execution). `typescript`
 and `@types/node` are dev-only.
 
+## Quick start
+
+Needs Node 24 or later and git (`.node-version` pins 24).
+
 ```bash
-node src/cli.ts serve      # daemon + board on http://127.0.0.1:4100; startup prints `home <absolute path>` (the resolved `FOREMAN_HOME`; the `foreman up` line names the db)
-node src/cli.ts demo       # seed a batch and watch it run in parallel
-node src/cli.ts doctor     # what models, runners and agents are actually available
+git clone https://github.com/Thandv/foreman.git && cd foreman
+npm ci                     # dev-only dependencies (the TypeScript compilers)
+npm link                   # puts `foreman` on your PATH (package.json `bin`)
+foreman serve              # daemon + board on http://127.0.0.1:4100; startup prints `home <absolute path>` (the resolved `FOREMAN_HOME`; the `foreman up` line names the db)
 ```
+
+Open <http://127.0.0.1:4100> for the board. In a second terminal:
+
+```bash
+foreman demo               # seed a batch and watch it run in parallel
+foreman doctor             # what models, runners and agents are actually available
+foreman stop               # stop the daemon and wait for it to exit
+```
+
+Without `npm link`, use `alias foreman='node /path/to/foreman/src/cli.ts'`, or run
+`node src/cli.ts <command>` from the checkout. Every `foreman …` command in this README is the same
+as `node src/cli.ts …`. In `doctor`, `verify lane N/M` is the number of tasks parked for review
+against the lane's size (`FOREMAN_MAX_VERIFYING`, default twice `FOREMAN_MAX_WORKERS`); it is not
+`FOREMAN_MAX_VERIFIES`, which caps the test commands Foreman spawns at once.
 
 > Deviation from the original plan: it specified pnpm + Fastify + better-sqlite3. Node ships
 > stable `node:sqlite`, a test runner and TS type-stripping — so the same architecture is built
@@ -1111,7 +1130,7 @@ default, or the `skills` list of its playbook entry (see above).
 ## Commands
 
 ```
-serve · add · ls · show · approve · reject · cancel · retry [--note] · reopen [--note] · rm · watch · demo
+serve · stop · add · ls · show · approve · reject · cancel · retry [--note] · reopen [--note] · rm · watch · demo
 doctor      probe every model, runner and agent
 receipts    spend ledger — today, or one task
 verdict     the council's opinions for a task
@@ -1121,6 +1140,26 @@ prune       drop worktrees and branches of finished tasks (approved work only on
 trace       full JSON reconstruction of a task
 debrief     what one finished epic shows: collected facts, findings, at most 3 suggestions (see Self-improvement)
 service     print a launchd plist for this install
+help        the full usage text (also `foreman --help`)
+assign      who does a task: `assign <taskId> ai|human`
+gate        who decides at the gate: `gate <taskId>|--waiting|--house owner|human`
+archive     closed work older than a week; `archive sweep | estimate | unarchive`
+reverify    re-run the review on work already done, keeping the work
+tools       the forged-tool catalog: `tools ls|show|rm|quarantine|release`
+backup      one verified, gzipped copy of the database, now (the daemon also takes one a day)
+restore     replace the database with a backup; refuses while the daemon runs
+ask         plan a request, then queue it
+build       plan a crew epic (the owner decomposes it), then queue it
+improve     let Foreman work on Foreman
+crew        `crew init` copies the seed playbooks; `crew report` shows per-role delivery and spend
+playbooks   list loaded playbooks (and refused ones)
+playbook    `playbook forge "<domain>"` drafts a playbook; `playbook pending|approve|reject` manage drafts
+skills      list loaded skills; `skills show <playbook> <role>` prints a role's skills block
+persona     train an author persona on the work itself (see Training a persona)
+align       LoRA alignment on your own history (see Alignment)
+prose       `prose audit <dir>` and `prose import <file> --out <dir>` for manuscripts
+agreement   how often the local reviewer would have decided what the cloud reviewer did
+drill       local-only readiness probes (see Local-only mode)
 ```
 
 **Inside a worker run the CLI refuses.** A worker session carries `FOREMAN_RUN_ID`; with it set, every
@@ -1131,7 +1170,8 @@ locks anything (`ls`, `add`, `restore`, `serve`, `approve`, `doctor`, …). The 
 `FOREMAN_RUN_ID` (`env -u FOREMAN_RUN_ID …`) is not refused, and see "A worker's `FOREMAN_HOME`".
 
 `foreman add` flags: `--kind --runner --repo --agent --priority --after --sensitivity --budget
---test-cmd --no-merge --repairs --prompt --skills` (see Skills).
+--test-cmd --no-merge --repairs --prompt --role --playbook --assignee --skills --allow-core` (see Skills;
+`--allow-core` is not in `foreman help`, see Self-improvement).
 
 ## Configuration
 
@@ -1395,7 +1435,7 @@ parked are unaffected either way.
 ## Tests
 
 ```bash
-npm run verify    # typecheck, then the whole suite (~1,480 tests); the gate to run before a commit
+npm run verify    # typecheck, then the whole suite (about 2,400 tests); the gate to run before a commit
 npm test          # the suite alone
 npm run typecheck      # the native compiler (tsgo, @typescript/native-preview), the one the gate runs
 npm run typecheck:tsc  # tsc 5.9, the reference: run it when the two might disagree

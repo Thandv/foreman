@@ -8,7 +8,8 @@ it. The [README](README.md) describes the whole system; read the parts you inten
 ## Setup
 
 Foreman is dependency-free at runtime and uses Node built-ins only (`node:sqlite`, `node:http`,
-native TypeScript execution). You need **Node 24 or later** (`engines` in `package.json`) and git.
+native TypeScript execution). You need **Node 24 or later** (`engines` in `package.json`; `.node-version`
+pins 24 for nvm, fnm and similar) and git.
 A Node under your home (nvm) or in a temp dir works in the test sandbox: its install root is
 opened read-only for sandboxed commands, and `foreman doctor` says so if it cannot be.
 
@@ -23,6 +24,10 @@ native one (`tsgo`) and `tsc` might disagree.
 
 Foreman is developed on macOS. The test sandbox (`FOREMAN_SANDBOX`) uses macOS `sandbox-exec`; see
 "The sandbox" in the README for what that means on other systems.
+
+A version manager that puts a shim or symlink directory on `PATH` instead of a node install (volta, fnm)
+is not opened automatically: name that directory in `FOREMAN_SANDBOX_RO` before starting `foreman serve`
+(the directory itself, not your home); see [the sandbox](README.md#the-sandbox-foreman_sandbox).
 
 ## Proposing a change
 
