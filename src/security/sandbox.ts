@@ -195,9 +195,10 @@ export interface NodeGiveBack {
  * the sandbox closes reads (nvm under the home, a tarball in a temp dir). Separate from FOREMAN_SANDBOX_RO:
  * it never takes one of the four places. Nothing is added when node is already readable (Homebrew, /usr/local,
  * the system). It is added only when it is a node install and nothing else (nodeRoot.ts), is not inside Foreman's
- * home or the real repository, and is not, and does not contain, a tree the sandbox closes (closedRoots: /, /Users,
- * your home, the temp dir roots, Foreman's home, the jails' directory, the repository). Otherwise nothing is added
- * and `note` says sandboxed commands may not find node and what to do. Pure: a test passes in what it needs.
+ * home, the real repository or the jails' directory, and is not, and does not contain, a tree the sandbox closes
+ * (closedRoots: /, /Users, your home, the temp dir roots, Foreman's home, the jails' directory, the repository).
+ * Otherwise nothing is added and `note` says sandboxed commands may not find node and what to do. Pure: a test
+ * passes in what it needs.
  */
 export function nodeGiveBack(inst: NodeInstall, foremanHome: string, closed: [string, string][]): NodeGiveBack {
   const tree = short(inst.tree);
@@ -207,7 +208,8 @@ export function nodeGiveBack(inst: NodeInstall, foremanHome: string, closed: [st
   if (inside(tree, short(foremanHome))) {
     return { root: null, note: `${lead} and it is inside Foreman's home (${foremanHome}), which is never given back. Install node outside FOREMAN_HOME.` };
   }
-  const repo = closed.find(([c, what]) => what === 'the real repository' && inside(tree, c));
+  // Inside the real repository or the jails' directory: a tree a worker writes, so never a root to trust.
+  const repo = closed.find(([c, what]) => (what === 'the real repository' || what === 'the directory the jails live in') && inside(tree, c));
   const hit = repo ?? closed.find(([c]) => inside(c, tree));
   if (hit) {
     return {

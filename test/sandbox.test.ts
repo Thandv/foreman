@@ -795,15 +795,19 @@ test('the profile itself keeps Foreman\'s home shut under a read-only tree that 
   const launch = await withEnv({ ...ON, FOREMAN_SANDBOX_RO: undefined }, () =>
     sbx.wrap('tests', { jail: f.jail, tmp: home.tmp, home: home.dir, realGit: path.join(f.repo, '.git') }, '/bin/sh', ['-c', cmd]));
   const at = launch.args.indexOf('-f');
-  const args = [...launch.args.slice(0, at), '-D', `RO_1=${above}`, ...launch.args.slice(at)];
-  const lines: string[] = [];
-  await spawnStreaming(launch.cmd, args, { cwd: f.jail, signal: guard(), env: { ...home.env, PATH: '/usr/bin:/bin' }, replaceEnv: true, onLine: (l) => lines.push(l) });
-  const output = lines.join('\n');
-  assert.ok(output.includes('BESIDE-READABLE-2291'), `precondition: the tree around Foreman's home really was readable:\n${output}`);
-  assert.ok(!output.includes(DB_DECOY), `the database is not readable:\n${output}`);
-  assert.ok(!output.includes('DECOY-OTHER-JAIL-3310'), `nor another run's jail:\n${output}`);
-  assert.deepEqual(outLines(output), ['OUT db write rc=1', 'OUT jail in'], 'no listing, no stat, no write; the run\'s own jail inside Foreman\'s home still works');
-  assert.equal(fs.readFileSync(db, 'utf8'), `${DB_DECOY}\n`);
+  // The same for the node install root (NODE_ROOT): nodeGiveBack refuses such a root too; the profile is the backstop.
+  for (const param of ['RO_1', 'NODE_ROOT']) {
+    const head = launch.args.slice(0, at).filter((a, i, all) => !(a === '-D' && all[i + 1]?.startsWith(`${param}=`)) && !(all[i - 1] === '-D' && a.startsWith(`${param}=`)));
+    const args = [...head, '-D', `${param}=${above}`, ...launch.args.slice(at)];
+    const lines: string[] = [];
+    await spawnStreaming(launch.cmd, args, { cwd: f.jail, signal: guard(), env: { ...home.env, PATH: '/usr/bin:/bin' }, replaceEnv: true, onLine: (l) => lines.push(l) });
+    const output = lines.join('\n');
+    assert.ok(output.includes('BESIDE-READABLE-2291'), `${param}: precondition: the tree around Foreman's home really was readable:\n${output}`);
+    assert.ok(!output.includes(DB_DECOY), `${param}: the database is not readable:\n${output}`);
+    assert.ok(!output.includes('DECOY-OTHER-JAIL-3310'), `${param}: nor another run's jail:\n${output}`);
+    assert.deepEqual(outLines(output), ['OUT db write rc=1', 'OUT jail in'], `${param}: no listing, no stat, no write; the run's own jail inside Foreman's home still works`);
+    assert.equal(fs.readFileSync(db, 'utf8'), `${DB_DECOY}\n`);
+  }
 });
 
 // ------------------------------------------------------------------------- the running node's install root
@@ -889,6 +893,27 @@ test('nodeInstall: the nodejs.org layout is a node install; a binary outside bin
     assert.match(lw.why ?? '', /state\//);
     fs.rmSync(path.join(local, 'state'), { recursive: true });
     assert.match((await nodeInstall(l, SYS_PATH)).why ?? '', /lib\/ also holds python3\.12/);
+    // Everything in the root becomes readable, so every directory but bin/ holds only node's own, and the top only
+    // node's own files: other programs' data under share/ (a ~/.local), anything else under include/ or etc/, a
+    // stray file at the top. The tarball's own layout, Homebrew's keg files and a top-level symlink stay accepted.
+    const full = path.join(base, 'tarball');
+    const fe = nodeLayoutAt(full, ['include/node', 'share/doc/node', 'share/man/man1', 'share/systemtap', 'etc/bash_completion.d', 'libexec/bin', 'libexec/lib']);
+    for (const name of ['CHANGELOG.md', 'LICENSE', 'README.md', 'INSTALL_RECEIPT.json', 'sbom.spdx.json', 'etc/npmrc']) fs.writeFileSync(path.join(full, name), '');
+    fs.symlinkSync(base, path.join(full, 'outside-link'));
+    assert.equal((await nodeInstall(fe, SYS_PATH)).root, full);
+    for (const [extra, why] of [
+      ['share/uv/credentials/credentials.toml', /its share\/ also holds uv/], ['include/secrets.h', /its include\/ also holds secrets\.h/],
+      ['etc/passwords', /its etc\/ also holds passwords/], ['libexec/state/x', /its libexec\/ also holds state/],
+      ['.env', /it also holds \.env,/], ['notes.txt', /it also holds notes\.txt,/],
+    ] as const) {
+      fs.mkdirSync(path.dirname(path.join(full, extra)), { recursive: true });
+      fs.writeFileSync(path.join(full, extra), 'SECRET\n');
+      const got = await nodeInstall(fe, SYS_PATH);
+      assert.equal(got.root, null, extra);
+      assert.match(got.why ?? '', why, extra);
+      fs.rmSync(path.join(full, extra.split('/').slice(0, 2).join('/')), { recursive: true });
+    }
+    assert.equal((await nodeInstall(fe, SYS_PATH)).root, full, 'accepted again once the extras are gone');
     // Not in a bin/ directory.
     const loose = path.join(base, 'loose');
     fs.mkdirSync(loose);
@@ -910,6 +935,7 @@ test('nodeGiveBack: Homebrew and system node add nothing; a version-manager root
     ['/', 'the filesystem root'], ['/Users', '/Users'], ['/private/var/folders', 'the per-user temp dirs'], [fh, "Foreman's home"],
     ['/Users/someone', 'your home directory'], ['/private/var/folders/xy/T', 'the temp dir the private homes live in'],
     ['/Users/someone/src/app', 'the real repository'], ['/Users/someone/src', 'the directory above the real repository'],
+    ['/Users/someone/fm-work', 'the directory the jails live in'],
   ];
   const none = { root: null, note: null };
   // Homebrew (the Cellar keeps npm elsewhere, so it is not even a node-only install), /usr/local, the system: readable already.
@@ -930,9 +956,24 @@ test('nodeGiveBack: Homebrew and system node add nothing; a version-manager root
   assert.match(say('/Users', '/Users'), /is, or contains, \/Users/);
   assert.match(say('/private/var/folders/xy/T', '/private/var/folders/xy/T'), /the temp dir the private homes live in/);
   assert.match(say('/Users/someone/src/app/node', '/Users/someone/src/app/node'), /is inside the real repository/);
+  // A jail is written by a worker: a node there is never trusted, whoever's jail it is.
+  assert.match(say('/Users/someone/fm-work/r_other/node', '/Users/someone/fm-work/r_other/node'), /is inside the directory the jails live in/);
   assert.match(say('/Users/someone/.foreman/node', '/Users/someone/.foreman/node'), /inside Foreman's home .*outside FOREMAN_HOME/);
   assert.match(say(null, '/Users/someone/.local'), /does not look like a node install only \(it also holds state\/.*FOREMAN_SANDBOX_RO=\/Users\/someone\/\.local$/);
   assert.doesNotMatch(say(null, '/Users/someone'), /FOREMAN_SANDBOX_RO=/, 'never a hint to open the home');
+});
+
+test('nodeGiveBack knows every tree base.sb closes: a node install under any of them is given back, never silently left closed', () => {
+  // sandbox.ts keeps its own copy of base.sb's closed list (PROFILE_CLOSED); read the profile so a tree added there
+  // without its entry here fails this test instead of leaving node unreachable with nothing said.
+  const baseSb = fs.readFileSync(path.join(SRC_ROOT, 'src', 'security', 'sandbox', 'base.sb'), 'utf8');
+  const denyBlock = /\(deny file-read\*\n([\s\S]*?)\n;; 3\. /.exec(baseSb)?.[1] ?? '';
+  const closedInProfile = [...denyBlock.matchAll(/^\s*\(subpath "([^"]+)"\)/gm)].map((m) => m[1]!);
+  assert.ok(closedInProfile.length >= 15 && closedInProfile.includes('/Library/Keychains'), `the profile's closed list was found: ${closedInProfile.join(' ')}`);
+  for (const tree of closedInProfile) {
+    const root = path.join(tree, 'node-v24.0.0');
+    assert.deepEqual(sbx.nodeGiveBack({ exe: path.join(root, 'bin', 'node'), root, why: null, tree: root }, '/nonexistent/.foreman', []), { root, note: null }, tree);
+  }
 });
 
 test('the running node\'s install root under the home (nvm) or in a temp dir: node and npm start sandboxed; the rest of the home and the temp dir stay closed; the root is not writable and takes no FOREMAN_SANDBOX_RO place', T, async (t) => {
