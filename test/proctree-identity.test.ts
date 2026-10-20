@@ -33,4 +33,7 @@ test('the reaper\'s process identity does not follow the system zone', { skip: S
   const b = await identity(pid, 'America/Los_Angeles');
   assert.ok(a, 'the child is in the snapshot');
   assert.equal(a, b);
+  // And it is the UTC form, not merely the same twice: without the pin, two reads that both ignored the zone given
+  // would agree in the host zone. Whitespace as parseProcRows joins it (ps pads a one-digit day).
+  assert.equal(a, utc.split(/\s+/).join(' '));
 });
