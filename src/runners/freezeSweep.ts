@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { forbiddenGroups, signalGroups, snapshotProcs } from './proctree.ts';
 import type { ProcRow } from './proctree.ts';
-import { freezeDir, parseRecordName } from './freezeRecord.ts';
+import { freezeDir, parseRecordName, recordFileName } from './freezeRecord.ts';
 import type { FreezeGroup } from './freezeRecord.ts';
-import { readFrozen } from './freezeRead.ts';
+import { FREEZE_READ_MAX_FILES, readFrozen } from './freezeRead.ts';
 
 /**
  * What `foreman serve` does with `<home>/frozen/` before its scheduler starts: groups that a dead recorder had
@@ -15,7 +15,9 @@ import { readFrozen } from './freezeRead.ts';
  * SIGTERM then SIGCONT, the grace, then a second fresh snapshot: SIGKILL only the groups it still matches, and then
  * the record goes. If that second snapshot is null or throws, no SIGKILL is sent and the record is KEPT, for the
  * next start. A dead recorder's record with nothing to signal (no groups, no group that still matches, or only
- * groups not to be touched) is removed at once: it has been dealt with.
+ * groups not to be touched) is removed at once: it has been dealt with. A `<record>.json.tmp` a dead recorder left
+ * (it died between its write and its rename) is removed unread; a live recorder's is left. Nothing at all is done when
+ * `frozen/` is not a directory of this user that only it can write: a record there could name any of our processes.
  */
 
 export const FREEZE_CURSOR_FILE = 'cursor';
@@ -37,6 +39,8 @@ export interface FreezeSweepOptions {
 export interface FreezeSweepReport {
   /** Records removed. */
   removed: string[];
+  /** Stale `<record>.json.tmp` files of dead recorders removed. */
+  removedTemps: string[];
   /** Records kept because the SIGKILL check could not be made. */
   kept: string[];
   signalled: number[];
@@ -81,6 +85,50 @@ function matching(groups: FreezeGroup[], rows: readonly ProcRow[], untouchable: 
     .map((g) => g.pgid);
 }
 
+/** Why `dir` is not to be acted on (it exists but is not a directory owned by this user and closed to others), or null. */
+function untrustedDir(dir: string): string | null {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(dir);
+  } catch {
+    return null; // absent or unreadable: the reader finds nothing in it either
+  }
+  if (!st.isDirectory()) return 'not a directory';
+  if (st.uid !== process.geteuid?.()) return `owned by uid ${st.uid}, not this user`;
+  if ((st.mode & 0o022) !== 0) return `writable by group or others (mode ${(st.mode & 0o777).toString(8)})`;
+  return null;
+}
+
+/**
+ * Remove the `<record>.json.tmp` files whose recorder (pid + start key, from the name) is not alive in `rows`: at most
+ * FREEZE_READ_MAX_FILES per sweep, regular files only (lstat), never opened. The reader does not list them.
+ */
+function removeStaleTemps(dir: string, rows: readonly ProcRow[], log: (line: string) => void): string[] {
+  const removed: string[] = [];
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return removed;
+  }
+  const live = new Set(rows.map((r) => recordFileName(r)));
+  for (const name of names) {
+    if (removed.length >= FREEZE_READ_MAX_FILES) break;
+    if (!name.endsWith('.json.tmp')) continue;
+    const record = name.slice(0, -'.tmp'.length);
+    if (parseRecordName(record) === null || live.has(record)) continue;
+    const file = path.join(dir, name);
+    try {
+      if (!fs.lstatSync(file).isFile()) continue;
+      fs.unlinkSync(file);
+      removed.push(name);
+    } catch (err) {
+      log(`freeze sweep: cannot remove ${name}: ${(err as Error).message}`);
+    }
+  }
+  return removed;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** One sweep. May throw; `runFreezeSweep` is the contained form. `live.aborted` stops it before its next signal. */
@@ -89,10 +137,16 @@ export async function sweepFrozen(opts: FreezeSweepOptions, live: { aborted: boo
   const snapshot = opts.snapshot ?? (() => snapshotProcs());
   const signal = opts.signal ?? signalGroups;
   const selfPid = opts.selfPid ?? process.pid;
-  const report: FreezeSweepReport = { removed: [], kept: [], signalled: [] };
+  const report: FreezeSweepReport = { removed: [], removedTemps: [], kept: [], signalled: [] };
 
   const rows = await snapshot();
   if (rows === null || live.aborted) return report;
+  const dir = freezeDir(opts.home);
+  const distrust = untrustedDir(dir);
+  if (distrust !== null) {
+    log(`freeze sweep: ${dir} is ${distrust}; nothing read, signalled or removed`);
+    return report;
+  }
   const read = readFrozen(opts.home, rows, loadCursor(opts.home));
   if (read.cursor !== null) {
     try {
@@ -104,7 +158,6 @@ export async function sweepFrozen(opts: FreezeSweepOptions, live: { aborted: boo
   for (const s of read.skipped) log(`freeze sweep: ${s.file} skipped: ${s.reason}`);
 
   const forbidden = forbiddenGroups(rows, selfPid);
-  const dir = freezeDir(opts.home);
   const remove = (file: string): void => {
     try {
       fs.rmSync(path.join(dir, file), { force: true });
@@ -121,6 +174,7 @@ export async function sweepFrozen(opts: FreezeSweepOptions, live: { aborted: boo
     if (read.actionable.length > 0) log('freeze sweep: this process is not in the snapshot; nothing signalled, records kept');
     return report;
   }
+  report.removedTemps.push(...removeStaleTemps(dir, rows, log));
   for (const f of read.actionable) {
     const groups = matching(f.record.groups, rows, untouchable);
     if (groups.length === 0) remove(f.file);

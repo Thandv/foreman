@@ -150,7 +150,10 @@ that group; never a group a live recorder holds, pgid 0 or 1, the daemon's own g
 then SIGCONT, waits the grace (2 s), takes a second fresh snapshot, sends SIGKILL only to the groups it still matches,
 and then removes the record. If that second snapshot is null or throws, no SIGKILL is sent, the record is kept for the
 next start, and the log says so. A dead recorder's record with nothing left to signal (no groups, no group that still
-matches, or only groups not to be touched) is removed at once; a record that cannot be read is skipped and left. At
+matches, or only groups not to be touched) is removed at once; a record that cannot be read is skipped and left. A
+`<record>.json.tmp` that a dead recorder left between its write and its rename is removed unread (a regular file only);
+a live recorder's is left. If `frozen/` is not a directory owned by this user, or is group- or other-writable, the
+sweep logs it and does nothing. At
 most 64 files are read per sweep; the reader's cursor is kept in `<FOREMAN_HOME>/frozen/cursor` (mode 0600; an invalid
 one starts over). The whole sweep is capped at the grace plus 5 s of wall-clock time: an error or an overrun is logged
 (`freeze sweep failed: …`, `freeze sweep: gave up after … ms`) and serve starts regardless. `FOREMAN_FREEZE_SWEEP_GRACE_MS`,

@@ -15,7 +15,7 @@ const NEEDS_PS = { ...PS, timeout: 120_000 };
 const START = 'Fri Oct 16 20:00:00 2026';
 const row = (pid: number, start = START, pgid = pid, ppid = 1): ProcRow => ({ pid, ppid, pgid, sid: null, start });
 const putRecord = (home: string, rec: { pid: number; start: string }, groups: unknown = []) => {
-  fs.mkdirSync(path.join(home, 'frozen'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'frozen'), { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(home, 'frozen', recordFileName(rec)), JSON.stringify({ v: 1, recorder: rec, groups }));
 };
 const recordNames = (home: string) => (fs.existsSync(path.join(home, 'frozen')) ? fs.readdirSync(path.join(home, 'frozen')).filter((n) => n.endsWith('.json')).sort() : []);
@@ -61,6 +61,9 @@ async function frozenByDeadRecorder(t: TestContext, g: ProcGuard, mode: 'ignore'
   assert.ok(await until(() => /frozen \d+/.test(out), 60_000), `the recorder froze a group: ${out}`);
   const pgid = Number(/frozen (\d+)/.exec(out)![1]);
   g.track(pgid);
+  // Every member too: procGuard's end check throws when one is left stopped, and node then skips the later t.after
+  // hooks (the group kill below), so a failing test would otherwise leave the group's sleep in state T for good.
+  for (const r of (await snapshotProcs()) ?? []) if (r.pgid === pgid) g.track(r.pid);
   t.after(() => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* gone */ } });
   // Reaped, not just a zombie: a zombie is still in the process table, so the sweep would see its recorder alive.
   const exited = new Promise((r) => recorder.once('exit', r));
@@ -156,6 +159,139 @@ test('against the real process table: our own group, our parent\'s and group 1 a
   assert.ok(h.logs.some((l) => /4000002-.*skipped/.test(l)), h.logs.join('\n'));
 });
 
+/** Two detached `sleep`s of our own, each leading its own group, with their snapshot rows. */
+async function twoSleeps(g: ProcGuard): Promise<[ProcRow, ProcRow]> {
+  const kids: ChildProcess[] = [];
+  for (let i = 0; i < 2; i++) {
+    const k = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
+    g.track(k.pid);
+    await new Promise((r) => k.once('spawn', r));
+    kids.push(k);
+  }
+  const rows = (await snapshotProcs())!;
+  const [a, b] = kids.map((k) => rows.find((r) => r.pid === k.pid)!);
+  assert.ok(a && b && a.pgid === a.pid && b.pgid === b.pid, 'each sleep leads its own group');
+  return [a, b];
+}
+
+test('a dead record\'s group with no members matches nothing: a live group of that pgid is not signalled, and the record goes', NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  const [, other] = await twoSleeps(g);
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: other.pgid, members: [] }]);
+  const h = harness(g.home, {}, false);
+  await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, []);
+  assert.ok(running(other.pid));
+  assert.deepEqual(recordNames(g.home), []);
+});
+
+test('a member alive with its pid and start but now in another group does not make the recorded group a match', NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  const [moved, other] = await twoSleeps(g);
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: other.pgid, members: [[moved.pid, moved.start]] }]);
+  const h = harness(g.home, {}, false);
+  await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, []);
+  assert.deepEqual(recordNames(g.home), []);
+});
+
+test('against the real process table: the group of an ancestor other than our own group is never signalled', NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  const rows = (await snapshotProcs())!;
+  const byPid = new Map(rows.map((r) => [r.pid, r]));
+  const self = byPid.get(process.pid)!;
+  let anc: ProcRow | undefined;
+  for (let r = byPid.get(self.ppid); r && r.pid > 1; r = byPid.get(r.ppid)) {
+    if (r.pgid !== self.pgid && r.pgid > 1) {
+      anc = r;
+      break;
+    }
+  }
+  if (!anc) {
+    t.skip('no ancestor outside our own group (other than pid 1)');
+    return;
+  }
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: anc.pgid, members: [[anc.pid, anc.start]] }]);
+  const h = harness(g.home, {}, false);
+  await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, []);
+  assert.deepEqual(recordNames(g.home), []);
+});
+
+test('this process missing from the snapshot: nothing is signalled and the records are kept', async (t) => {
+  const g = procGuard(t);
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: 700, members: [[700, START]] }]);
+  const h = harness(g.home, { snapshot: async () => [row(1), row(700)], selfPid: 900 }, false);
+  await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, []);
+  assert.equal(recordNames(g.home).length, 1);
+  assert.ok(h.logs.some((l) => /not in the snapshot/.test(l)), h.logs.join('\n'));
+});
+
+test('the SIGKILL check comes after the grace', async (t) => {
+  const g = procGuard(t);
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: 700, members: [[700, START]] }]);
+  const rows = fakeRows(row(700));
+  const at: number[] = [];
+  const h = harness(g.home, { graceMs: 300, selfPid: 900, snapshot: async () => { at.push(performance.now()); return rows; } }, false);
+  await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, ['SIGTERM:700', 'SIGCONT:700', 'SIGKILL:700']);
+  assert.equal(at.length, 2);
+  assert.ok(at[1]! - at[0]! >= 290, `the second snapshot came ${at[1]! - at[0]!} ms after the first`);
+});
+
+test('after an overrun the sweep sends nothing more and removes nothing: in the first snapshot, and in the grace', async (t) => {
+  const g = procGuard(t);
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: 700, members: [[700, START]] }]);
+  const rows = fakeRows(row(700));
+  const late = harness(g.home, { graceMs: 50, capMs: 100, selfPid: 900, snapshot: () => new Promise((r) => setTimeout(() => r(rows), 300)) }, false);
+  assert.equal(await runFreezeSweep(late.opts), null);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.deepEqual(late.sent, [], 'a first snapshot that comes after the cap starts nothing');
+  const inGrace = harness(g.home, { graceMs: 300, capMs: 100, selfPid: 900, snapshot: async () => rows }, false);
+  assert.equal(await runFreezeSweep(inGrace.opts), null);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.deepEqual(inGrace.sent, ['SIGTERM:700', 'SIGCONT:700'], 'no SIGKILL after the cap');
+  assert.equal(recordNames(g.home).length, 1, 'the record is kept for the next start');
+});
+
+test('stale temp files: a dead recorder\'s regular .json.tmp goes unread; a live one\'s, a link, a directory and other names stay', async (t) => {
+  const g = procGuard(t);
+  const dir = path.join(g.home, 'frozen');
+  fs.mkdirSync(dir, { mode: 0o700 });
+  const dead = `${recordFileName({ pid: 4_000_001, start: START })}.tmp`;
+  // Content a record would have, naming a group that matches: it must not be read as one.
+  fs.writeFileSync(path.join(dir, dead), JSON.stringify({ v: 1, recorder: { pid: 4_000_001, start: START }, groups: [{ pgid: 700, members: [[700, START]] }] }));
+  const liveTmp = `${recordFileName({ pid: 5000, start: START })}.tmp`;
+  fs.writeFileSync(path.join(dir, liveTmp), '{');
+  const target = path.join(g.home, 'target');
+  fs.writeFileSync(target, 'keep');
+  const link = `${recordFileName({ pid: 4_000_002, start: START })}.tmp`;
+  fs.symlinkSync(target, path.join(dir, link));
+  const sub = `${recordFileName({ pid: 4_000_003, start: START })}.tmp`;
+  fs.mkdirSync(path.join(dir, sub));
+  fs.writeFileSync(path.join(dir, 'junk.json.tmp'), 'x');
+  const h = harness(g.home, fake(fakeRows(row(700), row(5000))), false);
+  const report = await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, [], 'a temp file is never read as a record');
+  assert.deepEqual(report.removedTemps, [dead]);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [liveTmp, link, sub, 'junk.json.tmp'].sort());
+  assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
+});
+
+test('frozen/ writable by group or others: nothing is read, signalled or removed', async (t) => {
+  const g = procGuard(t);
+  putRecord(g.home, { pid: 4_000_001, start: START }, [{ pgid: 700, members: [[700, START]] }]);
+  const stale = `${recordFileName({ pid: 4_000_002, start: START })}.tmp`;
+  fs.writeFileSync(path.join(g.home, 'frozen', stale), 'x');
+  fs.chmodSync(path.join(g.home, 'frozen'), 0o777);
+  const h = harness(g.home, fake(fakeRows(row(700))), false);
+  await sweepFrozen(h.opts);
+  assert.deepEqual(h.sent, []);
+  assert.equal(fs.readdirSync(path.join(g.home, 'frozen')).length, 2);
+  assert.ok(h.logs.some((l) => /writable by group or others/.test(l)), h.logs.join('\n'));
+});
+
 test('a dead recorder\'s marker, and a record with no matching group, are removed; a live recorder\'s is kept', async (t) => {
   const g = procGuard(t);
   putRecord(g.home, { pid: 4_000_001, start: START }); // dead marker
@@ -185,7 +321,7 @@ for (const [name, second] of [['null', async () => null], ['throws', async () =>
 
 test('65 unreadable files and 1 valid record: the valid one is acted on, the cursor carrying the second sweep on', async (t) => {
   const g = procGuard(t);
-  fs.mkdirSync(path.join(g.home, 'frozen'));
+  fs.mkdirSync(path.join(g.home, 'frozen'), { mode: 0o700 });
   for (let i = 0; i < FREEZE_READ_MAX_FILES + 1; i++) fs.writeFileSync(path.join(g.home, 'frozen', `${10_000 + i}-x.json`), 'not json');
   putRecord(g.home, { pid: 99_000, start: START }, [{ pgid: 700, members: [[700, START]] }]);
   const h = harness(g.home, fake(fakeRows(row(700))), false);
@@ -233,16 +369,21 @@ test('the cap is at most grace + 5 s, and an overrun or a throw is logged and re
   assert.ok(big.logs.some((l) => /gave up after 5050 ms/.test(l)), big.logs.join('\n'));
 });
 
-/** A scratch serve with the given freeze-sweep fault; resolves with its output up to "foreman up". */
-async function serveWith(t: TestContext, fault: string): Promise<string> {
+/**
+ * A scratch serve with the given freeze-sweep fault (none: a real sweep) and FOREMAN_HOME relative to its cwd;
+ * `prepare` gets the home first. Resolves with its output up to "foreman up".
+ */
+async function serveWith(t: TestContext, fault: string | null, prepare: (home: string) => void = () => {}): Promise<string> {
   const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-sweep-serve-')));
   const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
+  prepare(path.join(parent, 'home'));
   const env: NodeJS.ProcessEnv = {
-    ...process.env, FOREMAN_HOME: path.join(parent, 'home'), FOREMAN_DB: path.join(parent, 'scratch.db'), FOREMAN_PORT: '0',
+    ...process.env, FOREMAN_HOME: 'home', FOREMAN_DB: path.join(parent, 'scratch.db'), FOREMAN_PORT: '0',
     FOREMAN_PREWARM: 'off', FOREMAN_LOCAL_ONLY: 'on', FOREMAN_CLAUDE_BIN: path.join(parent, 'no-claude'),
-    FOREMAN_SANDBOX: 'off', FOREMAN_BACKUP: 'off',
-    FOREMAN_FREEZE_SWEEP_FAULT: fault, FOREMAN_FREEZE_SWEEP_GRACE_MS: '50', FOREMAN_FREEZE_SWEEP_CAP_MS: '300',
+    FOREMAN_SANDBOX: 'off', FOREMAN_BACKUP: 'off', FOREMAN_FREEZE_SWEEP_GRACE_MS: '50', FOREMAN_FREEZE_SWEEP_CAP_MS: '300',
   };
+  if (fault !== null) env['FOREMAN_FREEZE_SWEEP_FAULT'] = fault;
+  else delete env['FOREMAN_FREEZE_SWEEP_FAULT'];
   delete env['FOREMAN_RUN_ID'];
   const child = spawn(process.execPath, [cli, 'serve'], { cwd: parent, env, stdio: ['ignore', 'pipe', 'pipe'], killSignal: 'SIGKILL' });
   t.after(() => {
@@ -266,4 +407,26 @@ test('serve reaches listen when the snapshot hangs past the cap, and logs it', {
 test('serve reaches listen when the sweep throws, and logs the error', { timeout: 120_000 }, async (t) => {
   const out = await serveWith(t, 'throw');
   assert.match(out, /freeze sweep failed: injected snapshot failure/);
+});
+
+test('serve sweeps the home it resolved before it is up: a dead record and a dead recorder\'s temp file are gone', { ...NEEDS_PS, timeout: 120_000 }, async (t) => {
+  const record = recordFileName({ pid: 4_000_001, start: START });
+  let frozen = '';
+  await serveWith(t, null, (home) => {
+    putRecord(home, { pid: 4_000_001, start: START });
+    frozen = path.join(home, 'frozen');
+    fs.writeFileSync(path.join(frozen, `${record}.tmp`), 'x');
+  });
+  assert.deepEqual(fs.readdirSync(frozen), ['cursor'], 'only the cursor is left');
+});
+
+test('at most 64 stale temp files go per sweep; the rest go on the next', async (t) => {
+  const g = procGuard(t);
+  const dir = path.join(g.home, 'frozen');
+  fs.mkdirSync(dir, { mode: 0o700 });
+  for (let i = 0; i < FREEZE_READ_MAX_FILES + 1; i++) fs.writeFileSync(path.join(dir, `${recordFileName({ pid: 4_000_000 + i, start: START })}.tmp`), 'x');
+  const h = harness(g.home, fake(fakeRows()), false);
+  assert.equal((await sweepFrozen(h.opts)).removedTemps.length, FREEZE_READ_MAX_FILES);
+  assert.equal((await sweepFrozen(h.opts)).removedTemps.length, 1);
+  assert.deepEqual(fs.readdirSync(dir), []);
 });
