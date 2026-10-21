@@ -20,6 +20,7 @@ import { acquireDaemonLock } from './lock.ts';
 import { Store } from './queue.ts';
 import { Scheduler } from './scheduler.ts';
 import { listen } from './server.ts';
+import { freezeSweepOptionsFromEnv, runFreezeSweep } from './runners/freezeSweep.ts';
 import { Tracer } from './trace.ts';
 import { benchModels, benchPath } from './bench.ts';
 import { Broker } from './budget.ts';
@@ -537,6 +538,9 @@ async function main(): Promise<number> {
     backupTimer.unref();
     const firstBackup = setTimeout(backupTick, 60_000);
     firstBackup.unref();
+    // Groups a dead process left stopped (<home>/frozen): ended before anything is dispatched. Bounded and
+    // contained (a failure or an overrun is logged here and serve goes on).
+    await runFreezeSweep(freezeSweepOptionsFromEnv(config.home, (line) => process.stdout.write(`${line}\n`)));
     scheduler.start();
     // Warm rung-0 in the background: the first review otherwise pays a cold
     // load for both advisors, serialised by the VRAM guard.

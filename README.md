@@ -143,6 +143,20 @@ refused (a FAILED recorder, or a sandbox that keeps a jail out of Foreman's home
 get SIGTERM, the grace and SIGKILL without a freeze, and the daemon log says `freeze record failed, leftovers are
 ended without a freeze`. With no recorder installed (the default) nothing is written and the reap is unchanged.
 
+`foreman serve` sweeps `<FOREMAN_HOME>/frozen/` once, after taking the daemon lock and before the scheduler starts
+(`src/runners/freezeSweep.ts`, reading with `freezeRead.ts`): groups a dead recorder left stopped are ended. A group is
+signalled only when a fresh process snapshot shows one of its recorded members with the same pid AND start, still in
+that group; never a group a live recorder holds, pgid 0 or 1, the daemon's own group or an ancestor's. It sends SIGTERM
+then SIGCONT, waits the grace (2 s), takes a second fresh snapshot, sends SIGKILL only to the groups it still matches,
+and then removes the record. If that second snapshot is null or throws, no SIGKILL is sent, the record is kept for the
+next start, and the log says so. A dead recorder's record with nothing left to signal (no groups, no group that still
+matches, or only groups not to be touched) is removed at once; a record that cannot be read is skipped and left. At
+most 64 files are read per sweep; the reader's cursor is kept in `<FOREMAN_HOME>/frozen/cursor` (mode 0600; an invalid
+one starts over). The whole sweep is capped at the grace plus 5 s of wall-clock time: an error or an overrun is logged
+(`freeze sweep failed: …`, `freeze sweep: gave up after … ms`) and serve starts regardless. `FOREMAN_FREEZE_SWEEP_GRACE_MS`,
+`FOREMAN_FREEZE_SWEEP_CAP_MS` and `FOREMAN_FREEZE_SWEEP_FAULT=hang|throw` (for tests) shorten the timings or make the
+snapshot hang or throw.
+
 Out of scope and unchanged: a worker can still reach the daemon's HTTP API through `FOREMAN_PORT` (the
 `x-foreman-run` header is unauthenticated), and an unsandboxed `claude-code` worker can still open
 `<home>/foreman.db` directly (`node:sqlite`, `sqlite3`). `FOREMAN_SANDBOX=all` is meant to close that, but in this build
