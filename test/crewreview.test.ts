@@ -1784,15 +1784,19 @@ test("the chair's share of a two-reviewer chain is a third of the chain's budget
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
   // Both reviewers pass; the chair (the one call that is no reviewer) never answers and is killed at its share.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-chair-'));
+  // One line per spawn, reviewers and chair apart. The timed run never counts the chair's: killed at its share on a
+  // loaded machine, it may not have reached a line of its script.
   const calls = path.join(dir, 'calls');
+  const chairs = path.join(dir, 'chairs');
   fs.writeFileSync(path.join(dir, 'pass.json'), reviewReply('pass', 'fine'));
   fs.writeFileSync(
     path.join(dir, 'claude'),
-    `#!/bin/sh\necho x >> "${calls}"\ncase "$*" in *'REVIEW STYLE ('*) cat "${dir}/pass.json";; *) exec sleep 30;; esac\n`,
+    `#!/bin/sh\ncase "$*" in *'REVIEW STYLE ('*) echo x >> "${calls}"; cat "${dir}/pass.json";; *) echo x >> "${chairs}"; exec sleep 30;; esac\n`,
   );
   fs.chmodSync(path.join(dir, 'claude'), 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'claude');
-  const spawned = (): number => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean).length : 0);
+  const lines = (f: string): number => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0);
+  const spawned = (): number => lines(calls);
   const store = new Store(':memory:');
   try {
     const { task, runId } = ticket(store);
@@ -1801,11 +1805,12 @@ test("the chair's share of a two-reviewer chain is a third of the chain's budget
     // can run past its share; the chair's own timer is all that is left, and a late timer still names its share.
     const warm = await crewReview({ task, runId, store, diff: DIFF, council: null });
     assert.equal(warm?.verdict, 'pass');
-    assert.equal(spawned(), 2, 'the two reviewers were asked, and no chair');
+    assert.equal(spawned(), 2, 'the two reviewers were asked');
+    assert.equal(lines(chairs), 0, 'and no chair');
     const notes: string[] = [];
     // The council's FAIL against the chain's PASS is a disagreement, so the chair is asked.
     await crewReview({ task, runId, store, diff: DIFF, council: council(store, runId, task.id, 'fail'), timeoutMs: 4_500, onNote: (l) => notes.push(l) });
-    assert.equal(spawned(), 3, 'only the chair was spawned on the timed run');
+    assert.equal(spawned(), 2, 'no reviewer was spawned on the timed run');
     assert.equal(store.receiptsForTask(task.id).filter((r) => r['kind'] === 'review:cache').length, 2, 'both reviewers came from the cache');
     assert.match(notes.join('\n'), /chair unavailable, chain verdict stands: owner call timed out after 1500ms/, notes.join('\n'));
   } finally {
