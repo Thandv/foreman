@@ -110,6 +110,8 @@ test('two concurrent worker test-slot runs under FOREMAN_MAX_VERIFIES=1 never ov
       assert.deepEqual(await Promise.all([a.exit, b.exit]), [0, 0], 'each wrapper exits with its suite\'s status');
       assert.equal(suite.started(), 2, 'both suites ran');
       assert.equal(suite.peak(), 1, 'peak concurrency is the cap, not the number of workers');
+      // The wrapper exits before the daemon sees its connection close; wait for that release, bounded.
+      await until(() => verifySlotStats().active === 0, 'the last slot release');
       assert.deepEqual(verifySlotStats(), { active: 0, waiting: 0 });
     } finally {
       await d.close();
