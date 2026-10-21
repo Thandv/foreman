@@ -1477,7 +1477,7 @@ parked are unaffected either way.
 ## Tests
 
 ```bash
-npm run verify    # typecheck, then the whole suite (about 2,480 tests); the gate to run before a commit
+npm run verify    # typecheck, then the whole suite (about 2,500 tests); the gate to run before a commit
 npm test          # the suite alone
 npm run typecheck      # the native compiler (tsgo, @typescript/native-preview), the one the gate runs
 npm run typecheck:tsc  # tsc 5.9, the reference: run it when the two might disagree
