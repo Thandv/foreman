@@ -271,7 +271,10 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
  * lets WebFetch reach any host past its playbook's domain list — so any change to them is a hard finding: a person
  * makes such a change, never a worker.
  */
-const AGENT_CONFIG = /(^|\/)\.claude\/settings(\.local)?\.json$|(^|\/)\.mcp\.json$/;
+// Case-insensitive: on a case-insensitive disk (macOS by default) the CLI reading .claude/settings.json reads
+// .Claude/Settings.json. The scheduler also restores the file before each round (isolate.ts restoreAgentSettings);
+// this finding is what tells the worker and the reviewer.
+const AGENT_CONFIG = /(^|\/)\.claude\/settings(\.local)?\.json$|(^|\/)\.mcp\.json$/i;
 
 export function agentConfigFindings(files: FileDiff[]): string[] {
   return files

@@ -260,6 +260,9 @@ test('a change to the agent permission config is a hard finding: a worker may no
     assert.equal(agentConfigFindings(parseDiffFiles(diffOf(file, ['{"permissions":{"allow":["WebFetch"]}}']))).length, 1, file);
     assert.equal(agentConfigFindings(parseDiffFiles(diffOf(file, ['x'], true))).length, 1, `${file} deleted`);
   }
+  for (const file of ['.Claude/Settings.json', '.CLAUDE/settings.LOCAL.json', '.MCP.json']) {
+    assert.equal(agentConfigFindings(parseDiffFiles(diffOf(file, ['{}']))).length, 1, `${file}: the same file on a case-insensitive disk`);
+  }
   assert.deepEqual(agentConfigFindings(parseDiffFiles(diffOf('docs/settings.json', ['x']))), [], 'another settings file is not');
   assert.deepEqual(agentConfigFindings(parseDiffFiles(diffOf('.claude/agents/x.md', ['x']))), [], 'only the permission files');
   const pub = pbOf('publishing');
