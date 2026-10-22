@@ -14,19 +14,24 @@
   ],
   "roles": {
     "ic-chair": {
-      "tier": "owner"
+      "tier": "owner",
+      "mode": "balanced"
     },
     "pm": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "balanced"
     },
     "senior-analyst": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "generative"
     },
     "analyst": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "balanced"
     },
     "risk": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     }
   },
   "reviewers": [
@@ -52,13 +57,39 @@
     "Analysis and memos only: never execute trades, place orders, access accounts, or move money, and never write, wire up, or configure order-placement or account-access code.",
     "Every memo carries: this is research, not financial advice.",
     "Every thesis documents the bear case and what evidence would prove it right.",
-    "Monitoring triggers and exit criteria are written down before any recommendation."
+    "Monitoring triggers and exit criteria are written down before any recommendation.",
+    "Evidence before claims: every claim names its source (the command and its output, the file:line, the quoted passage, the cited page), checked in this pass; say what could not be checked."
+  ],
+  "required": [
+    {
+      "label": "the disclaimer \"this is research, not financial advice\"",
+      "pattern": "research,?\\s+not\\s+financial\\s+advice",
+      "roles": [
+        "analyst",
+        "pm",
+        "risk"
+      ]
+    },
+    {
+      "label": "a bear case section (a heading naming the bear case)",
+      "pattern": "^#{1,6}[^\\n]*\\bbear\\s+case\\b",
+      "roles": [
+        "analyst"
+      ]
+    },
+    {
+      "label": "monitoring triggers and exit criteria (a heading naming them)",
+      "pattern": "^#{1,6}[^\\n]*\\b(exit\\s+criteria|monitoring\\s+triggers)\\b",
+      "roles": [
+        "risk"
+      ]
+    }
   ],
   "tools": {
     "analyst": [
       {
         "name": "finance-metrics",
-        "when": "for any return, drawdown or ratio \u2014 never compute these by hand"
+        "when": "for any return, drawdown or ratio — never compute these by hand"
       },
       {
         "name": "stats-test",
@@ -80,7 +111,7 @@
     "senior-analyst": [
       {
         "name": "fdr-correct",
-        "when": "whenever several hypotheses were tested \u2014 an uncorrected batch of p-values is how a backtest lies"
+        "when": "whenever several hypotheses were tested — an uncorrected batch of p-values is how a backtest lies"
       },
       {
         "name": "bootstrap-ci",
@@ -100,11 +131,6 @@ assumptions. Risk assessment is always a separate ticket, run independently and 
 by the analyst who proposed the idea — the same person does not size their own conviction and
 police it. Everything converges into an IC memo that leads with the recommendation (why this,
 why now, why this price), and the IC decision itself always happens at the human gate.
-
-Evidence before claims: every claim a role hands on names its source — the command and
-its output, the file:line, the quoted passage, the cited page — checked in this pass.
-Each role says what it could not check. Review findings carry a severity (critical,
-important, minor) and point to where they are.
 
 ## role: ic-chair
 

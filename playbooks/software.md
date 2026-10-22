@@ -13,22 +13,28 @@
   ],
   "roles": {
     "planner": {
-      "tier": "owner"
+      "tier": "owner",
+      "mode": "balanced"
     },
     "senior": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "balanced"
     },
     "dev": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     },
     "qa": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     },
     "architect": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "balanced"
     },
     "tech-writer": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     }
   },
   "reviewers": [
@@ -86,7 +92,7 @@
     "qa": [
       {
         "name": "stats-test",
-        "when": "before claiming a performance change is real \u2014 a difference you have not tested is an anecdote"
+        "when": "before claiming a performance change is real — a difference you have not tested is an anecdote"
       }
     ]
   }

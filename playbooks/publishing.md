@@ -14,28 +14,36 @@
   ],
   "roles": {
     "publisher": {
-      "tier": "owner"
+      "tier": "owner",
+      "mode": "balanced"
     },
     "dev-editor": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "generative"
     },
     "author": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "generative"
     },
     "line-editor": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "balanced"
     },
     "copyeditor": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     },
     "proofreader": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     },
     "beta-reader": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "generative"
     },
     "critic": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "generative"
     }
   },
   "reviewers": [
@@ -61,13 +69,14 @@
   "constraints": [
     "Preserve the author's voice; edits suggest, never silently rewrite meaning.",
     "Raise questions as queries in the text, never silent changes.",
-    "Maintain STYLE_SHEET.md (names, dates, spellings, timeline) and keep every chapter consistent with it."
+    "Maintain STYLE_SHEET.md (names, dates, spellings, timeline) and keep every chapter consistent with it.",
+    "Evidence before claims: every claim names its source (the command and its output, the file:line, the quoted passage, the cited page), checked in this pass; say what could not be checked."
   ],
   "tools": {
     "author": [
       {
         "name": "prose-gate",
-        "when": "before you call any draft done \u2014 it is the series' own AI-tics checklist, and the gate the work is judged by"
+        "when": "before you call any draft done — it is the series' own AI-tics checklist, and the gate the work is judged by"
       },
       {
         "name": "numeral-tic",
@@ -79,7 +88,7 @@
       },
       {
         "name": "find-artifacts",
-        "when": "if you revised an existing chapter \u2014 it catches duplicate and near-duplicate paragraphs left by a merge"
+        "when": "if you revised an existing chapter — it catches duplicate and near-duplicate paragraphs left by a merge"
       }
     ],
     "line-editor": [
@@ -95,7 +104,7 @@
     "copyeditor": [
       {
         "name": "book-lint",
-        "when": "first \u2014 it fixes the mechanical layer so your attention goes to what a linter cannot see"
+        "when": "first — it fixes the mechanical layer so your attention goes to what a linter cannot see"
       },
       {
         "name": "numeral-tic",
@@ -109,7 +118,7 @@
     "proofreader": [
       {
         "name": "book-lint",
-        "when": "in scan mode \u2014 report, do not fix, and let the human decide"
+        "when": "in scan mode — report, do not fix, and let the human decide"
       },
       {
         "name": "find-artifacts",
@@ -133,7 +142,7 @@
     "publisher": [
       {
         "name": "continuity-check",
-        "when": "before any binding ruling on seams \u2014 the arithmetic must come from the tool, not from memory"
+        "when": "before any binding ruling on seams — the arithmetic must come from the tool, not from memory"
       },
       {
         "name": "numeral-tic",
@@ -158,11 +167,6 @@ developmental change reshapes scenes and cuts chapters, and any line-level or co
 done ahead of that is thrown away when it lands. If a later stage forces structural rework
 (a cut chapter, a reordered timeline), every downstream edit already applied to the affected
 text is invalidated and must be redone after the rework, not patched around.
-
-Evidence before claims: every claim a role hands on names its source — the command and
-its output, the file:line, the quoted passage, the cited page — checked in this pass.
-Each role says what it could not check. Review findings carry a severity (critical,
-important, minor) and point to where they are.
 
 ## role: publisher
 

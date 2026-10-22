@@ -280,6 +280,19 @@ admission-scanned like agents; roles map to model tiers — owner
 (`FOREMAN_MODEL_OWNER`, default `opus`; `fable` is deprecated but still honoured when pinned) plans, chairs escalations; senior
 (`opus`) reviews and challenges; worker (`sonnet`) executes.
 
+Each role also sits on a **generative ↔ deterministic slider**: `roles.<name>.mode` is `deterministic`
+(code, tests, copyedits, risk numbers), `balanced` (the default: design, review, analysis) or `generative`
+(drafting prose, editorial letters, devil's advocacy). Before any reviewer is paid, Foreman runs pure checks on the
+worker's diff: a committed credential (a private key, AWS/GitHub/Slack/Anthropic/OpenAI/Google key shapes, or an
+`.env` file — a line carrying `foreman:allow-secret` is exempt) and a focused test (`.only`) are **hard**: still there
+after the pre-review repair rounds, the ticket fails. An added skip/todo test or a deleted test file is **soft**: the
+worker is sent back to fix or explain it, and after the rounds the reviewer gets it as a note; a `generative` role is
+not sent back for these. A playbook's `required` list (`{ "label", "pattern", "roles" }`, a case-insensitive
+multiline regex) names content every markdown file those roles change must carry — research's limitations section,
+investment's disclaimer, bear case and exit criteria — and is checked in every mode. The local `api` runner samples at
+temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). An unknown mode or a malformed
+`required` rule refuses the playbook.
+
 Each role has a `## role: <name>` prompt section. A role may also have a shorter
 `## role-card: <name>` section: a worker gets the card instead of the full prompt
 when its role's tier resolves to a local model or the crew is on the local plane

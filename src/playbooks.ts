@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.ts';
 import type { Finding } from './security/admit.ts';
+import { ROLE_MODES, type RoleMode } from './verify/determinism.ts';
 import { admit, AdmissionBlocked, scanCommand } from './security/admit.ts';
 import { probeTask } from './types.ts';
 import type { Tier } from './roles.ts'; // type-only: erased at compile time, no runtime cycle with roles.ts
@@ -51,7 +52,13 @@ export interface Playbook {
    * the rest run unattended. Omitted, it falls through to the playbook default
    * and then to FOREMAN_ASSIGNEE — see assign.ts:effectiveAssignee.
    */
-  roles: Record<string, { tier: Tier; assignee?: Assignee }>;
+  roles: Record<string, { tier: Tier; assignee?: Assignee; mode?: RoleMode }>;
+  /**
+   * Content every document a role writes must contain (a disclaimer, a limitations section), checked
+   * deterministically before any reviewer is paid (verify/determinism.ts). `pattern` is a case-insensitive,
+   * multiline regular expression; `roles` limits the rule to the roles that write such documents.
+   */
+  required?: Array<{ label: string; pattern: string; roles?: string[] }>;
   /** Playbook-wide default for who does the work. Omitted means "don't decide here". */
   assignee: Assignee | null;
   /**
@@ -203,7 +210,8 @@ interface RawFrontMatter {
   id?: unknown;
   description?: unknown;
   triggers?: unknown;
-  roles?: Record<string, { tier?: unknown; assignee?: unknown } | undefined>;
+  roles?: Record<string, { tier?: unknown; assignee?: unknown; mode?: unknown } | undefined>;
+  required?: unknown;
   assignee?: unknown;
   tools?: Record<string, unknown>;
   skills?: Record<string, unknown>;
@@ -285,7 +293,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     }
     if (!card.trim()) return { pb: null, reason: `'## role-card: ${name}' is empty` };
   }
-  const roles: Record<string, { tier: Tier; assignee?: Assignee }> = {};
+  const roles: Record<string, { tier: Tier; assignee?: Assignee; mode?: RoleMode }> = {};
   for (const name of roleNames) {
     const tier = rawRoles[name]?.tier;
     if (typeof tier !== 'string' || !TIERS.has(tier)) {
@@ -301,9 +309,16 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     if (rawRoleAssignee !== undefined && !ASSIGNEES.has(String(rawRoleAssignee))) {
       return { pb: null, reason: `role '${name}' has an invalid assignee: ${JSON.stringify(rawRoleAssignee)}` };
     }
+    // The slider (verify/determinism.ts): a typo would silently fall back to balanced and turn checks off or on
+    // behind the author's back, so an unknown mode refuses the playbook.
+    const rawMode = rawRoles[name]?.mode;
+    if (rawMode !== undefined && !ROLE_MODES.has(String(rawMode))) {
+      return { pb: null, reason: `role '${name}' has an invalid mode: ${JSON.stringify(rawMode)} (deterministic, balanced or generative)` };
+    }
     roles[name] = {
       tier: tier as Tier,
       ...(rawRoleAssignee === undefined ? {} : { assignee: String(rawRoleAssignee) as Assignee }),
+      ...(rawMode === undefined ? {} : { mode: String(rawMode) as RoleMode }),
     };
   }
 
@@ -383,6 +398,33 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     if (blocked) return { pb: null, reason: `check ${JSON.stringify(check)} refused: ${blocked}` };
   }
 
+  // Required content (verify/determinism.ts). A malformed rule is a mistake in the file, not something to skip
+  // quietly: a rule that silently never runs is a check the author believes exists.
+  const required: Array<{ label: string; pattern: string; roles?: string[] }> = [];
+  if (raw.required !== undefined) {
+    if (!Array.isArray(raw.required)) return { pb: null, reason: 'required must be an array of { label, pattern, roles? }' };
+    for (const [i, r] of (raw.required as unknown[]).entries()) {
+      const rule = (r ?? {}) as { label?: unknown; pattern?: unknown; roles?: unknown };
+      if (typeof rule.label !== 'string' || !rule.label.trim()) return { pb: null, reason: `required[${i}] has no label` };
+      if (typeof rule.pattern !== 'string' || !rule.pattern || rule.pattern.length > 200) {
+        return { pb: null, reason: `required[${i}] needs a pattern of 1-200 characters` };
+      }
+      try {
+        new RegExp(rule.pattern, 'im');
+      } catch (err) {
+        return { pb: null, reason: `required[${i}] pattern is not a valid regular expression: ${(err as Error).message}` };
+      }
+      let rolesFor: string[] | undefined;
+      if (rule.roles !== undefined) {
+        if (!Array.isArray(rule.roles) || !rule.roles.every((x) => typeof x === 'string' && Object.prototype.hasOwnProperty.call(rawRoles, x))) {
+          return { pb: null, reason: `required[${i}].roles must list roles the playbook declares` };
+        }
+        rolesFor = rule.roles as string[];
+      }
+      required.push({ label: rule.label.trim(), pattern: rule.pattern, ...(rolesFor ? { roles: rolesFor } : {}) });
+    }
+  }
+
   const pb: Playbook = {
     id,
     description: typeof raw.description === 'string' ? raw.description : '',
@@ -403,6 +445,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     proseAudit: raw.proseAudit === true,
     gate: { default: gateDefault as 'human' | 'owner', hardHuman },
     constraints: Array.isArray(raw.constraints) ? raw.constraints.map(String) : [],
+    ...(required.length ? { required } : {}),
     pipeline,
     rolePrompts,
     ...(Object.keys(roleCards).length ? { roleCards } : {}),

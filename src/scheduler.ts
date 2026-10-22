@@ -33,6 +33,7 @@ import { ProviderLimited, isProviderLimit, limitBackoffMs } from './providerLimi
 import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, conflictRepairNotes, redBackoffMs, type Store } from './queue.ts';
 import { recordEpisode, relevantFacts, scopeOf } from './assistant/memory.ts';
 import { planAsk, queuePlan } from './assistant/plan.ts';
+import { deterministicFindings } from './verify/determinism.ts';
 import { getPlaybook } from './playbooks.ts';
 import { resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
 import { checkBuiltTool, toolEvidence, toolTestCommand } from './tools/forge.ts';
@@ -573,6 +574,20 @@ export function preReviewGaps(task: Task, diff: string, report: string | null, t
   if (scope.length) {
     items.push(...scope);
     sections.push(`The diff breaks the ticket's scope; revert these files:\n${scope.join('\n')}`);
+  }
+  // The role's deterministic checks (verify/determinism.ts). A hard finding — a committed secret, a focused test —
+  // is held like a scope violation: still there after the repair rounds, the ticket fails. A soft one goes to the
+  // reviewer as a note once the rounds are spent, like a map gap.
+  const pb = getPlaybook(task.playbook);
+  const det = pb ? deterministicFindings(pb, task.role ?? null, diff, treeDir) : { hard: [], soft: [] };
+  if (det.hard.length) {
+    items.push(...det.hard);
+    scope.push(...det.hard);
+    sections.push(`These must be fixed before the work is reviewed:\n${det.hard.join('\n')}`);
+  }
+  if (det.soft.length) {
+    items.push(...det.soft);
+    sections.push(`Fix these, or say in the report why each one is right:\n${det.soft.join('\n')}`);
   }
   return items.length ? { items, notes: sections.join('\n\n'), scope } : null;
 }
