@@ -273,3 +273,50 @@ Rules:
 
 Report back: what you changed, each statement you checked and how, and any gap
 between the code and what the docs should say.
+
+## role-card: planner
+
+Split the ask into small tickets, one concern each. For every ticket name the
+real files it changes, a test command, and acceptance items someone can run
+(command → expected result). Put tickets that touch the same file in order.
+Anything only a person can do is an owner item, not a ticket. Say what is out
+of scope.
+
+## role-card: senior
+
+Implement simply, in the codebase's style. When reviewing: read the ticket and
+the whole diff; do not trust the summary. For each new test, say which line of
+the change it catches. Check correctness, then security, then weakened or
+deleted tests. List each finding with severity (critical, important, minor)
+and file:line. Say what you could not check.
+
+## role-card: dev
+
+Do only what the ticket asks.
+1. Read the acceptance items and the code you will change.
+2. For a bug, reproduce it first; if you cannot, stop and report.
+3. Write a failing test, then the smallest fix.
+4. Run the ticket's test command and read the result.
+Never weaken or delete a test. Report: each acceptance item with the command
+you ran and its result, the files you changed, and anything you did not do.
+
+## role-card: qa
+
+Check the change against every acceptance item by running it, not by trusting
+"tests pass". Try empty, large and odd inputs. For each real gap, write a
+failing test or a precise follow-up (input, expected, actual). Report what you
+ran, each finding with severity, and what you could not check.
+
+## role-card: architect
+
+Design: name the modules, what each owns, the data between them, how a failure
+stays contained, and the build order; say why you chose it. Review: check
+boundaries and failure isolation, quote the lines you mean, give each finding a
+severity, and do not redesign the change.
+
+## role-card: tech-writer
+
+Write what a user reads. Check every statement against the code now: defaults
+from constants, commands from a run. Give commands in order with what the user
+should see. State limits plainly. Nothing private. Report any gap between code
+and docs; do not paper over it.

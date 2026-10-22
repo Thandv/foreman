@@ -280,6 +280,14 @@ admission-scanned like agents; roles map to model tiers — owner
 (`FOREMAN_MODEL_OWNER`, default `opus`; `fable` is deprecated but still honoured when pinned) plans, chairs escalations; senior
 (`opus`) reviews and challenges; worker (`sonnet`) executes.
 
+Each role has a `## role: <name>` prompt section. A role may also have a shorter
+`## role-card: <name>` section: a worker gets the card instead of the full prompt
+when its role's tier resolves to a local model (the same rule that serves a skill's
+`card.md`), because a long process prompt is harder for a small model to follow. A
+role with no card gets its full prompt everywhere, and a crew review always carries the
+full prompt. A duplicate card, a card for a role the playbook does not declare, or an
+empty card refuses the playbook; cards are admission-scanned like the prompts.
+
 A reviewer entry may carry its own `skills`: `{"role": "lead", "style": "code-review", "skills": ["a", "b"]}`.
 Names are checked like a ticket's skills (a valid name, a loaded skill, in that
 role's default or allowed loadout, at most two); with `FOREMAN_SKILLS_DIR`

@@ -94,6 +94,12 @@ export interface Playbook {
   pipeline: string;
   /** One system-prompt-shaped block per role, from '## role: <name>' sections. */
   rolePrompts: Record<string, string>;
+  /**
+   * Optional short variant of a role's prompt, from '## role-card: <name>' sections. A worker gets it in place
+   * of the full prompt when its role's tier resolves to a local model — the same rule that serves a skill's
+   * card.md instead of its full.md (roles.ts skillVariantFor). Absent for a role with no card section.
+   */
+  roleCards?: Record<string, string>;
   source: string;
   findings: Finding[];
 }
@@ -156,10 +162,18 @@ function blankFencedRegions(body: string): string {
 }
 
 /** Split the body into '## role: <name>' prompts and the '## pipeline' prose. */
-function parseSections(body: string): { pipeline: string; rolePrompts: Record<string, string>; duplicateRole: string | null } {
+function parseSections(body: string): {
+  pipeline: string;
+  rolePrompts: Record<string, string>;
+  roleCards: Record<string, string>;
+  duplicateRole: string | null;
+  duplicateCard: string | null;
+} {
   const rolePrompts: Record<string, string> = {};
+  const roleCards: Record<string, string> = {};
   let pipeline = '';
   let duplicateRole: string | null = null;
+  let duplicateCard: string | null = null;
   const scanBody = blankFencedRegions(body);
   const heads = [...scanBody.matchAll(/^##\s+(.+)$/gm)];
   for (let i = 0; i < heads.length; i++) {
@@ -168,8 +182,13 @@ function parseSections(body: string): { pipeline: string; rolePrompts: Record<st
     const contentStart = head.index! + head[0].length;
     const contentEnd = i + 1 < heads.length ? heads[i + 1]!.index! : body.length;
     const content = body.slice(contentStart, contentEnd).trim();
+    const cardMatch = heading.match(/^role-card:\s*(.+)$/i);
     const roleMatch = heading.match(/^role:\s*(.+)$/i);
-    if (roleMatch) {
+    if (cardMatch) {
+      const name = cardMatch[1]!.trim();
+      if (Object.prototype.hasOwnProperty.call(roleCards, name) && duplicateCard === null) duplicateCard = name;
+      roleCards[name] = content;
+    } else if (roleMatch) {
       const name = roleMatch[1]!.trim();
       if (Object.prototype.hasOwnProperty.call(rolePrompts, name) && duplicateRole === null) duplicateRole = name;
       rolePrompts[name] = content;
@@ -177,7 +196,7 @@ function parseSections(body: string): { pipeline: string; rolePrompts: Record<st
       pipeline = content;
     }
   }
-  return { pipeline, rolePrompts, duplicateRole };
+  return { pipeline, rolePrompts, roleCards, duplicateRole, duplicateCard };
 }
 
 interface RawFrontMatter {
@@ -244,9 +263,12 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     return { pb: null, reason: `invalid JSON front matter: ${(err as Error).message}` };
   }
 
-  const { pipeline, rolePrompts, duplicateRole } = parseSections(fm[2] ?? '');
+  const { pipeline, rolePrompts, roleCards, duplicateRole, duplicateCard } = parseSections(fm[2] ?? '');
   if (duplicateRole) {
     return { pb: null, reason: `duplicate '## role: ${duplicateRole}' section — ambiguous authorship, refusing rather than picking one` };
+  }
+  if (duplicateCard) {
+    return { pb: null, reason: `duplicate '## role-card: ${duplicateCard}' section — ambiguous authorship, refusing rather than picking one` };
   }
 
   const id = typeof raw.id === 'string' ? raw.id : '';
@@ -255,6 +277,14 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
   const rawRoles = raw.roles && typeof raw.roles === 'object' ? raw.roles : {};
   const roleNames = Object.keys(rawRoles);
   if (!roleNames.length) return { pb: null, reason: 'roles must be non-empty' };
+  // A card stands in for a role's prompt: one for a role the playbook does not declare, or one with no text,
+  // would be served to nobody or serve nothing, so either is a mistake in the file and refuses it.
+  for (const [name, card] of Object.entries(roleCards)) {
+    if (!Object.prototype.hasOwnProperty.call(rawRoles, name)) {
+      return { pb: null, reason: `'## role-card: ${name}' names a role the playbook does not declare` };
+    }
+    if (!card.trim()) return { pb: null, reason: `'## role-card: ${name}' is empty` };
+  }
   const roles: Record<string, { tier: Tier; assignee?: Assignee }> = {};
   for (const name of roleNames) {
     const tier = rawRoles[name]?.tier;
@@ -375,6 +405,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     constraints: Array.isArray(raw.constraints) ? raw.constraints.map(String) : [],
     pipeline,
     rolePrompts,
+    ...(Object.keys(roleCards).length ? { roleCards } : {}),
     source: file,
     findings: [],
   };
@@ -391,7 +422,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
  * on this probe: it has no repo, is S1 and uses the api runner.
  */
 function scan(pb: Playbook): Finding[] {
-  const text = [...Object.values(pb.rolePrompts), ...pb.constraints, ...pb.checks].join('\n\n');
+  const text = [...Object.values(pb.rolePrompts), ...Object.values(pb.roleCards ?? {}), ...pb.constraints, ...pb.checks].join('\n\n');
   return admit(probeTask({ id: `playbook:${pb.id}`, title: pb.id, prompt: text }));
 }
 
