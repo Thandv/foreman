@@ -290,9 +290,12 @@ export function workerShellAllowlist(task: Pick<Task, 'testCmd'> & Partial<Pick<
  * text must not leave the machine, and a search query is text leaving it. Reviewers run with no tools at all.
  */
 export function workerWebTools(task: Partial<Pick<Task, 'playbook' | 'sensitivity'>>): string[] {
-  if (!task.playbook || task.sensitivity === 'S2') return [];
-  return getPlaybook(task.playbook)?.web === true ? ['WebSearch', 'WebFetch'] : [];
+  // Granted only for a sensitivity that is known to allow text to leave the machine: an unset one fails closed.
+  if (!task.playbook || (task.sensitivity !== 'S0' && task.sensitivity !== 'S1')) return [];
+  return getPlaybook(task.playbook)?.web === true ? WEB_TOOLS : [];
 }
+
+const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 
 /** How a worker invokes the slot wrapper: an absolute path, so it works from any jail. */
 export function testSlotCommand(): string {
@@ -310,13 +313,16 @@ export function testSlotCommand(): string {
  * covered by its prefix. `FOREMAN_CLAUDE_DISALLOWED_TOOLS` replaces the list
  * (`;`-separated), `none` turns it off.
  */
-export function workerShellDenylist(_task: Pick<Task, 'testCmd'>): string[] {
+export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<Task, 'playbook' | 'sensitivity'>>): string[] {
   const raw = process.env['FOREMAN_CLAUDE_DISALLOWED_TOOLS'];
   if (raw !== undefined) {
     const list = raw.trim() === 'none' ? [] : raw.split(';').map((t) => t.trim()).filter(Boolean);
     return list.length ? ['--disallowedTools', ...list] : [];
   }
-  return ['--disallowedTools', 'Bash(npm test:*)', 'Bash(npm t:*)', 'Bash(npm run test:*)', 'Bash(npm run verify:*)'];
+  // A worker whose playbook does not grant the web is denied it outright: deny beats allow in the CLI, so a repo's own
+  // .claude/settings.json (which a worker can write for its next round) cannot switch web access on.
+  const noWeb = workerWebTools(task).length ? [] : WEB_TOOLS;
+  return ['--disallowedTools', 'Bash(npm test:*)', 'Bash(npm t:*)', 'Bash(npm run test:*)', 'Bash(npm run verify:*)', ...noWeb];
 }
 
 /**

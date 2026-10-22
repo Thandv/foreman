@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { clearPlaybookCache, getPlaybook, loadPlaybooksFrom } from '../src/playbooks.ts';
-import { workerShellAllowlist, workerWebTools } from '../src/runners/cliRunners.ts';
+import { workerShellAllowlist, workerShellDenylist, workerWebTools } from '../src/runners/cliRunners.ts';
 import { shellBrief } from '../src/scheduler.ts';
 import { probeTask } from '../src/types.ts';
 
@@ -96,4 +96,16 @@ test('a ticket whose playbook is gone or opts out gets no web tools', () => {
     else process.env['FOREMAN_PLAYBOOKS_DIR'] = before;
     clearPlaybookCache();
   }
+});
+
+test('a worker whose playbook does not grant the web is denied it (a repo settings file cannot switch it on); an unset sensitivity fails closed', () => {
+  withRepoPlaybooks(() => {
+    const deny = (t: Parameters<typeof workerShellDenylist>[0]): string[] => workerShellDenylist(t);
+    assert.ok(deny({ testCmd: null, playbook: 'software', sensitivity: 'S1' }).includes('WebFetch'), 'software: denied');
+    assert.ok(deny({ testCmd: null, playbook: 'research', sensitivity: 'S2' }).includes('WebSearch'), 'S2 research: denied');
+    assert.ok(!deny({ testCmd: null, playbook: 'research', sensitivity: 'S1' }).includes('WebFetch'), 'granted: not denied');
+    assert.deepEqual(workerWebTools({ playbook: 'research' }), [], 'no sensitivity: no web');
+    const task = probeTask({ title: 'T', prompt: 'p', playbook: 'software', role: 'dev', runner: 'claude-code' });
+    assert.doesNotMatch(shellBrief(task), /use the wrapper:[^.]*WebFetch/, 'the brief lists only shell commands as use-the-wrapper');
+  });
 });

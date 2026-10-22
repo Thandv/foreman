@@ -295,7 +295,7 @@ temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). A
 `required` rule refuses the playbook.
 
 A playbook may set `"web": true` (research does): its claude-code workers get `WebSearch` and `WebFetch` on their
-allowlist, never for an S2 ticket (a search query is text leaving the machine), and the shell brief tells them so.
+allowlist only for an S0/S1 ticket (an unset sensitivity gets none); every other claude-code worker has them on its deny list, so a repo's own `.claude/settings.json` cannot switch them on (a search query is text leaving the machine), and the shell brief tells them so.
 Reviewers never get tools; the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces
 the whole list, web tools included; a forged playbook may not set it (the forge strips it, approve refuses it). What
 it opens: `WebFetch` reaches any host, so a URL can carry text from the jail out of the machine, and every fetched page

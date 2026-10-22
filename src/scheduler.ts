@@ -331,7 +331,8 @@ export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
   if (!allowed.length) return '';
   const asCmd = (t: string): string => t.replace(/^Bash\((.*?)(:\*)?\)$/, '$1');
   const cmds = allowed.map(asCmd).join(', ');
-  const denied = workerShellDenylist(task).slice(1).map(asCmd);
+  // Only the shell commands: the web tools a playbook does not grant are denied too, but they are not suite commands.
+  const denied = workerShellDenylist(task).slice(1).filter((t) => t.startsWith('Bash(')).map(asCmd);
   const wrapper = testSlotCommand();
   // The full suite goes through the slot wrapper, in the foreground: 48 runs ended their turn with
   // `npm run verify` "still running in the background", and 26 of those failed review unconfirmed.
