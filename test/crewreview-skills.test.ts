@@ -273,3 +273,14 @@ test('when every named skill is missing as the playbook loads, the review has no
     assert.deepEqual(records[0]!['dropped'], BOTH.map((name) => ({ name, reason: 'no such skill is loaded' })));
   }));
 });
+
+test("a reviewer that names no skills gets its role's defaults, and that is recorded too", async () => {
+  await withStub((stub, store) => world([{ role: 'architect', style: 'code-review' }], async () => {
+    const { verdict, records } = await review(store);
+    assert.equal(verdict, 'pass');
+    assert.match(stub.prompts()[0]!, /FULL-BODY-architecture-decision/, 'the role default is served');
+    assert.equal(records.length, 1, 'and recorded — it used to leave no record');
+    assert.equal(records[0]!['role'], 'soft.architect');
+    assert.deepEqual(records[0]!['skills'], ['architecture-decision']);
+  }));
+});

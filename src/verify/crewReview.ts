@@ -1381,7 +1381,9 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
     const key = reviewKey(model, reviewer, prompt);
     // Which skills this reviewer's prompt carries and what was refused, on the timeline. A 'status' event, not a
     // 'skills' one: those are the worker run's record, read per run by the debrief and per ticket by a resume.
-    if (reviewer.skills !== undefined && config.skillsDir) {
+    // Recorded for every reviewer while skills are on, with the same arguments the prompt's skills block uses: a
+    // reviewer that names no skills gets its role's defaults, and those reviews used to leave no record at all.
+    if (config.skillsDir) {
       store.record({
         taskId: task.id, runId, type: 'status', stage: 'verify',
         message: `crew review skills ${skillsRunRecord(pb, reviewer.role, 'full', reviewer.skills, false, true)}`,
