@@ -10,6 +10,7 @@ import { scanCommand } from '../security/admit.ts';
 import { extractJson, pickAlias, specs, type ChatMessage } from '../models.ts';
 import { getTool, listTools, searchTools, type ToolManifest } from '../tools/catalog.ts';
 import { getPlaybook } from '../playbooks.ts';
+import { roleMode, temperatureFor } from '../verify/determinism.ts';
 import type { Task } from '../types.ts';
 import { toolBrief, toolSurface } from '../tools/forge.ts';
 import { runTool as runCatalogTool } from '../tools/run.ts';
@@ -404,6 +405,10 @@ export const apiRunner: Runner = {
       },
     ];
 
+    // The role's place on the generative ↔ deterministic slider (verify/determinism.ts): code and copyedits sample
+    // at 0, drafting prose at 0.8. A ticket outside a playbook keeps the old default, 0.
+    const playbook = task.playbook ? getPlaybook(task.playbook) : null;
+    const temperature = playbook && task.role ? temperatureFor(roleMode(playbook, task.role)) : 0;
     let summary = '';
     let steppedDown = false;
     let lastResult = '';
@@ -420,6 +425,7 @@ export const apiRunner: Runner = {
         taskBudgetUsd: task.budgetUsd,
         maxTokens,
         numCtx,
+        temperature,
         json: true,
         signal: ctx.signal,
       });

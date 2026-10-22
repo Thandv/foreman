@@ -8,7 +8,7 @@ import { clearPlaybookCache, getPlaybook, type Playbook } from '../src/playbooks
 import { clearSkillCache } from '../src/skills.ts';
 import { probeTask } from '../src/types.ts';
 import { Store } from '../src/queue.ts';
-import { buildReviewPrompt, crewReview } from '../src/verify/crewReview.ts';
+import { buildReviewPrompt, crewReview, reviewerRoleBlock } from '../src/verify/crewReview.ts';
 
 // Every fixture is built in a temp dir: the real skills repository is never read here.
 
@@ -78,7 +78,10 @@ const GOLDEN = path.join(import.meta.dirname, 'fixtures', 'crew-review-no-skills
 test('a reviewer with no skills field gets the prompt main built, byte for byte', async () => {
   await world([{ role: 'architect', style: 'code-review' }], ({ pb }) => {
     const prompt = buildReviewPrompt(pb, pb.reviewers[0]!, task, 'diff body');
-    assert.equal(prompt, fs.readFileSync(GOLDEN, 'utf8'));
+    // The golden predates the reviewer's role block; with that one block out, the rest is the golden byte for byte.
+    const block = reviewerRoleBlock(pb, 'architect');
+    assert.ok(prompt.includes(`${block}\n\n`), 'the role block is in the prompt');
+    assert.equal(prompt.replace(`${block}\n\n`, ''), fs.readFileSync(GOLDEN, 'utf8'));
     assert.match(prompt, /FULL-BODY-architecture-decision/, "the role's default skill is still served");
   });
 });
@@ -114,7 +117,7 @@ test('a reviewer with skills: [] has no skills block, though its role has a defa
   await world([{ role: 'architect', style: 'code-review', skills: [] }], ({ pb }) => {
     const prompt = buildReviewPrompt(pb, pb.reviewers[0]!, task, 'diff body');
     assert.doesNotMatch(prompt, /architecture-decision|FULL-BODY/);
-    assert.match(prompt, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nReply with JSON only/);
+    assert.match(prompt, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nYOUR ROLE \(architect, from the soft playbook\)[^\n]*\nYou review the design\.\n\nReply with JSON only/);
   });
 });
 
@@ -268,5 +271,30 @@ test('when every named skill is missing as the playbook loads, the review has no
     assert.doesNotMatch(stub.prompts()[0]!, /architecture-decision|FULL-BODY|SKILLS/);
     assert.deepEqual(records[0]!['skills'], []);
     assert.deepEqual(records[0]!['dropped'], BOTH.map((name) => ({ name, reason: 'no such skill is loaded' })));
+  }));
+});
+
+test("a reviewer that names no skills gets its role's defaults, and that is recorded too", async () => {
+  await withStub((stub, store) => world([{ role: 'architect', style: 'code-review' }], async () => {
+    const { verdict, records } = await review(store);
+    assert.equal(verdict, 'pass');
+    assert.match(stub.prompts()[0]!, /FULL-BODY-architecture-decision/, 'the role default is served');
+    assert.equal(records.length, 1, 'and recorded — it used to leave no record');
+    assert.equal(records[0]!['role'], 'soft.architect');
+    assert.deepEqual(records[0]!['skills'], ['architecture-decision']);
+  }));
+});
+
+test('the record matches the prompt for skills: [] (none, nothing in its place) and is not written while skills are off', async () => {
+  await withStub((stub, store) => world([{ role: 'architect', style: 'code-review', skills: [] }], async () => {
+    const { records } = await review(store);
+    assert.doesNotMatch(stub.prompts()[0]!, /FULL-BODY/);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!['source'], 'ticket');
+    assert.deepEqual(records[0]!['skills'], [], 'the role default is neither served nor recorded');
+
+    delete process.env['FOREMAN_SKILLS_DIR'];
+    const off = await review(store);
+    assert.deepEqual(off.records, [], 'skills off: no block, no record');
   }));
 });

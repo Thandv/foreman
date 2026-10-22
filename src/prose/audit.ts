@@ -31,9 +31,11 @@ const SKIP_NAMES = new Set(['style_sheet.md', 'front-matter.md']);
  * report the bible's own entries as tics and its names as echoes. `reference`
  * is the same case under a different name: a book workspace keeps its bible,
  * outline and prose-gate docs there, and a gate doc that quotes the banned
- * formulas to forbid them scores every one of them as a hard ban.
+ * formulas to forbid them scores every one of them as a hard ban. `reviews` holds the
+ * beta-reader's and critic's reports (playbooks/publishing.md): a critic quotes the
+ * passages it faults, so auditing its report as a scene fails it for the book's tics.
  */
-const SKIP_DIRS = new Set(['node_modules', 'series-bible', 'reference']);
+const SKIP_DIRS = new Set(['node_modules', 'series-bible', 'reference', 'reviews']);
 /** Subdirectory levels walked below `dir`. Deep enough for book/act-N/scene.md. */
 const MAX_DEPTH = 2;
 

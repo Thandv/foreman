@@ -500,6 +500,34 @@ export interface ReviewPromptExtras {
   cited?: string;
 }
 
+/** How much of a reviewer's role prompt its review carries. */
+const REVIEWER_ROLE_BYTES = 4_000;
+
+/**
+ * The reviewer's own '## role:' prompt from its playbook. Without it a playbook's
+ * review standards never reached a review: the prompt carried only the style
+ * brief, so whatever a playbook said its senior or architect checks when
+ * reviewing was read by nobody. Static per role, so it sits with the style and
+ * the prompt cache still hits. The reviewer runs with no tools; the header says
+ * so, so a role prompt written for a reviewer that can run things is read as
+ * "reason it through from what is shown". A role's "Report back" is written for
+ * a worker's prose report and grades findings critical/important/minor; the
+ * reply here is JSON whose issue severity is only blocker or normal (anything
+ * else is read as normal), so the header says the contract decides the shape
+ * and that a critical finding is a blocker. '' when the role has no prompt.
+ */
+export function reviewerRoleBlock(pb: Playbook, role: string): string {
+  const text = (pb.rolePrompts[role] ?? '').trim();
+  if (!text) return '';
+  return (
+    `YOUR ROLE (${role}, from the ${pb.id} playbook). You are reviewing, so its reviewing guidance applies. ` +
+    'You have no tools in this review: judge from what this prompt shows you, and say what you could not check. ' +
+    'Where it says how to report, the reply contract below decides the shape: findings, their severity and what you ' +
+    'could not check go in the critique, and an issue is severity "blocker" (a critical finding) or "normal".\n' +
+    boundBrief(text, REVIEWER_ROLE_BYTES, 'reviewer-role')
+  );
+}
+
 /**
  * static-first for prompt-cache hits: style brief, contract and the playbook's
  * definition of done lead; per-ticket content (title, brief, acceptance, diff)
@@ -523,6 +551,7 @@ export function buildReviewPrompt(
   return [
     truncated ? PARTIAL_READ_NOTICE : '',
     `REVIEW STYLE (${reviewer.style}):\n${STYLES[reviewer.style]}`,
+    reviewerRoleBlock(pb, reviewer.role),
     // The reviewer role's skills, full text: the chain is the hosted CLI. They
     // sit before the contract so the reply format and the definition of done
     // still come after them and still bind; '' when skills are off. A reviewer
@@ -613,7 +642,7 @@ export function buildChairPrompt(o: {
 const LEAD = /^[\s>*_#~|\x60\[\]-]*/;
 const FOREMAN_PHRASE = new RegExp(
   String.raw`^(?:foreman (?:check|cut)\b|added by foreman\b|source the document cites|acceptance (?:status|criteria)\b|work under review|worker's report\b|` +
-    String.raw`not shown, over this block|cited but not read|definition of done|operator demands|this is a repair round|files already tracked|review style\b)`,
+    String.raw`not shown, over this block|cited but not read|definition of done|operator demands|this is a repair round|files already tracked|review style\b|your role \()`,
   'i',
 );
 const FOREMAN_WORD = /^(?:FOREMAN\b|TEST GATE\b|TICKET:|BRIEF:)/;
@@ -1352,7 +1381,9 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
     const key = reviewKey(model, reviewer, prompt);
     // Which skills this reviewer's prompt carries and what was refused, on the timeline. A 'status' event, not a
     // 'skills' one: those are the worker run's record, read per run by the debrief and per ticket by a resume.
-    if (reviewer.skills !== undefined && config.skillsDir) {
+    // Recorded for every reviewer while skills are on, with the same arguments the prompt's skills block uses: a
+    // reviewer that names no skills gets its role's defaults, and those reviews used to leave no record at all.
+    if (config.skillsDir) {
       store.record({
         taskId: task.id, runId, type: 'status', stage: 'verify',
         message: `crew review skills ${skillsRunRecord(pb, reviewer.role, 'full', reviewer.skills, false, true)}`,

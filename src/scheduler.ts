@@ -17,7 +17,7 @@ import {
   effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
   ownerGateBatch, quotedPathsInDiff, type GateBatchItem,
 } from './gate.ts';
-import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
 import { factDrift } from './prose/linecheck.ts';
@@ -33,6 +33,7 @@ import { ProviderLimited, isProviderLimit, limitBackoffMs } from './providerLimi
 import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, conflictRepairNotes, redBackoffMs, type Store } from './queue.ts';
 import { recordEpisode, relevantFacts, scopeOf } from './assistant/memory.ts';
 import { planAsk, queuePlan } from './assistant/plan.ts';
+import { deterministicFindings } from './verify/determinism.ts';
 import { getPlaybook } from './playbooks.ts';
 import { resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
 import { checkBuiltTool, toolEvidence, toolTestCommand } from './tools/forge.ts';
@@ -274,7 +275,10 @@ export function briefFor(store: Store, task: Task, selfRoot?: string, isSelf?: b
   if (task.playbook && task.role && !task.agent) {
     const pb = getPlaybook(task.playbook);
     if (pb?.roles[task.role]) {
-      parts.push(`${roleAgent(pb, task.role, { skills: task.skills }).systemPrompt}\n\n---\n`);
+      // The tool brief is told for the runner this ticket runs on (only the api runner has use_tool), which can
+      // differ from the crew's default: a crew queued with an explicit runner, or one queued before the plane changed.
+      const runner = task.runner === 'api' ? 'api' : 'claude-code';
+      parts.push(`${roleAgent(pb, task.role, { skills: task.skills, runner }).systemPrompt}\n\n---\n`);
     }
   }
   parts.push(task.prompt);
@@ -327,7 +331,8 @@ export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
   if (!allowed.length) return '';
   const asCmd = (t: string): string => t.replace(/^Bash\((.*?)(:\*)?\)$/, '$1');
   const cmds = allowed.map(asCmd).join(', ');
-  const denied = workerShellDenylist(task).slice(1).map(asCmd);
+  // Only the shell commands: the web tools a playbook does not grant are denied too, but they are not suite commands.
+  const denied = workerShellDenylist(task).slice(1).filter((t) => t.startsWith('Bash(')).map(asCmd);
   const wrapper = testSlotCommand();
   // The full suite goes through the slot wrapper, in the foreground: 48 runs ended their turn with
   // `npm run verify` "still running in the background", and 26 of those failed review unconfirmed.
@@ -532,7 +537,7 @@ interface CrewReport {
   note?: string | null;
 }
 
-interface PreReviewGaps {
+export interface PreReviewGaps {
   /** One line per gap item or violating file. */
   items: string[];
   /** The repair brief: the items, and nothing else. */
@@ -543,12 +548,32 @@ interface PreReviewGaps {
    * ticket once the repair rounds are spent instead of going to a reviewer.
    */
   scope: string[];
+  /**
+   * The subset of `items` that are soft deterministic findings (verify/determinism.ts: an added skip, a deleted test
+   * file, missing required content). The worker may answer one by explaining it in the report, which the check cannot
+   * read, so these alone get one repair round, not the whole cap, before the reviewer judges them.
+   */
+  advisory?: string[];
 }
 
 /** Two sets of pre-review gaps as one: a background-run gap must not hide a scope violation. */
 function mergeGaps(a: PreReviewGaps | null, b: PreReviewGaps | null): PreReviewGaps | null {
   if (!a || !b) return a ?? b;
-  return { items: [...a.items, ...b.items], notes: `${a.notes}\n\n${b.notes}`, scope: [...a.scope, ...b.scope] };
+  return {
+    items: [...a.items, ...b.items], notes: `${a.notes}\n\n${b.notes}`, scope: [...a.scope, ...b.scope],
+    advisory: [...(a.advisory ?? []), ...(b.advisory ?? [])],
+  };
+}
+
+/**
+ * Whether a pre-review gap set earns another repair round before any reviewer: a scope violation or a hard finding
+ * always does (and fails the ticket once the cap is spent); soft findings alone get one round; anything else, the cap.
+ */
+export function preReviewRepairDue(gaps: PreReviewGaps, rounds: number): boolean {
+  if (gaps.scope.length > 0) return true;
+  if (rounds >= config.preReviewRepairs) return false;
+  const advisoryOnly = (gaps.advisory?.length ?? 0) === gaps.items.length;
+  return !(advisoryOnly && rounds >= 1);
 }
 
 /**
@@ -574,7 +599,21 @@ export function preReviewGaps(task: Task, diff: string, report: string | null, t
     items.push(...scope);
     sections.push(`The diff breaks the ticket's scope; revert these files:\n${scope.join('\n')}`);
   }
-  return items.length ? { items, notes: sections.join('\n\n'), scope } : null;
+  // The role's deterministic checks (verify/determinism.ts). A hard finding — a committed secret, a focused test —
+  // is held like a scope violation: still there after the repair rounds, the ticket fails. A soft one goes to the
+  // reviewer as a note once the rounds are spent, like a map gap.
+  const pb = getPlaybook(task.playbook);
+  const det = pb ? deterministicFindings(pb, task.role ?? null, diff, treeDir) : { hard: [], soft: [] };
+  if (det.hard.length) {
+    items.push(...det.hard);
+    scope.push(...det.hard);
+    sections.push(`These must be fixed before the work is reviewed:\n${det.hard.join('\n')}`);
+  }
+  if (det.soft.length) {
+    items.push(...det.soft);
+    sections.push(`Fix these, or say in the report why each one is right:\n${det.soft.join('\n')}`);
+  }
+  return items.length ? { items, notes: sections.join('\n\n'), scope, advisory: det.soft } : null;
 }
 
 export class Scheduler {
@@ -601,6 +640,16 @@ export class Scheduler {
   private readonly dirtyHolds = new Map<string, { files: string; probes: number; nextProbeAt: number; probing: boolean }>();
   /** Rate limit for recording tick failures: the last recorded message, when, and how many were suppressed since. */
   private tickError: { message: string; at: number; suppressed: number } | null = null;
+  /** restoreAgentSettings, said in the timeline; a jail whose settings cannot be checked does not start a round. */
+  private async restoreAgentSettingsOrThrow(jail: Jail, emit: (line: string) => void): Promise<void> {
+    let changed: string[];
+    try {
+      changed = await restoreAgentSettings(jail);
+    } catch (err) {
+      throw new Error(`could not check the jail's agent permission files before the round: ${(err as Error).message}`);
+    }
+    for (const line of changed) emit(`agent settings: ${line} — only a person changes what agents may do`);
+  }
   private get taskTimeoutMs(): number {
     return this.fixedTaskTimeoutMs ?? config.taskTimeoutMs;
   }
@@ -1224,6 +1273,8 @@ export class Scheduler {
           return child;
         },
       };
+      // Before the CLI starts: what the worker wrote into its own permission files last round is undone (isolate.ts).
+      if (task.runner === 'claude-code' && jail.repo) await this.restoreAgentSettingsOrThrow(jail, emit);
       let result = await runner.run(ctx);
       noteResult(facts, result);
       // A provider quota refusal is not a verdict on the work: hold, don't fail.
@@ -1243,6 +1294,7 @@ export class Scheduler {
         if (session) {
           emit(`the worker ended its turn with a test run still in the background; resuming session ${session} once for its result`);
           const first = result;
+          if (jail.repo) await this.restoreAgentSettingsOrThrow(jail, emit);
           const resumed = await runner.run({ ...ctx, resumeSession: session, task: { ...ctx.task, prompt: BACKGROUND_RESUME_PROMPT } });
           if (!resumed.ok && isProviderLimit(resumed.summary)) throw new ProviderLimited(resumed.summary ?? 'provider usage limit');
           if (!resumed.ok) {
@@ -1691,7 +1743,7 @@ export class Scheduler {
       } else if (
         this.verifyEnabled && runner.verifiable
         && (preReview = mergeGaps(backgroundGap, preReviewGaps(task, diff, result.report ?? result.summary ?? null, jail?.repo ? jail.dir : null)))
-        && ((task.preReviewRepairs ?? 0) < config.preReviewRepairs || preReview.scope.length > 0)
+        && preReviewRepairDue(preReview, task.preReviewRepairs ?? 0)
       ) {
         // A gap the pure checks can name needs no reviewer: the repair round
         // below carries the exact items or files, and no model is called.
@@ -1705,8 +1757,9 @@ export class Scheduler {
         // (a docs item naming "README's" once failed for not saying README.md),
         // and work whose tests passed is not thrown away on their word alone.
         if (preReview) {
-          emit(`pre-review gaps remain after ${config.preReviewRepairs} repair round(s); the reviewer decides, with the gaps attached`);
-          preReviewNote = `FOREMAN CHECK: the deterministic pre-review check still reports these gaps after ${config.preReviewRepairs} repair round(s). They may be false positives; judge each against the diff and the acceptance:\n${preReview.items.join('\n')}`;
+          const rounds = task.preReviewRepairs ?? 0;
+          emit(`pre-review gaps remain after ${rounds} repair round(s); the reviewer decides, with the gaps attached`);
+          preReviewNote = `FOREMAN CHECK: the deterministic pre-review check still reports these gaps after ${rounds} repair round(s). They may be false positives; judge each against the diff and the acceptance:\n${preReview.items.join('\n')}`;
           preReview = null;
         }
         // Both crew-chain calls below get the note, apart from the report: the

@@ -14,19 +14,24 @@
   ],
   "roles": {
     "ic-chair": {
-      "tier": "owner"
+      "tier": "owner",
+      "mode": "balanced"
     },
     "pm": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "balanced"
     },
     "senior-analyst": {
-      "tier": "senior"
+      "tier": "senior",
+      "mode": "generative"
     },
     "analyst": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "balanced"
     },
     "risk": {
-      "tier": "worker"
+      "tier": "worker",
+      "mode": "deterministic"
     }
   },
   "reviewers": [
@@ -52,13 +57,39 @@
     "Analysis and memos only: never execute trades, place orders, access accounts, or move money, and never write, wire up, or configure order-placement or account-access code.",
     "Every memo carries: this is research, not financial advice.",
     "Every thesis documents the bear case and what evidence would prove it right.",
-    "Monitoring triggers and exit criteria are written down before any recommendation."
+    "Monitoring triggers and exit criteria are written down before any recommendation.",
+    "Evidence before claims: every claim names its source (the command and its output, the file:line, the quoted passage, the cited page), checked in this pass; say what could not be checked."
+  ],
+  "required": [
+    {
+      "label": "the disclaimer \"this is research, not financial advice\"",
+      "pattern": "research,?\\s+not\\s+financial\\s+advice",
+      "roles": [
+        "analyst",
+        "pm",
+        "risk"
+      ]
+    },
+    {
+      "label": "a bear case section (a heading naming the bear case)",
+      "pattern": "^#{1,6}[^\\n]*\\bbear\\s+case\\b",
+      "roles": [
+        "analyst"
+      ]
+    },
+    {
+      "label": "monitoring triggers and exit criteria (a heading naming them)",
+      "pattern": "^#{1,6}[^\\n]*\\b(exit\\s+criteria|monitoring\\s+triggers)\\b",
+      "roles": [
+        "risk"
+      ]
+    }
   ],
   "tools": {
     "analyst": [
       {
         "name": "finance-metrics",
-        "when": "for any return, drawdown or ratio \u2014 never compute these by hand"
+        "when": "for any return, drawdown or ratio — with use_tool where you have it; by hand only with the working shown"
       },
       {
         "name": "stats-test",
@@ -80,7 +111,7 @@
     "senior-analyst": [
       {
         "name": "fdr-correct",
-        "when": "whenever several hypotheses were tested \u2014 an uncorrected batch of p-values is how a backtest lies"
+        "when": "whenever several hypotheses were tested — an uncorrected batch of p-values is how a backtest lies"
       },
       {
         "name": "bootstrap-ci",
@@ -124,6 +155,9 @@ backward from that failure to what must have been missed or misjudged. Your job 
 contrarian for its own sake but to stress every load-bearing assumption until only the ones
 that actually hold survive.
 
+Write the pre-mortem as a numbered list of failure paths, and say which one you think
+is most likely and why.
+
 ## role: analyst
 
 You build the thesis and the supporting model, stating every assumption explicitly rather than
@@ -131,9 +165,15 @@ burying it in a spreadsheet cell. Your valuation carries base, bull, and bear sc
 what would have to be true for each, and your memo states the bear case as seriously as the
 bull case, including what evidence would prove your own thesis wrong.
 
+Name the three assumptions the thesis cannot survive losing, and the data that would
+show each one failing.
+
 ## role: risk
 
 You are independent of the proposing analyst by design: you quantify downside, concentration,
 and limit exposure, and you constrain the position rather than propose it. Your output is
 monitoring triggers and exit criteria stated in writing before any recommendation reaches the
 IC, not after. You never soften a downside number to make a thesis easier to approve.
+
+State every limit and trigger as a number with its unit and the data source it is
+checked against.

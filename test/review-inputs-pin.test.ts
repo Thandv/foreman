@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildReviewPrompt } from '../src/verify/crewReview.ts';
-import { getPlaybook } from '../src/playbooks.ts';
+import { buildReviewPrompt, reviewerRoleBlock } from '../src/verify/crewReview.ts';
+import { getPlaybook, type Playbook } from '../src/playbooks.ts';
 import type { Task } from '../src/types.ts';
 
 /**
@@ -16,6 +16,20 @@ import type { Task } from '../src/types.ts';
  */
 
 const FIXTURES = path.join(import.meta.dirname, 'fixtures', 'review-inputs');
+
+/**
+ * The fixtures predate the reviewer's role block (the playbook's '## role: senior' prompt, added to every
+ * review prompt after the style). Each pinned prompt must carry that block exactly once, right after the
+ * style; with it taken out, the rest is still the fixture byte for byte.
+ */
+function withoutRole(prompt: string): string {
+  // The PLAYBOOK below gives the senior exactly this prompt.
+  const block = reviewerRoleBlock({ id: 'pin', rolePrompts: { senior: 'You review what you did not write.' } } as unknown as Playbook, 'senior');
+  assert.ok(block.length > 0, 'the senior has a role block');
+  assert.equal(prompt.split(block).length - 1, 1, 'the role block appears exactly once');
+  assert.ok(prompt.indexOf(`${block}\n\n`) > prompt.indexOf('REVIEW STYLE ('), 'after the style');
+  return prompt.replace(`${block}\n\n`, '');
+}
 
 const PLAYBOOK = `---\n${JSON.stringify({
   id: 'pin',
@@ -90,11 +104,11 @@ test('a code-only diff with a short report and no numbered acceptance: the revie
     for (const [name, text] of Object.entries(now)) fs.writeFileSync(path.join(FIXTURES, name), text);
     return;
   }
-  assert.equal(now['pin-code-only-unnumbered.txt'], fs.readFileSync(path.join(FIXTURES, 'pin-code-only-unnumbered.txt'), 'utf8'));
+  assert.equal(withoutRole(now['pin-code-only-unnumbered.txt']!), fs.readFileSync(path.join(FIXTURES, 'pin-code-only-unnumbered.txt'), 'utf8'));
 });
 
 test('with numbered acceptance the one block added to that prompt is the ACCEPTANCE STATUS contract; the rest is main byte for byte', () => {
-  const now = prompts()['pin-code-only-numbered.txt']!;
+  const now = withoutRole(prompts()['pin-code-only-numbered.txt']!);
   const main = fs.readFileSync(path.join(FIXTURES, 'pin-code-only-numbered.txt'), 'utf8');
   const from = now.indexOf('ACCEPTANCE STATUS — required.');
   const to = now.indexOf('\n\n', from);

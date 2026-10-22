@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -762,6 +763,75 @@ export async function showBaseFile(jail: Jail, relPath: string): Promise<string 
   } catch {
     return null;
   }
+}
+
+/**
+ * The files the claude-code worker's CLI reads its permissions from in the jail: `--setting-sources project` loads
+ * `.claude/settings.json` (allow and deny rules, hooks, env), and `.local` is there for an operator whose
+ * FOREMAN_CLAUDE_ARGS adds the `local` source.
+ */
+export const AGENT_SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.json'];
+
+/** Regular-file bytes at `file`, or null when there is none; never follows a link or waits on a FIFO. */
+async function regularFileBytes(file: string): Promise<{ bytes: Buffer | null; other: boolean }> {
+  let fh: fs.FileHandle;
+  try {
+    fh = await fs.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
+  } catch (err) {
+    // ENOENT/ENOTDIR: nothing there. Anything else (ELOOP on a link, EACCES…): something is there that is not ours.
+    const code = (err as NodeJS.ErrnoException).code;
+    return { bytes: null, other: code !== 'ENOENT' && code !== 'ENOTDIR' };
+  }
+  try {
+    if (!(await fh.stat()).isFile()) return { bytes: null, other: true };
+    return { bytes: await fh.readFile(), other: false };
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Put the jail's agent permission files back to what the jail's base commit holds, before a claude-code round
+ * starts. A worker can write them (its Write tool, or any `npm run` script) and the CLI reads them at the start of
+ * the next round — a repair round, the background-test resume, or a carried diff on a fresh jail — so an allow rule
+ * it wrote would widen its own permissions (any WebFetch host past its playbook's list, say). The pre-review check
+ * names such a change, but only here is it undone before the CLI can read it, and here is the only place that sees a
+ * gitignored file, a case variant on a case-insensitive disk (`.Claude/Settings.json`), or a `.claude` that is a
+ * symlink: this reads the paths the CLI reads, through the filesystem, not the diff.
+ * Returns one line per change it made. A base that has `.claude` as a symlink is left alone and said so.
+ */
+export async function restoreAgentSettings(jail: Jail): Promise<string[]> {
+  if (!jail.repo) return [];
+  const base = await jailBase(jail);
+  const listed = (await gitBytes(jail.dir, ['ls-tree', '-z', base, '--', '.claude', ...AGENT_SETTINGS_FILES])).toString('utf8');
+  const entries = new Map<string, { mode: string; oid: string }>();
+  for (const rec of listed.split('\0').filter(Boolean)) {
+    const m = /^(\d+) \w+ ([0-9a-f]+)\t(.*)$/s.exec(rec);
+    if (m) entries.set(m[3]!, { mode: m[1]!, oid: m[2]! });
+  }
+  if (entries.get('.claude')?.mode === '120000') return ['.claude is a symlink in the base commit: its settings are not checked'];
+  const out: string[] = [];
+  const dir = path.join(jail.dir, '.claude');
+  const st = await fs.lstat(dir).catch(() => null);
+  if (st && !st.isDirectory()) {
+    // A link (anywhere, outside the jail too) or a file where the settings directory goes: the link itself goes.
+    await fs.unlink(dir);
+    out.push(`.claude was ${st.isSymbolicLink() ? 'a symlink' : 'not a directory'}: removed`);
+  }
+  for (const rel of AGENT_SETTINGS_FILES) {
+    const file = path.join(jail.dir, rel);
+    const e = entries.get(rel);
+    const want = e && (e.mode === '100644' || e.mode === '100755') ? await gitBytes(jail.dir, ['cat-file', 'blob', e.oid]) : null;
+    const have = await regularFileBytes(file);
+    if (!have.other && (have.bytes === null ? want === null : want !== null && have.bytes.equals(want))) continue;
+    await fs.rm(file, { force: true, recursive: true });
+    if (want !== null) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, want);
+    }
+    out.push(`${rel}: ${want === null ? 'removed (not in the base commit)' : 'restored to the base commit'}`);
+  }
+  return out;
 }
 
 /** Drop the worktree and its branch. Used by `foreman prune`. */

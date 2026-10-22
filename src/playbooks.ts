@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.ts';
 import type { Finding } from './security/admit.ts';
+import { ROLE_MODES, type RoleMode } from './verify/determinism.ts';
 import { admit, AdmissionBlocked, scanCommand } from './security/admit.ts';
 import { probeTask } from './types.ts';
 import type { Tier } from './roles.ts'; // type-only: erased at compile time, no runtime cycle with roles.ts
@@ -51,7 +52,21 @@ export interface Playbook {
    * the rest run unattended. Omitted, it falls through to the playbook default
    * and then to FOREMAN_ASSIGNEE — see assign.ts:effectiveAssignee.
    */
-  roles: Record<string, { tier: Tier; assignee?: Assignee }>;
+  roles: Record<string, { tier: Tier; assignee?: Assignee; mode?: RoleMode }>;
+  /**
+   * Content every document a role writes must contain (a disclaimer, a limitations section), checked
+   * deterministically before any reviewer is paid (verify/determinism.ts). `pattern` is a case-insensitive,
+   * multiline regular expression; `roles` limits the rule to the roles that write such documents.
+   */
+  required?: Array<{ label: string; pattern: string; roles?: string[] }>;
+  /**
+   * Web access for this playbook's claude-code workers (S0/S1 tickets only; reviewers never get it): `search` adds
+   * WebSearch, and each of `domains` adds a `WebFetch(domain:<host>)` allow rule, so a fetch to any other host needs an
+   * approval no headless worker can get and is refused. For work whose job is finding sources (research). Fetched
+   * text is still untrusted data that only the role text guards against, and the claude-code worker is not
+   * sandboxed (README, "web"). A forged playbook may not set it.
+   */
+  web?: { search: boolean; domains: string[] };
   /** Playbook-wide default for who does the work. Omitted means "don't decide here". */
   assignee: Assignee | null;
   /**
@@ -94,6 +109,12 @@ export interface Playbook {
   pipeline: string;
   /** One system-prompt-shaped block per role, from '## role: <name>' sections. */
   rolePrompts: Record<string, string>;
+  /**
+   * Optional short variant of a role's prompt, from '## role-card: <name>' sections. A worker gets it in place
+   * of the full prompt when its role's tier resolves to a local model — the same rule that serves a skill's
+   * card.md instead of its full.md (roles.ts skillVariantFor). Absent for a role with no card section.
+   */
+  roleCards?: Record<string, string>;
   source: string;
   findings: Finding[];
 }
@@ -155,11 +176,24 @@ function blankFencedRegions(body: string): string {
   return parts.join('');
 }
 
+/** At most this many hosts in a playbook's web allowlist. */
+const MAX_WEB_DOMAINS = 64;
+/** A host name: lowercase labels joined by dots, at least one dot, no scheme, path, port or wildcard. */
+const HOST_RE = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
 /** Split the body into '## role: <name>' prompts and the '## pipeline' prose. */
-function parseSections(body: string): { pipeline: string; rolePrompts: Record<string, string>; duplicateRole: string | null } {
+function parseSections(body: string): {
+  pipeline: string;
+  rolePrompts: Record<string, string>;
+  roleCards: Record<string, string>;
+  duplicateRole: string | null;
+  duplicateCard: string | null;
+} {
   const rolePrompts: Record<string, string> = {};
+  const roleCards: Record<string, string> = {};
   let pipeline = '';
   let duplicateRole: string | null = null;
+  let duplicateCard: string | null = null;
   const scanBody = blankFencedRegions(body);
   const heads = [...scanBody.matchAll(/^##\s+(.+)$/gm)];
   for (let i = 0; i < heads.length; i++) {
@@ -168,8 +202,13 @@ function parseSections(body: string): { pipeline: string; rolePrompts: Record<st
     const contentStart = head.index! + head[0].length;
     const contentEnd = i + 1 < heads.length ? heads[i + 1]!.index! : body.length;
     const content = body.slice(contentStart, contentEnd).trim();
+    const cardMatch = heading.match(/^role-card:\s*(.+)$/i);
     const roleMatch = heading.match(/^role:\s*(.+)$/i);
-    if (roleMatch) {
+    if (cardMatch) {
+      const name = cardMatch[1]!.trim();
+      if (Object.prototype.hasOwnProperty.call(roleCards, name) && duplicateCard === null) duplicateCard = name;
+      roleCards[name] = content;
+    } else if (roleMatch) {
       const name = roleMatch[1]!.trim();
       if (Object.prototype.hasOwnProperty.call(rolePrompts, name) && duplicateRole === null) duplicateRole = name;
       rolePrompts[name] = content;
@@ -177,14 +216,16 @@ function parseSections(body: string): { pipeline: string; rolePrompts: Record<st
       pipeline = content;
     }
   }
-  return { pipeline, rolePrompts, duplicateRole };
+  return { pipeline, rolePrompts, roleCards, duplicateRole, duplicateCard };
 }
 
 interface RawFrontMatter {
   id?: unknown;
   description?: unknown;
   triggers?: unknown;
-  roles?: Record<string, { tier?: unknown; assignee?: unknown } | undefined>;
+  roles?: Record<string, { tier?: unknown; assignee?: unknown; mode?: unknown } | undefined>;
+  required?: unknown;
+  web?: unknown;
   assignee?: unknown;
   tools?: Record<string, unknown>;
   skills?: Record<string, unknown>;
@@ -244,9 +285,12 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     return { pb: null, reason: `invalid JSON front matter: ${(err as Error).message}` };
   }
 
-  const { pipeline, rolePrompts, duplicateRole } = parseSections(fm[2] ?? '');
+  const { pipeline, rolePrompts, roleCards, duplicateRole, duplicateCard } = parseSections(fm[2] ?? '');
   if (duplicateRole) {
     return { pb: null, reason: `duplicate '## role: ${duplicateRole}' section — ambiguous authorship, refusing rather than picking one` };
+  }
+  if (duplicateCard) {
+    return { pb: null, reason: `duplicate '## role-card: ${duplicateCard}' section — ambiguous authorship, refusing rather than picking one` };
   }
 
   const id = typeof raw.id === 'string' ? raw.id : '';
@@ -255,7 +299,15 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
   const rawRoles = raw.roles && typeof raw.roles === 'object' ? raw.roles : {};
   const roleNames = Object.keys(rawRoles);
   if (!roleNames.length) return { pb: null, reason: 'roles must be non-empty' };
-  const roles: Record<string, { tier: Tier; assignee?: Assignee }> = {};
+  // A card stands in for a role's prompt: one for a role the playbook does not declare, or one with no text,
+  // would be served to nobody or serve nothing, so either is a mistake in the file and refuses it.
+  for (const [name, card] of Object.entries(roleCards)) {
+    if (!Object.prototype.hasOwnProperty.call(rawRoles, name)) {
+      return { pb: null, reason: `'## role-card: ${name}' names a role the playbook does not declare` };
+    }
+    if (!card.trim()) return { pb: null, reason: `'## role-card: ${name}' is empty` };
+  }
+  const roles: Record<string, { tier: Tier; assignee?: Assignee; mode?: RoleMode }> = {};
   for (const name of roleNames) {
     const tier = rawRoles[name]?.tier;
     if (typeof tier !== 'string' || !TIERS.has(tier)) {
@@ -271,9 +323,16 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     if (rawRoleAssignee !== undefined && !ASSIGNEES.has(String(rawRoleAssignee))) {
       return { pb: null, reason: `role '${name}' has an invalid assignee: ${JSON.stringify(rawRoleAssignee)}` };
     }
+    // The slider (verify/determinism.ts): a typo would silently fall back to balanced and turn checks off or on
+    // behind the author's back, so an unknown mode refuses the playbook.
+    const rawMode = rawRoles[name]?.mode;
+    if (rawMode !== undefined && !ROLE_MODES.has(String(rawMode))) {
+      return { pb: null, reason: `role '${name}' has an invalid mode: ${JSON.stringify(rawMode)} (deterministic, balanced or generative)` };
+    }
     roles[name] = {
       tier: tier as Tier,
       ...(rawRoleAssignee === undefined ? {} : { assignee: String(rawRoleAssignee) as Assignee }),
+      ...(rawMode === undefined ? {} : { mode: String(rawMode) as RoleMode }),
     };
   }
 
@@ -353,6 +412,50 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     if (blocked) return { pb: null, reason: `check ${JSON.stringify(check)} refused: ${blocked}` };
   }
 
+  // Web access must name its hosts: open fetch to any host is not something a playbook can grant.
+  let web: { search: boolean; domains: string[] } | undefined;
+  if (raw.web !== undefined && raw.web !== false) {
+    const w = raw.web as { search?: unknown; domains?: unknown } | null;
+    if (!w || typeof w !== 'object' || Array.isArray(w)) {
+      return { pb: null, reason: `web must be false or { "search": true|false, "domains": ["host", …] }, not ${JSON.stringify(raw.web)}` };
+    }
+    if (w.search !== undefined && typeof w.search !== 'boolean') return { pb: null, reason: 'web.search must be true or false' };
+    if (!Array.isArray(w.domains) || !w.domains.length || w.domains.length > MAX_WEB_DOMAINS) {
+      return { pb: null, reason: `web.domains must list 1-${MAX_WEB_DOMAINS} hosts` };
+    }
+    const bad = w.domains.find((d) => typeof d !== 'string' || !HOST_RE.test(d));
+    if (bad !== undefined) {
+      return { pb: null, reason: `web.domains has ${JSON.stringify(bad)}: a lowercase host name with a dot, no scheme, path, port or wildcard` };
+    }
+    web = { search: w.search === true, domains: [...new Set(w.domains as string[])] };
+  }
+  // Required content (verify/determinism.ts). A malformed rule is a mistake in the file, not something to skip
+  // quietly: a rule that silently never runs is a check the author believes exists.
+  const required: Array<{ label: string; pattern: string; roles?: string[] }> = [];
+  if (raw.required !== undefined) {
+    if (!Array.isArray(raw.required)) return { pb: null, reason: 'required must be an array of { label, pattern, roles? }' };
+    for (const [i, r] of (raw.required as unknown[]).entries()) {
+      const rule = (r ?? {}) as { label?: unknown; pattern?: unknown; roles?: unknown };
+      if (typeof rule.label !== 'string' || !rule.label.trim()) return { pb: null, reason: `required[${i}] has no label` };
+      if (typeof rule.pattern !== 'string' || !rule.pattern || rule.pattern.length > 200) {
+        return { pb: null, reason: `required[${i}] needs a pattern of 1-200 characters` };
+      }
+      try {
+        new RegExp(rule.pattern, 'im');
+      } catch (err) {
+        return { pb: null, reason: `required[${i}] pattern is not a valid regular expression: ${(err as Error).message}` };
+      }
+      let rolesFor: string[] | undefined;
+      if (rule.roles !== undefined) {
+        if (!Array.isArray(rule.roles) || !rule.roles.length || !rule.roles.every((x) => typeof x === 'string' && Object.prototype.hasOwnProperty.call(rawRoles, x))) {
+          return { pb: null, reason: `required[${i}].roles must list at least one role the playbook declares (leave it out to cover every role)` };
+        }
+        rolesFor = rule.roles as string[];
+      }
+      required.push({ label: rule.label.trim(), pattern: rule.pattern, ...(rolesFor ? { roles: rolesFor } : {}) });
+    }
+  }
+
   const pb: Playbook = {
     id,
     description: typeof raw.description === 'string' ? raw.description : '',
@@ -373,8 +476,11 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     proseAudit: raw.proseAudit === true,
     gate: { default: gateDefault as 'human' | 'owner', hardHuman },
     constraints: Array.isArray(raw.constraints) ? raw.constraints.map(String) : [],
+    ...(required.length ? { required } : {}),
+    ...(web ? { web } : {}),
     pipeline,
     rolePrompts,
+    ...(Object.keys(roleCards).length ? { roleCards } : {}),
     source: file,
     findings: [],
   };
@@ -391,7 +497,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
  * on this probe: it has no repo, is S1 and uses the api runner.
  */
 function scan(pb: Playbook): Finding[] {
-  const text = [...Object.values(pb.rolePrompts), ...pb.constraints, ...pb.checks].join('\n\n');
+  const text = [...Object.values(pb.rolePrompts), ...Object.values(pb.roleCards ?? {}), ...pb.constraints, ...pb.checks].join('\n\n');
   return admit(probeTask({ id: `playbook:${pb.id}`, title: pb.id, prompt: text }));
 }
 

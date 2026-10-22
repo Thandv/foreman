@@ -189,9 +189,29 @@ export function missingTools(pb: Playbook): MissingTool[] {
   return out;
 }
 
-export function toolBrief(pb: Playbook, role: string): string {
+/**
+ * The tools a role is told about. The api runner can call the catalog (use_tool, build_tool); a claude-code worker
+ * cannot — it runs with an empty, strict MCP config and a shell allowlist — so its brief says what is true: name
+ * the tools, do the work by hand with the working shown, never claim a tool's result, and know that Foreman's own
+ * checks run after it. Telling it to "call them with use_tool" sent it looking for a tool it does not have.
+ */
+export function toolBrief(pb: Playbook, role: string, runner: 'claude-code' | 'api' = 'api'): string {
   const wanted = pb.tools[role] ?? [];
   if (!wanted.length) return '';
+  if (runner !== 'api') {
+    const lines = wanted.map((t) => {
+      const manifest = getTool(t.name);
+      const what = manifest ? manifest.description.split('\n')[0]!.slice(0, 160) : 'not in the catalog';
+      return `- ${t.name} — ${what}${t.when ? `\n    Its job: ${t.when}` : ''}`;
+    });
+    return (
+      '\n\nTools Foreman keeps for this role. This session cannot call them (there is no use_tool here). Where a ' +
+      'step would use one, do that work by hand, show the working, and say in your report which tool you stood in ' +
+      'for; never claim a result a tool would have given. Foreman runs its own checks after you finish (the tests, ' +
+      'the prose audit, the scope and secret checks) and sends their findings back as a repair round:\n' +
+      lines.join('\n')
+    );
+  }
   const lines = wanted.map((t) => {
     const manifest = getTool(t.name);
     if (!manifest) {
@@ -229,20 +249,27 @@ export function skillVariantFor(model: string | undefined | null): SkillVariant 
  * never collides with a catalog agent. Findings are the playbook's own
  * admission scan (already run at load time), reused rather than re-scanned.
  */
-export function roleAgent(pb: Playbook, role: string, opts: { skills?: readonly string[] | null } = {}): AgentDef {
+export function roleAgent(
+  pb: Playbook,
+  role: string,
+  opts: { skills?: readonly string[] | null; runner?: 'claude-code' | 'api' } = {},
+): AgentDef {
   const roleDef = pb.roles[role];
   if (!roleDef) throw new Error(`playbook '${pb.id}' has no role '${role}'`);
-  const prompt = pb.rolePrompts[role] ?? '';
+  const model = tierModel(roleDef.tier);
+  const variant = skillVariantFor(model);
+  // A local-tier worker gets the role's short card when the playbook has one (the same rule that serves a
+  // skill's card.md): a long process prompt is harder for a small model to follow. No card: the full prompt.
+  const prompt = (variant === 'card' ? pb.roleCards?.[role] : undefined) ?? pb.rolePrompts[role] ?? '';
   const constraints = pb.constraints.length
     ? `\n\nHard constraints:\n${pb.constraints.map((c) => `- ${c}`).join('\n')}`
     : '';
-  const model = tierModel(roleDef.tier);
   return {
     id: `crew:${pb.id}:${role}`,
     description: `${pb.id} playbook — ${role}`,
     // Skills trail the tools: '' with FOREMAN_SKILLS_DIR unset or no skill to
     // serve, so the prompt is then exactly what it was before skills existed.
-    systemPrompt: `${prompt}${constraints}${toolBrief(pb, role)}${skillBrief(pb, role, skillVariantFor(model), opts.skills)}`,
+    systemPrompt: `${prompt}${constraints}${toolBrief(pb, role, opts.runner ?? crewRunner())}${skillBrief(pb, role, variant, opts.skills)}`,
     model,
     // The hosted CLI dies with the subscription; in local-only mode every crew
     // ticket runs on the one runner that speaks the local plane (local-only policy).

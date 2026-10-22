@@ -280,6 +280,55 @@ admission-scanned like agents; roles map to model tiers — owner
 (`FOREMAN_MODEL_OWNER`, default `opus`; `fable` is deprecated but still honoured when pinned) plans, chairs escalations; senior
 (`opus`) reviews and challenges; worker (`sonnet`) executes.
 
+Each role also sits on a **generative ↔ deterministic slider**: `roles.<name>.mode` is `deterministic`
+(code, tests, copyedits, risk numbers), `balanced` (the default: design, review, analysis) or `generative`
+(drafting prose, editorial letters, devil's advocacy). Before any reviewer is paid, Foreman runs pure checks on the
+worker's diff: a committed credential (a private key, AWS/GitHub/Slack/Anthropic/OpenAI/Google/Stripe/npm/GitLab key
+shapes, or a new `.env` file — a line carrying `foreman:allow-secret` is exempt) and a focused test (`.only`; a line
+that holds one as test data carries `foreman:allow-only`) are **hard**: still there after the pre-review repair rounds,
+the ticket fails. An added skip/todo test, a deleted test file or an edit to an `.env` file the repository already
+tracks is **soft**: the worker gets one repair round to fix or explain it, then the reviewer gets it as a note; a
+`generative` role is not sent back for the test findings. A playbook's `required` list (`{ "label", "pattern", "roles" }`, a case-insensitive
+multiline regex) names content every markdown file those roles change must carry (files up to 256 KB are checked; a larger file is not scanned but reported for a person to check; an empty `roles` list refuses the playbook) — research's limitations section,
+investment's disclaimer, bear case and exit criteria — and is checked in every mode. The local `api` runner samples at
+temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). An unknown mode or a malformed
+`required` rule refuses the playbook.
+
+A playbook may grant web access with `"web": { "search": true, "domains": ["arxiv.org", "doi.org", …] }` (research
+does, with a list of scholarly and public-data hosts). Its claude-code workers then get `WebSearch` (only if `search`
+is true) and one `WebFetch(domain:<host>)` allow rule per listed host, only for an S0/S1 ticket (an unset sensitivity
+gets none). A rule names one exact host (`arxiv.org` does not cover `export.arxiv.org`); a fetch to any other host
+needs an approval no headless worker can get, so it is refused. The CLI's WebFetch also fetches about 90
+documentation hosts with no rule at all (docs.python.org, github.com/anthropics, …); each one a playbook does not
+list is on the worker's deny list (`CLI_PREAPPROVED_FETCH_HOSTS` in `src/runners/cliRunners.ts`, read from CLI
+2.1.287 — re-check it when the CLI is upgraded). A redirect to another host is not followed: the worker is told the
+new URL, and fetching it is a new request under the same rules, so a DOI usually resolves to a publisher that is not
+on the list. Plain `"web": true` (any host) refuses the playbook, as does a host with a scheme, path, port or
+wildcard, or more than 64 hosts. Every claude-code worker not granted them has `WebSearch`/`WebFetch` on its deny
+list. A worker cannot widen its own permissions for its next round: before every claude-code round the jail's
+`.claude/settings.json` and `.claude/settings.local.json` are put back to the base commit's (a symlink is removed,
+never followed), and a diff that changes them or a `.mcp.json` is a hard pre-review finding. Reviewers never get
+tools; the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces the whole allow
+list and `FOREMAN_CLAUDE_DISALLOWED_TOOLS` the whole deny list, web rules included; a forged playbook may not set
+`web` (the forge strips it, approve refuses it). What the host list does NOT do: it limits the `WebFetch` tool, not
+the worker. The claude-code worker is not sandboxed (see [The sandbox](#the-sandbox-foreman_sandbox)) and can reach
+any host from an `npm run` script, so the list keeps an honest worker on its sources; it is not a network boundary
+against one that a page has steered. What it still opens: a search query and a fetch URL carry text out of the
+machine to the search service and those hosts (and WebFetch sends each host name to Anthropic for a safety check);
+search results and fetched pages are text an outsider wrote — search results from any site, not only the listed
+ones — inside that unsandboxed worker. The research roles are told fetched pages are untrusted data, never to follow
+instructions in them, and to cite the URL with the line a claim rests on. Turn it off with `"web": false` in your
+copy of the playbook.
+
+Each role has a `## role: <name>` prompt section. A role may also have a shorter
+`## role-card: <name>` section: a worker gets the card instead of the full prompt
+when its role's tier resolves to a local model or the crew is on the local plane
+(local-only, or the CLI is down and auto mode fell back; the same rule that serves a
+skill's `card.md`), because a long process prompt is harder for a small model to follow. A
+role with no card gets its full prompt everywhere, and a crew review always carries the
+full prompt. A duplicate card, a card for a role the playbook does not declare, or an
+empty card refuses the playbook; cards are admission-scanned like the prompts.
+
 A reviewer entry may carry its own `skills`: `{"role": "lead", "style": "code-review", "skills": ["a", "b"]}`.
 Names are checked like a ticket's skills (a valid name, a loaded skill, in that
 role's default or allowed loadout, at most two); with `FOREMAN_SKILLS_DIR`
@@ -566,7 +615,7 @@ inline: it queues a separate `tool` task that must produce the full layout
 (manifest with a JSON-schema contract, entry, tests, README), pass **its own
 tests**, survive an admission scan of every source file, and be approved by you
 — only then is it registered. Tools run with an allowlisted environment, speak
-JSON on stdin/stdout, and are quarantined after three consecutive failures.
+JSON on stdin/stdout, and are quarantined after three consecutive failures. A `claude-code` crew worker has no catalog access, so its brief names the role's tools and tells it to do that work by hand, show the working and never claim a tool's result; Foreman's own deterministic checks run after it.
 
 Registered tools live in a git-tracked **`toolbox/`** subfolder of the repo (see
 `toolbox/README.md`), so Foreman can both use and improve its own tools. Only
@@ -1131,7 +1180,9 @@ served; a name that is left out is named, with the reason, in the block (when no
 served the brief carries no block, and `foreman skills show` prints the reasons). The block follows the role prompt, hard constraints and tools in
 the worker's brief, under a header that says the ticket's brief, acceptance and operator demands
 outrank it, and is bounded by `FOREMAN_SKILL_BRIEF_BYTES` (9,000) with any cut marked. A crew
-reviewer gets its own role's skills (full text) between its review style and the reply contract.
+reviewer gets its own `## role:` prompt from the playbook (bounded at 4,000 bytes, under a line saying it reviews
+with no tools, must say what it could not check, and reports in the reply contract's shape, a critical finding being a
+"blocker") and then its role's skills (full text), between its review style and the reply contract.
 A worker gets `card.md` when its role's tier resolves to a local model (or the crew is on the local
 plane); everything else gets `full.md`. The choice is made from the role's tier, not the ticket: a
 ticket routed to a local model by an adopted persona still gets `full.md`.

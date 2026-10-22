@@ -9,6 +9,7 @@ import { config } from '../src/config.ts';
 import { firstWorkerRole } from '../src/assistant/crewPlan.ts';
 import { clearPlaybookCache, getPlaybook, loadPlaybooks, type Playbook } from '../src/playbooks.ts';
 import { Store } from '../src/queue.ts';
+import { crewRunner } from '../src/localOnly.ts';
 import { roleAgent, toolBrief } from '../src/roles.ts';
 import { briefFor } from '../src/scheduler.ts';
 import {
@@ -535,9 +536,9 @@ test('skills off, or on with nothing to serve: roleAgent output is byte-identica
     writeSkill(root, 'one');
     writeLoadouts(root, { 'soft.dev': { default: ['one'] } });
     const playbook = pb({ tools: { dev: [{ name: 'no-such-tool', when: 'when needed' }] } });
-    // What roleAgent composed before skills existed: prompt, constraints, tools.
+    // What roleAgent composed before skills existed: prompt, constraints, tools (told for the crew's own runner).
     const before = (role: string): string =>
-      `${playbook.rolePrompts[role]}\n\nHard constraints:\n- Never do the bad thing.${toolBrief(playbook, role)}`;
+      `${playbook.rolePrompts[role]}\n\nHard constraints:\n- Never do the bad thing.${toolBrief(playbook, role, crewRunner())}`;
     assert.match(before('dev'), /no-such-tool/);
 
     assert.notEqual(roleAgent(playbook, 'dev').systemPrompt, before('dev'), 'on: the fixture does change the brief');
@@ -604,6 +605,7 @@ test("the crew review prompt carries the reviewer role's skills between the styl
       return i;
     };
     assert.ok(at('REVIEW STYLE (code-review)') < at(SKILLS_HEADER), 'after the style');
+    assert.ok(at('YOUR ROLE (') < at(SKILLS_HEADER), "after the reviewer's role prompt");
     assert.ok(at(SKILLS_HEADER) < at('Reply with JSON only'), 'before the reply contract');
     assert.ok(at(SKILLS_HEADER) < at('DEFINITION OF DONE'), 'before the definition of done');
     assert.ok(at('FULL-BODY-review-silent-failures') < at('WORK UNDER REVIEW'), 'and before the ticket and the diff');
@@ -616,7 +618,7 @@ test("the crew review prompt carries the reviewer role's skills between the styl
     delete process.env['FOREMAN_SKILLS_DIR'];
     const off = buildReviewPrompt(playbook, reviewer, task, 'diff body');
     assert.equal(off, on.replace(`${block}\n\n`, ''), 'off is the same prompt with the block and its separator gone');
-    assert.match(off, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nReply with JSON only/, 'the style is followed directly by the contract');
+    assert.match(off, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nYOUR ROLE \([^\n]+\n[^\n]+\n\nReply with JSON only/, 'the style is followed by the role block and then the contract');
   });
 });
 
