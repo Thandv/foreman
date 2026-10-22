@@ -209,6 +209,9 @@ export function testWeakening(files: FileDiff[]): DeterministicFindings {
  * section). Checked on the markdown files the diff adds or changes, read from the work tree; a file the diff deletes,
  * or one outside the tree, is not read.
  */
+/** The most text a `required` pattern is run over, per file. */
+export const MAX_REQUIRED_BYTES = 256_000;
+
 export function requiredContentFindings(pb: Playbook, role: string | null | undefined, files: FileDiff[], treeDir: string | null): string[] {
   const rules = (pb.required ?? []).filter((r) => !r.roles?.length || (role ? r.roles.includes(role) : false));
   if (!rules.length || !treeDir) return [];
@@ -229,10 +232,18 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
     let text: string;
     try {
       const st = fs.lstatSync(abs);
-      if (!st.isFile() || st.size > 2_000_000) continue;
+      if (!st.isFile()) continue;
       const real = fs.realpathSync(abs);
       if (!real.startsWith(realRoot + path.sep)) continue;
-      text = fs.readFileSync(abs, 'utf8');
+      // A playbook's pattern runs on the daemon's thread, so the text it runs over is bounded: a careless pattern
+      // (an unbounded wildcard between two words) on a multi-megabyte file could stall every ticket. A larger file is
+      // a finding, never a silent skip.
+      if (st.size > MAX_REQUIRED_BYTES) {
+        out.push(`${f.path}: too large for the required-content check (over ${MAX_REQUIRED_BYTES / 1000} KB) — confirm by hand that it has: ${rules.map((r) => r.label).join('; ')}`);
+        continue;
+      }
+      // Read the resolved path, not the one checked above: a swap between the check and the read cannot redirect it.
+      text = fs.readFileSync(real, 'utf8');
     } catch {
       continue;
     }

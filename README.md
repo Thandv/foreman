@@ -289,7 +289,7 @@ that holds one as test data carries `foreman:allow-only`) are **hard**: still th
 the ticket fails. An added skip/todo test, a deleted test file or an edit to an `.env` file the repository already
 tracks is **soft**: the worker gets one repair round to fix or explain it, then the reviewer gets it as a note; a
 `generative` role is not sent back for the test findings. A playbook's `required` list (`{ "label", "pattern", "roles" }`, a case-insensitive
-multiline regex) names content every markdown file those roles change must carry — research's limitations section,
+multiline regex) names content every markdown file those roles change must carry (the pattern runs over at most the first 256 KB of a file; a larger file is reported for a person to check, and an empty `roles` list refuses the playbook) — research's limitations section,
 investment's disclaimer, bear case and exit criteria — and is checked in every mode. The local `api` runner samples at
 temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). An unknown mode or a malformed
 `required` rule refuses the playbook.

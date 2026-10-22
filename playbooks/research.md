@@ -144,7 +144,8 @@ search or the data actually shows, including results that complicate the hypothe
 Record every search query, source and filter so someone else can rerun the search,
 and report the results that cut against the hypothesis before the ones that support it.
 Work from the sources in the repository and the ones the ticket gives you. If the ask
-needs a search your session cannot run, list the queries you would run and stop there;
+needs a search your session cannot run, list the queries you would run in your report (or
+the file the ticket names) and stop there;
 never cite a source you have not read.
 
 ## role: internal-reviewer

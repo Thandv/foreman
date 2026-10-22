@@ -115,7 +115,7 @@ test('a bad mode or a malformed required rule refuses the playbook', () => {
   assert.match(playbookWith((fm) => { fm['required'] = [{ pattern: 'x' }]; }).refused, /has no label/);
   assert.match(playbookWith((fm) => { fm['required'] = [{ label: 'l', pattern: '(' }]; }).refused, /not a valid regular expression/);
   assert.match(playbookWith((fm) => { fm['required'] = [{ label: 'l', pattern: 'x'.repeat(201) }]; }).refused, /1-200 characters/);
-  assert.match(playbookWith((fm) => { fm['required'] = [{ label: 'l', pattern: 'x', roles: ['ghost'] }]; }).refused, /roles the playbook declares/);
+  assert.match(playbookWith((fm) => { fm['required'] = [{ label: 'l', pattern: 'x', roles: ['ghost'] }]; }).refused, /role the playbook declares/);
   assert.equal(playbookWith((fm) => { roles(fm)['dev']!['mode'] = 'deterministic'; fm['required'] = [{ label: 'l', pattern: 'x', roles: ['dev'] }]; }).refused, '[]');
 });
 
@@ -209,4 +209,14 @@ test('pre-review rounds: soft findings alone get one round, hard ones are always
   assert.deepEqual([preReviewRepairDue(mixed, 1), preReviewRepairDue(mixed, 2)], [true, false]);
   const hard = { items: ['k'], notes: '', scope: ['k'], advisory: [] };
   assert.equal(preReviewRepairDue(hard, 99), true, 'held past the cap: schedulePreReviewRepair then refuses and the ticket fails');
+});
+
+test('required content: an oversized file is a finding, not a silent skip; an empty roles list refuses the playbook', async () => {
+  const { MAX_REQUIRED_BYTES } = await import('../src/verify/determinism.ts');
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-big-'));
+  fs.writeFileSync(path.join(tree, 'memo.md'), 'x'.repeat(MAX_REQUIRED_BYTES + 1));
+  const found = requiredContentFindings(pbOf('investment'), 'analyst', parseDiffFiles(diffOf('memo.md', ['x'])), tree);
+  assert.equal(found.length, 1);
+  assert.match(found[0]!, /too large for the required-content check/);
+  assert.match(playbookWith((fm) => { fm['required'] = [{ label: 'l', pattern: 'x', roles: [] }]; }).refused, /at least one role/);
 });

@@ -76,7 +76,7 @@
     "author": [
       {
         "name": "prose-gate",
-        "when": "before you call any draft done — it is the series' own AI-tics checklist; Foreman's prose audit runs the same checks after you"
+        "when": "before you call any draft done — it is the series' own AI-tics checklist; Foreman's prose audit runs its banned-phrase checks after you"
       },
       {
         "name": "numeral-tic",

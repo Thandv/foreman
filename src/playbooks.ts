@@ -416,8 +416,8 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
       }
       let rolesFor: string[] | undefined;
       if (rule.roles !== undefined) {
-        if (!Array.isArray(rule.roles) || !rule.roles.every((x) => typeof x === 'string' && Object.prototype.hasOwnProperty.call(rawRoles, x))) {
-          return { pb: null, reason: `required[${i}].roles must list roles the playbook declares` };
+        if (!Array.isArray(rule.roles) || !rule.roles.length || !rule.roles.every((x) => typeof x === 'string' && Object.prototype.hasOwnProperty.call(rawRoles, x))) {
+          return { pb: null, reason: `required[${i}].roles must list at least one role the playbook declares (leave it out to cover every role)` };
         }
         rolesFor = rule.roles as string[];
       }
