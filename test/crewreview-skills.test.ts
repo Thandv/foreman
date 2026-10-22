@@ -284,3 +284,17 @@ test("a reviewer that names no skills gets its role's defaults, and that is reco
     assert.deepEqual(records[0]!['skills'], ['architecture-decision']);
   }));
 });
+
+test('the record matches the prompt for skills: [] (none, nothing in its place) and is not written while skills are off', async () => {
+  await withStub((stub, store) => world([{ role: 'architect', style: 'code-review', skills: [] }], async () => {
+    const { records } = await review(store);
+    assert.doesNotMatch(stub.prompts()[0]!, /FULL-BODY/);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!['source'], 'ticket');
+    assert.deepEqual(records[0]!['skills'], [], 'the role default is neither served nor recorded');
+
+    delete process.env['FOREMAN_SKILLS_DIR'];
+    const off = await review(store);
+    assert.deepEqual(off.records, [], 'skills off: no block, no record');
+  }));
+});
