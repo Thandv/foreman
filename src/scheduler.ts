@@ -533,7 +533,7 @@ interface CrewReport {
   note?: string | null;
 }
 
-interface PreReviewGaps {
+export interface PreReviewGaps {
   /** One line per gap item or violating file. */
   items: string[];
   /** The repair brief: the items, and nothing else. */
@@ -544,12 +544,32 @@ interface PreReviewGaps {
    * ticket once the repair rounds are spent instead of going to a reviewer.
    */
   scope: string[];
+  /**
+   * The subset of `items` that are soft deterministic findings (verify/determinism.ts: an added skip, a deleted test
+   * file, missing required content). The worker may answer one by explaining it in the report, which the check cannot
+   * read, so these alone get one repair round, not the whole cap, before the reviewer judges them.
+   */
+  advisory?: string[];
 }
 
 /** Two sets of pre-review gaps as one: a background-run gap must not hide a scope violation. */
 function mergeGaps(a: PreReviewGaps | null, b: PreReviewGaps | null): PreReviewGaps | null {
   if (!a || !b) return a ?? b;
-  return { items: [...a.items, ...b.items], notes: `${a.notes}\n\n${b.notes}`, scope: [...a.scope, ...b.scope] };
+  return {
+    items: [...a.items, ...b.items], notes: `${a.notes}\n\n${b.notes}`, scope: [...a.scope, ...b.scope],
+    advisory: [...(a.advisory ?? []), ...(b.advisory ?? [])],
+  };
+}
+
+/**
+ * Whether a pre-review gap set earns another repair round before any reviewer: a scope violation or a hard finding
+ * always does (and fails the ticket once the cap is spent); soft findings alone get one round; anything else, the cap.
+ */
+export function preReviewRepairDue(gaps: PreReviewGaps, rounds: number): boolean {
+  if (gaps.scope.length > 0) return true;
+  if (rounds >= config.preReviewRepairs) return false;
+  const advisoryOnly = (gaps.advisory?.length ?? 0) === gaps.items.length;
+  return !(advisoryOnly && rounds >= 1);
 }
 
 /**
@@ -589,7 +609,7 @@ export function preReviewGaps(task: Task, diff: string, report: string | null, t
     items.push(...det.soft);
     sections.push(`Fix these, or say in the report why each one is right:\n${det.soft.join('\n')}`);
   }
-  return items.length ? { items, notes: sections.join('\n\n'), scope } : null;
+  return items.length ? { items, notes: sections.join('\n\n'), scope, advisory: det.soft } : null;
 }
 
 export class Scheduler {
@@ -1706,7 +1726,7 @@ export class Scheduler {
       } else if (
         this.verifyEnabled && runner.verifiable
         && (preReview = mergeGaps(backgroundGap, preReviewGaps(task, diff, result.report ?? result.summary ?? null, jail?.repo ? jail.dir : null)))
-        && ((task.preReviewRepairs ?? 0) < config.preReviewRepairs || preReview.scope.length > 0)
+        && preReviewRepairDue(preReview, task.preReviewRepairs ?? 0)
       ) {
         // A gap the pure checks can name needs no reviewer: the repair round
         // below carries the exact items or files, and no model is called.
@@ -1720,8 +1740,9 @@ export class Scheduler {
         // (a docs item naming "README's" once failed for not saying README.md),
         // and work whose tests passed is not thrown away on their word alone.
         if (preReview) {
-          emit(`pre-review gaps remain after ${config.preReviewRepairs} repair round(s); the reviewer decides, with the gaps attached`);
-          preReviewNote = `FOREMAN CHECK: the deterministic pre-review check still reports these gaps after ${config.preReviewRepairs} repair round(s). They may be false positives; judge each against the diff and the acceptance:\n${preReview.items.join('\n')}`;
+          const rounds = task.preReviewRepairs ?? 0;
+          emit(`pre-review gaps remain after ${rounds} repair round(s); the reviewer decides, with the gaps attached`);
+          preReviewNote = `FOREMAN CHECK: the deterministic pre-review check still reports these gaps after ${rounds} repair round(s). They may be false positives; judge each against the diff and the acceptance:\n${preReview.items.join('\n')}`;
           preReview = null;
         }
         // Both crew-chain calls below get the note, apart from the report: the

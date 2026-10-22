@@ -47,7 +47,8 @@ test('a committed credential is a hard finding; the allow marker and an example 
     assert.equal(hits.length, 1, `${kind} is found`);
   }
   assert.deepEqual(secretFindings(parseDiffFiles(diffOf('src/c.ts', [`const k = "${FAKE.aws}"; // foreman:allow-secret`]))), []);
-  assert.equal(secretFindings(parseDiffFiles(diffOf('.env', ['TOKEN=x']))).length, 1, 'an .env file is a secret file');
+  const newEnv = ['diff --git a/.env b/.env', 'new file mode 100644', '--- /dev/null', '+++ b/.env', '@@ -0,0 +1 @@', '+TOKEN=x'].join('\n');
+  assert.equal(secretFindings(parseDiffFiles(newEnv)).length, 1, 'a new .env file is a secret file');
   assert.deepEqual(secretFindings(parseDiffFiles(diffOf('.env.example', ['TOKEN=']))), [], 'an example is not');
   assert.deepEqual(secretFindings(parseDiffFiles(diffOf('src/ok.ts', ['const sky = "sk-short";']))), [], 'ordinary text is not');
 });
@@ -134,10 +135,78 @@ test('preReviewGaps: a hard finding is held like a scope violation (fails after 
     const soft = preReviewGaps(task, diffOf('test/a.test.ts', ["test.skip('x', () => {});"]), null);
     assert.ok(soft);
     assert.deepEqual([soft.items.length, soft.scope.length], [1, 0], 'a soft finding goes to the reviewer after the repairs');
+    assert.deepEqual(soft.advisory, soft.items, 'and is marked advisory');
+    assert.deepEqual(hard.advisory, [], 'a hard one is not');
     assert.equal(preReviewGaps(task, diffOf('src/a.ts', ['const a = 1;']), null), null, 'a clean diff has no gaps');
   } finally {
     if (before === undefined) delete process.env['FOREMAN_PLAYBOOKS_DIR'];
     else process.env['FOREMAN_PLAYBOOKS_DIR'] = before;
     clearPlaybookCache();
   }
+});
+
+test('parseDiffFiles: a quoted (non-ASCII) path, a name holding " b/", a rename, and an added line starting "++"', () => {
+  const quoted = [
+    'diff --git "a/caf\\303\\251.ts" "b/caf\\303\\251.ts"', 'new file mode 100644', '--- /dev/null', '+++ "b/caf\\303\\251.ts"',
+    '@@ -0,0 +1 @@', `+const k = "${FAKE.aws}";`,
+  ].join('\n');
+  const [q] = parseDiffFiles(quoted);
+  assert.deepEqual([q!.path, q!.created, q!.added.length], ['café.ts', true, 1], 'the first file of a diff, quoted, is still read');
+  assert.equal(secretFindings(parseDiffFiles(quoted)).length, 1, 'and its secret is found');
+  const spaced = ['diff --git a/my b/x.test.ts b/my b/x.test.ts', '--- a/my b/x.test.ts\t', '+++ b/my b/x.test.ts\t', '@@ -1 +1,2 @@', ' a', "+test.only('x', () => {});"].join('\n');
+  assert.deepEqual(parseDiffFiles(spaced).map((f) => f.path), ['my b/x.test.ts']);
+  assert.equal(testWeakening(parseDiffFiles(spaced)).hard.length, 1);
+  const renamed = ['diff --git a/old.md b/new name.md', 'similarity index 100%', 'rename from old.md', 'rename to new name.md'].join('\n');
+  assert.deepEqual(parseDiffFiles(renamed).map((f) => [f.path, f.created]), [['new name.md', true]]);
+  const plus = [`diff --git a/x.ts b/x.ts`, '--- a/x.ts', '+++ b/x.ts', '@@ -1 +1,2 @@', ' a', `+++i; const k = "${FAKE.aws}";`].join('\n');
+  assert.equal(secretFindings(parseDiffFiles(plus)).length, 1, 'content that starts with ++ is still content');
+});
+
+test('focused tests: a bare fit( is hard; model.fit( and def fit( in a test file are not', () => {
+  assert.equal(testWeakening(parseDiffFiles(diffOf('spec/a.spec.js', ["fit('x', () => {});"]))).hard.length, 1);
+  assert.deepEqual(testWeakening(parseDiffFiles(diffOf('test/lint.test.ts', ["const src = \"it.only('x')\"; // foreman:allow-only"]))).hard, [], 'quoted as data, marked');
+  const ml = testWeakening(parseDiffFiles(diffOf('tests/test_model.py', ['    model.fit(X, y)', 'def fit(self, x):', 'function fit (a) {}'])));
+  assert.deepEqual(ml.hard, []);
+});
+
+test('more credential shapes; a tracked .env edit is a soft note, a new one is hard', () => {
+  const more = {
+    openaiProject: 'sk-' + 'proj-' + 'Ab_3dE-' + 'x'.repeat(60),
+    stripe: 'sk' + '_live_' + 'c'.repeat(24),
+    npm: 'npm' + '_' + 'd'.repeat(36),
+    gitlab: 'glpat' + '-' + 'e'.repeat(20),
+  };
+  for (const [kind, secret] of Object.entries(more)) {
+    assert.equal(secretFindings(parseDiffFiles(diffOf('src/c.ts', [`const k = "${secret}";`]))).length, 1, `${kind} is found`);
+  }
+  const tracked = ['diff --git a/.env.development b/.env.development', 'index 1111111..2222222 100644', '--- a/.env.development', '+++ b/.env.development', '@@ -1 +1,2 @@', ' A=1', '+B=2'].join('\n');
+  assert.deepEqual(secretFindings(parseDiffFiles(tracked)), [], 'a tracked env file is the project convention');
+  const det = deterministicFindings(pbOf('software'), 'dev', tracked, null);
+  assert.deepEqual([det.hard.length, det.soft.length], [0, 1], 'its edit is a note');
+  const created = ['diff --git a/.env b/.env', 'new file mode 100644', '--- /dev/null', '+++ b/.env', '@@ -0,0 +1 @@', '+A=1'].join('\n');
+  assert.equal(secretFindings(parseDiffFiles(created)).length, 1, 'a new one is held');
+});
+
+test('required content is not read through a symlinked directory that leads out of the tree', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-ln-'));
+  const tree = path.join(base, 'tree');
+  const outside = path.join(base, 'outside');
+  fs.mkdirSync(tree);
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'memo.md'), '# nothing here\n');
+  fs.symlinkSync(outside, path.join(tree, 'docs'));
+  const inv = pbOf('investment');
+  assert.deepEqual(requiredContentFindings(inv, 'analyst', parseDiffFiles(diffOf('docs/memo.md', ['x'])), tree), []);
+  fs.writeFileSync(path.join(tree, 'memo.md'), '# nothing here\n');
+  assert.equal(requiredContentFindings(inv, 'analyst', parseDiffFiles(diffOf('memo.md', ['x'])), tree).length, 2, 'the same file inside is read');
+});
+
+test('pre-review rounds: soft findings alone get one round, hard ones are always held, map gaps get the cap', async () => {
+  const { preReviewRepairDue } = await import('../src/scheduler.ts');
+  const soft = { items: ['a'], notes: '', scope: [], advisory: ['a'] };
+  assert.deepEqual([preReviewRepairDue(soft, 0), preReviewRepairDue(soft, 1)], [true, false]);
+  const mixed = { items: ['map gap', 'a'], notes: '', scope: [], advisory: ['a'] };
+  assert.deepEqual([preReviewRepairDue(mixed, 1), preReviewRepairDue(mixed, 2)], [true, false]);
+  const hard = { items: ['k'], notes: '', scope: ['k'], advisory: [] };
+  assert.equal(preReviewRepairDue(hard, 99), true, 'held past the cap: schedulePreReviewRepair then refuses and the ticket fails');
 });

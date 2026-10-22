@@ -13,7 +13,8 @@
  * Every check is pure: it reads the diff and, for required content, the files the diff touched in the work tree.
  * A finding is HARD (a leaked secret, a focused test) or SOFT (a new skip, a deleted test file, a missing required
  * section). preReviewGaps sends both back to the worker with no reviewer called; a hard finding still standing after
- * the repair rounds fails the ticket, a soft one goes to the reviewer as a note (it may be a false positive).
+ * the repair rounds fails the ticket, a soft one gets one round and then goes to the reviewer as a note (it may be a
+ * false positive, and an explanation in the report is something only the reviewer can read).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,23 +44,80 @@ export interface DeterministicFindings {
 interface FileDiff {
   path: string;
   deleted: boolean;
+  /** New at this path: a new file, or the target of a rename or copy. */
+  created: boolean;
   added: string[];
 }
 
-/** Split a unified git diff into files: the new path, whether the file was deleted, and its added lines. */
+const GIT_ESCAPES: Record<string, string> = { n: '\n', t: '\t', '"': '"', '\\': '\\', a: '\x07', b: '\b', f: '\f', r: '\r', v: '\v' };
+
+/**
+ * A path as git prints it in a header: bare (a name with a space gets a trailing tab on the ---/+++ lines), or
+ * C-quoted with octal escapes for each non-ASCII byte (scheduler.ts diffs with core.quotePath=true).
+ */
+function headerPath(raw: string): string {
+  const s = raw.replace(/\t$/, '');
+  if (s.length < 2 || !s.startsWith('"') || !s.endsWith('"')) return s;
+  const body = s.slice(1, -1);
+  const bytes: number[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+    if (c !== '\\') {
+      bytes.push(...Buffer.from(c, 'utf8'));
+      continue;
+    }
+    const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (oct) {
+      bytes.push(parseInt(oct[0], 8) & 0xff);
+      i += 3;
+    } else {
+      const n = body[++i] ?? '';
+      bytes.push(...Buffer.from(GIT_ESCAPES[n] ?? n, 'utf8'));
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * Split a unified git diff into files: the new path, whether the file was deleted or created, and its added lines.
+ * Every `diff --git` line opens a file, quoted or not. The path is taken from the `+++`/`---` or `rename to` header
+ * (one path to the end of the line), not from `diff --git a/X b/Y`, which is ambiguous when a name holds " b/". Lines
+ * before the first `@@` are headers; after it, every `+` line is content, including one whose text starts `++`.
+ */
 export function parseDiffFiles(diff: string): FileDiff[] {
   const files: FileDiff[] = [];
   let cur: FileDiff | null = null;
+  let inHeader = false;
   for (const line of diff.split('\n')) {
-    const head = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-    if (head) {
-      cur = { path: head[2]!, deleted: false, added: [] };
+    if (line.startsWith('diff --git ')) {
+      const rest = line.slice('diff --git '.length);
+      // Best effort until a header below names the path: the text after the last " b/" (or ' "b/').
+      const q = rest.lastIndexOf(' "b/');
+      const b = q >= 0 ? q + 1 : rest.lastIndexOf(' b/') + 1;
+      const guess = b > 0 ? headerPath(rest.slice(b)).replace(/^b\//, '') : rest;
+      cur = { path: guess, deleted: false, created: false, added: [] };
       files.push(cur);
+      inHeader = true;
       continue;
     }
     if (!cur) continue;
-    if (line.startsWith('deleted file mode')) cur.deleted = true;
-    else if (line.startsWith('+') && !line.startsWith('+++')) cur.added.push(line.slice(1));
+    if (inHeader) {
+      if (line.startsWith('@@')) inHeader = false;
+      else if (line.startsWith('deleted file mode')) cur.deleted = true;
+      else if (line.startsWith('new file mode')) cur.created = true;
+      else if (line.startsWith('rename to ') || line.startsWith('copy to ')) {
+        cur.path = headerPath(line.slice(line.indexOf(' to ') + 4));
+        cur.created = true;
+      } else if (line.startsWith('+++ ')) {
+        const p = headerPath(line.slice(4));
+        if (p !== '/dev/null') cur.path = p.replace(/^b\//, '');
+      } else if (line.startsWith('--- ') && cur.deleted) {
+        const p = headerPath(line.slice(4));
+        if (p !== '/dev/null') cur.path = p.replace(/^a\//, '');
+      }
+      continue;
+    }
+    if (line.startsWith('+')) cur.added.push(line.slice(1));
   }
   return files;
 }
@@ -76,11 +134,20 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/, 'a Slack token'],
   [/\bsk-ant-[A-Za-z0-9_-]{20,}\b/, 'an Anthropic API key'],
   [/\bsk-(?:proj-)?[A-Za-z0-9]{32,}\b/, 'an OpenAI-style API key'],
+  // Current OpenAI project, service-account and admin keys carry '-' and '_' anywhere in the body.
+  [/\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}/, 'an OpenAI API key'],
+  [/\b[rs]k_live_[A-Za-z0-9]{20,}\b/, 'a Stripe live key'],
+  [/\bnpm_[A-Za-z0-9]{36}\b/, 'an npm token'],
+  [/\bglpat-[A-Za-z0-9_-]{20,}/, 'a GitLab token'],
   [/\bAIza[0-9A-Za-z_-]{35}\b/, 'a Google API key'],
 ];
 const ALLOW_SECRET = 'foreman:allow-secret';
 
-/** An added `.env` file (not an example of one) is a secret file whatever it holds. */
+/**
+ * A new `.env` file (not an example of one) is a secret file whatever it holds. One the repository already tracks
+ * (frameworks such as Next.js commit `.env.development` defaults) is the project's convention: an edit to it is a
+ * soft note, and its lines still go through the credential patterns above.
+ */
 const ENV_FILE = /(^|\/)\.env(\.[A-Za-z0-9_-]+)?$/;
 const ENV_EXAMPLE = /(^|\/)\.env\.(example|sample|template|dist)$/;
 
@@ -88,7 +155,7 @@ export function secretFindings(files: FileDiff[]): string[] {
   const out: string[] = [];
   for (const f of files) {
     if (f.deleted) continue;
-    if (ENV_FILE.test(f.path) && !ENV_EXAMPLE.test(f.path) && f.added.length) {
+    if (ENV_FILE.test(f.path) && !ENV_EXAMPLE.test(f.path) && f.created) {
       out.push(`${f.path}: an environment file is committed — remove it and keep it out of git`);
     }
     for (const line of f.added) {
@@ -103,9 +170,21 @@ export function secretFindings(files: FileDiff[]): string[] {
   return out;
 }
 
+/** Edits to an environment file the repository already tracks: a note, not a hold (see ENV_FILE). */
+export function envFileEdits(files: FileDiff[]): string[] {
+  return files
+    .filter((f) => !f.deleted && !f.created && f.added.length && ENV_FILE.test(f.path) && !ENV_EXAMPLE.test(f.path))
+    .map((f) => `${f.path}: a tracked environment file is changed — check it holds no credential`);
+}
+
 const TEST_FILE = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
-/** A focused test runs alone and silently drops every other test in the file. */
-const FOCUSED = /\b(?:it|test|describe|context)\.only\s*\(|\b(?:fit|fdescribe)\s*\(|\{\s*only\s*:\s*true\b/;
+/**
+ * A focused test runs alone and silently drops every other test in the file. A test of a tool that finds focused
+ * tests (a linter rule, this module) holds them as data: such a line opts out with the marker `foreman:allow-only`.
+ */
+const ALLOW_FOCUS = 'foreman:allow-only';
+// Jasmine's fit/fdescribe are bare calls: `model.fit(` (scikit-learn, in nearly every ML test) and `def fit(` are not.
+const FOCUSED = /\b(?:it|test|describe|context)\.only\s*\(|(?<![.\w$])(?<!\b(?:def|function)\s+)(?:fit|fdescribe)\s*\(|\{\s*only\s*:\s*true\b/;
 const SKIPPED = /\b(?:it|test|describe|context)\.(?:skip|todo)\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|\{\s*(?:skip|todo)\s*:\s*(?:true|['"`])|@pytest\.mark\.(?:skip|xfail)\b|@unittest\.skip\b|\bt\.Skip\(/;
 
 export function testWeakening(files: FileDiff[]): DeterministicFindings {
@@ -117,7 +196,9 @@ export function testWeakening(files: FileDiff[]): DeterministicFindings {
       soft.push(`${f.path}: a test file is deleted — restore it, or say in the report why the tests it held are gone`);
       continue;
     }
-    if (f.added.some((l) => FOCUSED.test(l))) hard.push(`${f.path}: a focused test (.only) is added — it silences every other test in the file; remove .only`);
+    if (f.added.some((l) => FOCUSED.test(l) && !l.includes(ALLOW_FOCUS))) {
+      hard.push(`${f.path}: a focused test (.only) is added — it silences every other test in the file; remove .only (a line that only quotes one, as test data, carries the marker ${ALLOW_FOCUS})`);
+    }
     if (f.added.some((l) => SKIPPED.test(l))) soft.push(`${f.path}: a skipped or todo test is added — make it run, or say in the report why it cannot`);
   }
   return { hard, soft };
@@ -132,6 +213,14 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
   const rules = (pb.required ?? []).filter((r) => !r.roles?.length || (role ? r.roles.includes(role) : false));
   if (!rules.length || !treeDir) return [];
   const root = path.resolve(treeDir);
+  // The tree's real path: a symlinked directory inside it (made by the worker, or by a test command that ran after
+  // the diff was taken) must not lead the read outside. lstat below refuses a symlinked file itself.
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch {
+    return [];
+  }
   const out: string[] = [];
   for (const f of files) {
     if (f.deleted || !/\.(md|markdown)$/i.test(f.path)) continue;
@@ -141,6 +230,8 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
     try {
       const st = fs.lstatSync(abs);
       if (!st.isFile() || st.size > 2_000_000) continue;
+      const real = fs.realpathSync(abs);
+      if (!real.startsWith(realRoot + path.sep)) continue;
       text = fs.readFileSync(abs, 'utf8');
     } catch {
       continue;
@@ -163,9 +254,10 @@ export function deterministicFindings(
   const files = parseDiffFiles(diff);
   const tests = testWeakening(files);
   const hard = [...secretFindings(files), ...tests.hard];
+  const envEdits = envFileEdits(files);
   // Required content is an explicit rule the playbook names roles for, so it holds in every mode; the mode only
   // decides whether the heuristic test-weakening findings are raised for a role that writes prose.
-  const soft: string[] = [...requiredContentFindings(pb, role, files, treeDir)];
+  const soft: string[] = [...envEdits, ...requiredContentFindings(pb, role, files, treeDir)];
   if (mode !== 'generative') soft.push(...tests.soft);
   return { hard, soft };
 }
