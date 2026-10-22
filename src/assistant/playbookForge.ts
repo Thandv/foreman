@@ -167,8 +167,9 @@ interface Patched {
  * on a fresh draft (patchFrontMatter), and the approve path REFUSES a pending
  * file that still violates them (approvePending) — so the two can never drift.
  */
-function privilegeGap(checks: unknown, gate: unknown): {
+function privilegeGap(checks: unknown, gate: unknown, web?: unknown): {
   checks: string[];
+  web: boolean;
   gateDefault: unknown;
   gateSoft: boolean;
   hardHuman: string[];
@@ -178,6 +179,9 @@ function privilegeGap(checks: unknown, gate: unknown): {
   const hardHuman = Array.isArray(g['hardHuman']) ? g['hardHuman'].map(String) : [];
   return {
     checks: Array.isArray(checks) ? checks.map(String) : [],
+    // `web` is network egress for every claude-code worker of the playbook (cliRunners.workerWebTools), and the
+    // forge prompt carries the ask it was forged from: the operator grants it by editing an installed playbook.
+    web: web !== undefined && web !== false,
     gateDefault: g['default'] ?? null,
     gateSoft: g['default'] !== 'human',
     hardHuman,
@@ -189,9 +193,10 @@ function privilegeGap(checks: unknown, gate: unknown): {
  * Why this playbook may not be installed as it stands, one named reason per
  * violated rule. Empty means it is inside the boundary.
  */
-export function installRefusals(checks: unknown, gate: unknown): string[] {
-  const gap = privilegeGap(checks, gate);
+export function installRefusals(checks: unknown, gate: unknown, web?: unknown): string[] {
+  const gap = privilegeGap(checks, gate, web);
   const reasons: string[] = [];
+  if (gap.web) reasons.push(`web is set (${JSON.stringify(web)}) — a forged playbook may not grant its workers web access`);
   if (gap.checks.length) {
     reasons.push(
       `checks is not empty — it carries ${gap.checks.length} executable command(s) ` +
@@ -230,7 +235,7 @@ function patchFrontMatter(raw: string): Patched {
   const { front, body, id } = readFrontMatter(raw);
   const warnings: string[] = [];
 
-  const gap = privilegeGap(front['checks'], front['gate']);
+  const gap = privilegeGap(front['checks'], front['gate'], front['web']);
 
   // A forged playbook may not ship commands: `checks` run under /bin/sh in the
   // jail, and nothing model-authored gets that on a human's say-so alone.
@@ -241,6 +246,11 @@ function patchFrontMatter(raw: string): Patched {
     );
   }
   front['checks'] = [];
+
+  if (gap.web) {
+    warnings.push(`stripped "web": ${JSON.stringify(front['web'])} — a forged playbook may not grant its workers web access; add it by hand after approving`);
+    delete front['web'];
+  }
 
   if (gap.gateSoft) warnings.push(`forced gate.default to 'human' (draft asked for ${JSON.stringify(gap.gateDefault)})`);
   if (gap.missingHard.length) warnings.push(`added required hardHuman class(es): ${gap.missingHard.join(', ')}`);
@@ -401,7 +411,7 @@ function installRefusalsFor(src: string, id: string): string[] {
   try {
     const { front, id: declared } = readFrontMatter(fs.readFileSync(src, 'utf8'));
     if (declared !== id) return [`its front matter declares id '${declared}'`];
-    return installRefusals(front['checks'], front['gate']);
+    return installRefusals(front['checks'], front['gate'], front['web']);
   } catch (err) {
     return [(err as Error).message];
   }

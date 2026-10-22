@@ -468,3 +468,24 @@ test('HTTP: forge → pending → approve, plus the error paths', async () => {
     cleanup([pbDir, stub.dir]);
   }
 });
+
+test('forgePlaybook: a draft that asks for web access has it stripped and named; approve refuses a pending file that grew it', async () => {
+  const pbDir = withPlaybooks();
+  // Web access is network egress for every worker of the playbook, and a forged playbook's text can be steered by
+  // the ask it was forged from: like checks, it is the operator's to grant by hand, never the model's.
+  const stub = stubClaude(envelope(pbText(kitchenFront({ web: true }), KITCHEN_BODY)));
+  const store = new Store(':memory:');
+  try {
+    const forged = await forgePlaybook({ domain: 'restaurant kitchen', store });
+    assert.equal(forged.playbook.web, undefined, 'a forged playbook never grants its workers the web');
+    assert.doesNotMatch(fs.readFileSync(forged.path, 'utf8'), /"web"/);
+    assert.match(forged.warnings.join('\n'), /stripped "web": true/);
+
+    fs.writeFileSync(forged.path, pbText(kitchenFront({ web: true }), KITCHEN_BODY));
+    assert.throws(() => approvePending('kitchen'), /refusing to install 'kitchen': web is set/);
+    assert.equal(fs.existsSync(path.join(pbDir, 'kitchen.md')), false, 'nothing was installed');
+  } finally {
+    store.close();
+    cleanup([pbDir, stub.dir]);
+  }
+});
