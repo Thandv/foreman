@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import type { Runner, RunnerContext, RunnerResult } from './index.ts';
 import type { Stage, Task } from '../types.ts';
 import { spawnStreaming } from './proc.ts';
+import { getPlaybook } from '../playbooks.ts';
 import { modelForTask, tierForTask, tierMaxTurns } from '../roles.ts';
 import { cloudDown, cloudFallback, localOnly, localOnlyLabel } from '../localOnly.ts';
 import { config } from '../config.ts';
@@ -269,7 +270,7 @@ function makeCliRunner(spec: CliSpec): Runner {
  * `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces the list (`;`-separated), `none`
  * turns it off.
  */
-export function workerShellAllowlist(task: Pick<Task, 'testCmd'>): string[] {
+export function workerShellAllowlist(task: Pick<Task, 'testCmd'> & Partial<Pick<Task, 'playbook' | 'sensitivity'>>): string[] {
   const raw = process.env['FOREMAN_CLAUDE_ALLOWED_TOOLS'];
   if (raw !== undefined) {
     const list = raw.trim() === 'none' ? [] : raw.split(';').map((t) => t.trim()).filter(Boolean);
@@ -279,8 +280,18 @@ export function workerShellAllowlist(task: Pick<Task, 'testCmd'>): string[] {
     `Bash(${testSlotCommand()}:*)`,
     'Bash(npm run:*)', 'Bash(npx tsc:*)', 'Bash(node --test:*)',
     'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
+    ...workerWebTools(task),
   ];
   return ['--allowedTools', ...list];
+}
+
+/**
+ * Web search and fetch for a worker whose playbook opts in (`"web": true`, research). Never for an S2 ticket: its
+ * text must not leave the machine, and a search query is text leaving it. Reviewers run with no tools at all.
+ */
+export function workerWebTools(task: Partial<Pick<Task, 'playbook' | 'sensitivity'>>): string[] {
+  if (!task.playbook || task.sensitivity === 'S2') return [];
+  return getPlaybook(task.playbook)?.web === true ? ['WebSearch', 'WebFetch'] : [];
 }
 
 /** How a worker invokes the slot wrapper: an absolute path, so it works from any jail. */

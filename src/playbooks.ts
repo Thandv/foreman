@@ -59,6 +59,12 @@ export interface Playbook {
    * multiline regular expression; `roles` limits the rule to the roles that write such documents.
    */
   required?: Array<{ label: string; pattern: string; roles?: string[] }>;
+  /**
+   * Web access for this playbook's claude-code workers: WebSearch and WebFetch join their allowlist (never for an S2
+   * ticket). For work whose job is finding sources (research); reviewers never get it. Fetched text is untrusted
+   * data — the roles are told so — and the worker's own sandbox and jail rules still apply.
+   */
+  web?: boolean;
   /** Playbook-wide default for who does the work. Omitted means "don't decide here". */
   assignee: Assignee | null;
   /**
@@ -212,6 +218,7 @@ interface RawFrontMatter {
   triggers?: unknown;
   roles?: Record<string, { tier?: unknown; assignee?: unknown; mode?: unknown } | undefined>;
   required?: unknown;
+  web?: unknown;
   assignee?: unknown;
   tools?: Record<string, unknown>;
   skills?: Record<string, unknown>;
@@ -398,6 +405,9 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     if (blocked) return { pb: null, reason: `check ${JSON.stringify(check)} refused: ${blocked}` };
   }
 
+  if (raw.web !== undefined && typeof raw.web !== 'boolean') {
+    return { pb: null, reason: `web must be true or false, not ${JSON.stringify(raw.web)}` };
+  }
   // Required content (verify/determinism.ts). A malformed rule is a mistake in the file, not something to skip
   // quietly: a rule that silently never runs is a check the author believes exists.
   const required: Array<{ label: string; pattern: string; roles?: string[] }> = [];
@@ -446,6 +456,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     gate: { default: gateDefault as 'human' | 'owner', hardHuman },
     constraints: Array.isArray(raw.constraints) ? raw.constraints.map(String) : [],
     ...(required.length ? { required } : {}),
+    ...(raw.web === true ? { web: true } : {}),
     pipeline,
     rolePrompts,
     ...(Object.keys(roleCards).length ? { roleCards } : {}),

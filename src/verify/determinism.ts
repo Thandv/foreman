@@ -235,15 +235,25 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
       if (!st.isFile()) continue;
       const real = fs.realpathSync(abs);
       if (!real.startsWith(realRoot + path.sep)) continue;
-      // A playbook's pattern runs on the daemon's thread, so the text it runs over is bounded: a careless pattern
-      // (an unbounded wildcard between two words) on a multi-megabyte file could stall every ticket. A larger file is
-      // a finding, never a silent skip.
-      if (st.size > MAX_REQUIRED_BYTES) {
-        out.push(`${f.path}: too large for the required-content check (over ${MAX_REQUIRED_BYTES / 1000} KB) — confirm by hand that it has: ${rules.map((r) => r.label).join('; ')}`);
-        continue;
+      // Open without following a final symlink and take the size from the open handle, then read at most the cap:
+      // the bound holds even if the file grows after the checks. (A parent swapped for a link between realpath and
+      // open is narrowed by reading the resolved path, not ruled out; the leak is one bit per rule.)
+      const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      try {
+        const fst = fs.fstatSync(fd);
+        if (!fst.isFile()) continue;
+        // A playbook's pattern runs on the daemon's thread, so the text it runs over is bounded: a careless pattern
+        // on a multi-megabyte file could stall every ticket. A larger file is a finding, never a silent skip.
+        if (fst.size > MAX_REQUIRED_BYTES) {
+          out.push(`${f.path}: too large for the required-content check (over ${MAX_REQUIRED_BYTES / 1000} KB) — confirm by hand that it has: ${rules.map((r) => r.label).join('; ')}`);
+          continue;
+        }
+        const buf = Buffer.alloc(MAX_REQUIRED_BYTES);
+        const n = fs.readSync(fd, buf, 0, MAX_REQUIRED_BYTES, 0);
+        text = buf.subarray(0, n).toString('utf8');
+      } finally {
+        fs.closeSync(fd);
       }
-      // Read the resolved path, not the one checked above: a swap between the check and the read cannot redirect it.
-      text = fs.readFileSync(real, 'utf8');
     } catch {
       continue;
     }

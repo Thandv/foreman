@@ -289,10 +289,15 @@ that holds one as test data carries `foreman:allow-only`) are **hard**: still th
 the ticket fails. An added skip/todo test, a deleted test file or an edit to an `.env` file the repository already
 tracks is **soft**: the worker gets one repair round to fix or explain it, then the reviewer gets it as a note; a
 `generative` role is not sent back for the test findings. A playbook's `required` list (`{ "label", "pattern", "roles" }`, a case-insensitive
-multiline regex) names content every markdown file those roles change must carry (the pattern runs over at most the first 256 KB of a file; a larger file is reported for a person to check, and an empty `roles` list refuses the playbook) — research's limitations section,
+multiline regex) names content every markdown file those roles change must carry (files up to 256 KB are checked; a larger file is not scanned but reported for a person to check; an empty `roles` list refuses the playbook) — research's limitations section,
 investment's disclaimer, bear case and exit criteria — and is checked in every mode. The local `api` runner samples at
 temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). An unknown mode or a malformed
 `required` rule refuses the playbook.
+
+A playbook may set `"web": true` (research does): its claude-code workers get `WebSearch` and `WebFetch` on their
+allowlist, never for an S2 ticket (a search query is text leaving the machine), and the shell brief tells them so.
+Reviewers never get tools. Fetched pages are untrusted data: the research roles are told never to follow
+instructions in them and to cite the URL with the line a claim rests on.
 
 Each role has a `## role: <name>` prompt section. A role may also have a shorter
 `## role-card: <name>` section: a worker gets the card instead of the full prompt

@@ -220,3 +220,17 @@ test('required content: an oversized file is a finding, not a silent skip; an em
   assert.match(found[0]!, /too large for the required-content check/);
   assert.match(playbookWith((fm) => { fm['required'] = [{ label: 'l', pattern: 'x', roles: [] }]; }).refused, /at least one role/);
 });
+
+test('required content: a file exactly at the cap is checked, and the over-cap finding names every label', async () => {
+  const { MAX_REQUIRED_BYTES } = await import('../src/verify/determinism.ts');
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-cap-'));
+  const head = '# Thesis\n\n## Bear case\n\nThis is research, not financial advice.\n';
+  fs.writeFileSync(path.join(tree, 'memo.md'), head + 'x'.repeat(MAX_REQUIRED_BYTES - Buffer.byteLength(head)));
+  const files = parseDiffFiles(diffOf('memo.md', ['x']));
+  assert.deepEqual(requiredContentFindings(pbOf('investment'), 'analyst', files, tree), [], 'at the cap: checked and clean');
+  fs.appendFileSync(path.join(tree, 'memo.md'), 'x');
+  const over = requiredContentFindings(pbOf('investment'), 'analyst', files, tree);
+  assert.equal(over.length, 1);
+  assert.match(over[0]!, /disclaimer/);
+  assert.match(over[0]!, /bear case/);
+});
