@@ -616,7 +616,7 @@ test("the crew review prompt carries the reviewer role's skills between the styl
     delete process.env['FOREMAN_SKILLS_DIR'];
     const off = buildReviewPrompt(playbook, reviewer, task, 'diff body');
     assert.equal(off, on.replace(`${block}\n\n`, ''), 'off is the same prompt with the block and its separator gone');
-    assert.match(off, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nReply with JSON only/, 'the style is followed directly by the contract');
+    assert.match(off, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nYOUR ROLE \([^\n]+\n[^\n]+\n\nReply with JSON only/, 'the style is followed by the role block and then the contract');
   });
 });
 

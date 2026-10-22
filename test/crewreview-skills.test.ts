@@ -8,7 +8,7 @@ import { clearPlaybookCache, getPlaybook, type Playbook } from '../src/playbooks
 import { clearSkillCache } from '../src/skills.ts';
 import { probeTask } from '../src/types.ts';
 import { Store } from '../src/queue.ts';
-import { buildReviewPrompt, crewReview } from '../src/verify/crewReview.ts';
+import { buildReviewPrompt, crewReview, reviewerRoleBlock } from '../src/verify/crewReview.ts';
 
 // Every fixture is built in a temp dir: the real skills repository is never read here.
 
@@ -78,7 +78,10 @@ const GOLDEN = path.join(import.meta.dirname, 'fixtures', 'crew-review-no-skills
 test('a reviewer with no skills field gets the prompt main built, byte for byte', async () => {
   await world([{ role: 'architect', style: 'code-review' }], ({ pb }) => {
     const prompt = buildReviewPrompt(pb, pb.reviewers[0]!, task, 'diff body');
-    assert.equal(prompt, fs.readFileSync(GOLDEN, 'utf8'));
+    // The golden predates the reviewer's role block; with that one block out, the rest is the golden byte for byte.
+    const block = reviewerRoleBlock(pb, 'architect');
+    assert.ok(prompt.includes(`${block}\n\n`), 'the role block is in the prompt');
+    assert.equal(prompt.replace(`${block}\n\n`, ''), fs.readFileSync(GOLDEN, 'utf8'));
     assert.match(prompt, /FULL-BODY-architecture-decision/, "the role's default skill is still served");
   });
 });
@@ -114,7 +117,7 @@ test('a reviewer with skills: [] has no skills block, though its role has a defa
   await world([{ role: 'architect', style: 'code-review', skills: [] }], ({ pb }) => {
     const prompt = buildReviewPrompt(pb, pb.reviewers[0]!, task, 'diff body');
     assert.doesNotMatch(prompt, /architecture-decision|FULL-BODY/);
-    assert.match(prompt, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nReply with JSON only/);
+    assert.match(prompt, /^REVIEW STYLE \(code-review\):\n[^\n]+\n\nYOUR ROLE \(architect, from the soft playbook\)[^\n]*\nYou review the design\.\n\nReply with JSON only/);
   });
 });
 

@@ -500,6 +500,28 @@ export interface ReviewPromptExtras {
   cited?: string;
 }
 
+/** How much of a reviewer's role prompt its review carries. */
+const REVIEWER_ROLE_BYTES = 4_000;
+
+/**
+ * The reviewer's own '## role:' prompt from its playbook. Without it a playbook's
+ * review standards never reached a review: the prompt carried only the style
+ * brief, so whatever a playbook said its senior or architect checks when
+ * reviewing was read by nobody. Static per role, so it sits with the style and
+ * the prompt cache still hits. The reviewer runs with no tools; the header says
+ * so, so a role prompt written for a reviewer that can run things is read as
+ * "reason it through from what is shown". '' when the role has no prompt.
+ */
+export function reviewerRoleBlock(pb: Playbook, role: string): string {
+  const text = (pb.rolePrompts[role] ?? '').trim();
+  if (!text) return '';
+  return (
+    `YOUR ROLE (${role}, from the ${pb.id} playbook). You are reviewing, so its reviewing guidance applies. ` +
+    'You have no tools in this review: judge from what this prompt shows you, and say what you could not check.\n' +
+    boundBrief(text, REVIEWER_ROLE_BYTES, 'reviewer-role')
+  );
+}
+
 /**
  * static-first for prompt-cache hits: style brief, contract and the playbook's
  * definition of done lead; per-ticket content (title, brief, acceptance, diff)
@@ -523,6 +545,7 @@ export function buildReviewPrompt(
   return [
     truncated ? PARTIAL_READ_NOTICE : '',
     `REVIEW STYLE (${reviewer.style}):\n${STYLES[reviewer.style]}`,
+    reviewerRoleBlock(pb, reviewer.role),
     // The reviewer role's skills, full text: the chain is the hosted CLI. They
     // sit before the contract so the reply format and the definition of done
     // still come after them and still bind; '' when skills are off. A reviewer

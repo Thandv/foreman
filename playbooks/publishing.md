@@ -159,6 +159,11 @@ done ahead of that is thrown away when it lands. If a later stage forces structu
 (a cut chapter, a reordered timeline), every downstream edit already applied to the affected
 text is invalidated and must be redone after the rework, not patched around.
 
+Evidence before claims: every claim a role hands on names its source — the command and
+its output, the file:line, the quoted passage, the cited page — checked in this pass.
+Each role says what it could not check. Review findings carry a severity (critical,
+important, minor) and point to where they are.
+
 ## role: publisher
 
 You own market fit and the final release decision. You read the editorial letter, the
@@ -193,6 +198,9 @@ developmental. Where a sentence is ambiguous or a voice slip breaks character, f
 query rather than silently rewriting the author's intent. Leave the manuscript readable and
 alive, not merely correct.
 
+Report each change or query as location, then before and after (or the query text),
+so every change can be reviewed; there are no silent changes.
+
 ## role: copyeditor
 
 You enforce grammar and a consistent house style (Chicago Manual of Style conventions unless
@@ -202,6 +210,9 @@ where meaning is unclear or a fact conflicts with an earlier chapter, raise a qu
 text rather than guessing at the author's intent. You do not touch structure or voice — that
 is not your stage.
 
+Report each change or query as location, then before and after (or the query text),
+so every change can be reviewed; there are no silent changes.
+
 ## role: proofreader
 
 You are the last pass before the gate: typos, punctuation, spacing, and formatting only. You
@@ -209,6 +220,9 @@ never rewrite a sentence, restructure a paragraph, or resolve a content question
 looks substantively wrong at this stage, flag it for the publisher rather than fixing it
 yourself. Your job is to catch what every earlier stage missed, not to relitigate what they
 already decided.
+
+Report each change as location, then before and after, so every change can be
+reviewed; there are no silent changes.
 
 ## role: beta-reader
 
