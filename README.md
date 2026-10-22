@@ -143,6 +143,17 @@ refused (a FAILED recorder, or a sandbox that keeps a jail out of Foreman's home
 get SIGTERM, the grace and SIGKILL without a freeze, and the daemon log says `freeze record failed, leftovers are
 ended without a freeze`. With no recorder installed (the default) nothing is written and the reap is unchanged.
 
+Foreman's own processes install the recorder (`src/runners/freezeInstall.ts`) for the absolute `FOREMAN_HOME` and write a
+presence marker there: every `foreman` command (after the worker ledger guard, so a refused command writes nothing),
+`foreman serve` (after its start-up sweep below, so its own marker is never read by it), and `src/verify/testSlot.ts`.
+The marker is removed at a clean exit; a killed process's files are removed by the next `foreman serve` sweep. The
+process's identity is its pid and its zone-free start time; if that cannot be read, the recorder is FAILED. A worker's
+`testSlot.ts` runs in the worker sandbox, which closes Foreman's home to it, so its recorder is FAILED too: it prints
+`foreman: freeze recorder not installed (…); leftover process groups of commands run here are ended with SIGTERM and
+SIGKILL without being frozen first` on stderr, the suite runs and its result is unchanged, and its leftovers are ended
+without a freeze. No variable is added to a worker's env. A suite run under `testSlot.ts` never records into the
+daemon's home: `test/env.ts` gives every test process a temp `FOREMAN_HOME`.
+
 `foreman serve` sweeps `<FOREMAN_HOME>/frozen/` once, after taking the daemon lock and before the scheduler starts
 (`src/runners/freezeSweep.ts`, reading with `freezeRead.ts`): groups a dead recorder left stopped are ended. A group is
 signalled only when a fresh process snapshot shows one of its recorded members with the same pid AND start, still in
