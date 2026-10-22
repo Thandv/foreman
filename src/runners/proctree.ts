@@ -478,6 +478,44 @@ export function leftoverSampleMs(): number {
 const SEEN_CAP = 20_000;
 
 /**
+ * The reapers that have begun a freeze and not released it. They share one listener per event, installed when the
+ * first enrols and removed when the last withdraws, so any number of concurrent reaps adds two listeners, not two
+ * each. Only 'exit' and SIGHUP are held: SIGTERM and SIGINT are not listened for here yet.
+ */
+const freezing = new Set<LeftoverReaper>();
+
+/** A daemon that exits mid-freeze must not leave groups stopped: release every active reaper. */
+const onProcessExit = (): void => {
+  for (const r of [...freezing]) r.releaseOnEvent(false);
+};
+
+/**
+ * A hangup (a closed terminal) emits no 'exit', so without this the frozen groups would stay stopped. It releases
+ * every reaper, then, if nothing else listens for SIGHUP, raises it again so the process still ends the way a hangup
+ * ends it (a listener otherwise swallows the signal's default action). A host with a SIGHUP listener of its own (the
+ * daemon) lives on into its shutdown.
+ */
+const onProcessHup = (): void => {
+  for (const r of [...freezing]) r.releaseOnEvent(true);
+  if (process.listenerCount('SIGHUP') === 0) process.kill(process.pid, 'SIGHUP');
+};
+
+function enroll(r: LeftoverReaper): void {
+  if (freezing.has(r)) return;
+  if (freezing.size === 0) {
+    process.on('exit', onProcessExit);
+    process.on('SIGHUP', onProcessHup);
+  }
+  freezing.add(r);
+}
+
+function withdraw(r: LeftoverReaper): void {
+  if (!freezing.delete(r) || freezing.size > 0) return;
+  process.removeListener('exit', onProcessExit);
+  process.removeListener('SIGHUP', onProcessHup);
+}
+
+/**
  * Finds and ends what a command left running (see the block comment above).
  * `start()` when the command is spawned, `childExited()` on its 'exit', and
  * await `reap()` before its result is handed on. The reap freezes every group
@@ -499,20 +537,6 @@ export class LeftoverReaper {
   private readonly frozen = new Set<number>();
   /** Set when the bound fires: from then on the reap freezes nothing more (it still ends what it finds). */
   private gaveUp = false;
-  /** Installed on 'exit' while groups are frozen, so a daemon that exits mid-freeze does not leave them stopped. */
-  private readonly onExit = (): void => this.release();
-  /**
-   * Installed on SIGHUP while groups are frozen: a hangup (a closed terminal) emits no 'exit', so without this the
-   * frozen groups would stay stopped. It releases them, then, if nothing else listens for SIGHUP, raises it again so
-   * the process still ends the way a hangup ends it (a listener otherwise swallows the signal's default action).
-   * Like the bound, it ends the freeze for good: a host with a SIGHUP listener of its own (the daemon) lives on into
-   * its shutdown, and a later round must not stop a group with neither this handler nor the 'exit' one installed.
-   */
-  private readonly onHup = (): void => {
-    this.gaveUp = true;
-    this.release();
-    if (process.listenerCount('SIGHUP') === 0) process.kill(process.pid, 'SIGHUP');
-  };
   private readonly opts: Required<Omit<ReaperOptions, 'snapshot' | 'kill' | 'selfPid'>> & Pick<ReaperOptions, 'snapshot' | 'kill' | 'selfPid'>;
 
   private readonly root: number;
@@ -625,8 +649,16 @@ export class LeftoverReaper {
       }
     }
     this.frozen.clear();
-    process.removeListener('exit', this.onExit);
-    process.removeListener('SIGHUP', this.onHup);
+    withdraw(this);
+  }
+
+  /**
+   * What the process-wide listeners (the registry above) call on this reaper. `endFreeze` is the hangup: it ends the
+   * freeze for good, like the bound, so a later round does not stop a group with no listener installed.
+   */
+  releaseOnEvent(endFreeze: boolean): void {
+    if (endFreeze) this.gaveUp = true;
+    this.release();
   }
 
   /** Idempotent: every call gets the same reap. Resolves within `boundMs`. */
@@ -695,8 +727,7 @@ export class LeftoverReaper {
     // Freeze first: a stopped process forks nothing, so a fresh look then finds
     // every child made since the last one, still under a living parent.
     const stopped = new Set<number>();
-    process.on('exit', this.onExit);
-    process.on('SIGHUP', this.onHup);
+    enroll(this);
     // A look that throws once the freeze has begun: the groups it already stopped passed the ownership check before
     // their SIGSTOP, so they still get the grace and the SIGKILL below instead of only TERM and CONT.
     let failure: unknown = null;

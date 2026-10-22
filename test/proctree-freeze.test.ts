@@ -446,3 +446,166 @@ test('two reapers in one process: one settling does not forget the group the oth
   assert.equal(running(a.pid), false);
   assert.equal(running(b.pid), false);
 });
+
+// The process listeners of the reapers (one registry in proctree.ts). SIGTERM and SIGINT are not registered yet: their
+// counts are asserted only to show that nothing was added to them.
+type Counts = { exit: number; SIGHUP: number; SIGTERM: number; SIGINT: number };
+
+function listenerCounts(): Counts {
+  return { exit: process.listenerCount('exit'), SIGHUP: process.listenerCount('SIGHUP'), SIGTERM: process.listenerCount('SIGTERM'), SIGINT: process.listenerCount('SIGINT') };
+}
+
+/** The listeners on `event` that were not in `before`. */
+function addedTo(event: 'exit' | 'SIGHUP', before: Function[]): Function[] {
+  const now: Function[] = event === 'exit' ? process.listeners('exit') : process.listeners('SIGHUP');
+  return now.filter((l) => !before.includes(l));
+}
+
+function stopped(pid: number): boolean {
+  return spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim().startsWith('T');
+}
+
+test('20 concurrent reapers share one listener per event, and every event\'s listener count is back to its baseline after the last reap', NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  resetFreezeRecorderForTest();
+  const base = listenerCounts();
+  const leftovers = [];
+  for (let i = 0; i < 20; i++) leftovers.push(await leftover(t, g));
+  let stops = 0;
+  let during: Counts | null = null;
+  const reapers = leftovers.map((l) => {
+    let looks = 0;
+    const w = watch(g.home, {
+      graceMs: 200,
+      killWaitMs: 1_000,
+      boundMs: 60_000,
+      // Every reaper's look after its SIGSTOP waits until all 20 have stopped a group: all 20 are enrolled at once.
+      snapshot: async () => {
+        if (++looks === 2) {
+          await until(() => stops >= 20, 60_000);
+          during ??= listenerCounts();
+        }
+        return snapshotProcs();
+      },
+    }, () => void stops++);
+    const r = new LeftoverReaper(l.child.pid!, w.opts);
+    r.childExited();
+    return r;
+  });
+  const reports = await Promise.all(reapers.map((r) => r.reap()));
+  for (const r of reports) assert.equal(r.error, null);
+  assert.ok(during, 'the 20 were frozen together');
+  assert.equal((during as Counts).exit, base.exit + 1, "one 'exit' listener for all 20");
+  assert.equal((during as Counts).SIGHUP, base.SIGHUP + 1, 'one SIGHUP listener for all 20');
+  assert.equal((during as Counts).SIGTERM, base.SIGTERM);
+  assert.equal((during as Counts).SIGINT, base.SIGINT);
+  assert.deepEqual(listenerCounts(), base);
+  for (const l of leftovers) assert.equal(running(l.pid), false);
+});
+
+test("two reapers: one's release leaves the other's groups frozen until its own release", NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  resetFreezeRecorderForTest();
+  const base = listenerCounts();
+  const a = await leftover(t, g);
+  const b = await leftover(t, g);
+  let freeB!: () => void;
+  const bHeld = new Promise<void>((r) => (freeB = r));
+  let looksA = 0;
+  let looksB = 0;
+  // B's look after its SIGSTOP waits until A has released; A's look waits past A's bound. A sees only its own group.
+  const wb = watch(g.home, {
+    boundMs: 60_000,
+    snapshot: async () => {
+      if (++looksB === 2) await bHeld;
+      return snapshotProcs();
+    },
+  });
+  const wa = watch(g.home, {
+    boundMs: 500,
+    snapshot: async () => {
+      if (++looksA === 2) await new Promise((r) => setTimeout(r, 2_000));
+      const rows = await snapshotProcs();
+      return rows && rows.filter((r) => r.pgid !== b.child.pid);
+    },
+  });
+  const rb = new LeftoverReaper(b.child.pid!, wb.opts);
+  const ra = new LeftoverReaper(a.child.pid!, wa.opts);
+  rb.childExited();
+  ra.childExited();
+  const pb = rb.reap();
+  assert.ok(await until(() => wb.sent.includes('SIGSTOP'), 30_000), 'B froze its group');
+  assert.equal(stopped(b.pid), true);
+  const pa = ra.reap();
+  const repA = await pa;
+  assert.equal(repA.timedOut, true, "A's bound released it");
+  assert.equal(stopped(b.pid), true, "B's group is still frozen after A's release");
+  assert.deepEqual(wb.sent, ['SIGSTOP'], 'B was sent nothing since its SIGSTOP');
+  assert.equal(process.listenerCount('exit'), base.exit + 1, "B's listeners stay while it is frozen");
+  freeB();
+  const repB = await pb;
+  assert.equal(repB.error, null);
+  assert.equal(running(b.pid), false);
+  assert.ok(await until(() => !running(a.pid), 30_000), "A's own background reap ended its group");
+  assert.deepEqual(listenerCounts(), base);
+});
+
+test('pinned: the SIGHUP listener releases the frozen group (TERM, CONT), freezes nothing more and goes away', NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  resetFreezeRecorderForTest();
+  const l = await leftover(t, g);
+  const host = (): void => {};
+  process.on('SIGHUP', host);
+  t.after(() => process.removeListener('SIGHUP', host));
+  const base = listenerCounts();
+  const before = process.listeners('SIGHUP');
+  let sentAtHup: string[] = [];
+  let hupCount = -1;
+  let hupped = false;
+  const w = watch(g.home, {}, () => {
+    if (hupped) return;
+    hupped = true;
+    const mine = addedTo('SIGHUP', before);
+    assert.equal(mine.length, 1, 'one SIGHUP listener while frozen');
+    (mine[0] as () => void)();
+    sentAtHup = w.sent.slice();
+    hupCount = process.listenerCount('SIGHUP');
+  });
+  const reaper = new LeftoverReaper(l.child.pid!, w.opts);
+  reaper.childExited();
+  const report = await reaper.reap();
+  assert.equal(report.error, null);
+  assert.deepEqual(sentAtHup, ['SIGSTOP', 'SIGTERM', 'SIGCONT']);
+  assert.equal(hupCount, base.SIGHUP, 'the listener was removed by the release');
+  assert.equal(w.sent.filter((s) => s === 'SIGSTOP').length, 1, 'nothing frozen after the hangup');
+  assert.deepEqual(listenerCounts(), base);
+  assert.equal(running(l.pid), false);
+});
+
+test("pinned: the 'exit' listener releases the frozen group (TERM, CONT) and goes away", NEEDS_PS, async (t) => {
+  const g = procGuard(t);
+  resetFreezeRecorderForTest();
+  const l = await leftover(t, g);
+  const base = listenerCounts();
+  const before = process.listeners('exit');
+  let sentAtExit: string[] = [];
+  let exitCount = -1;
+  let fired = false;
+  const w = watch(g.home, {}, () => {
+    if (fired) return;
+    fired = true;
+    const mine = addedTo('exit', before);
+    assert.equal(mine.length, 1, "one 'exit' listener while frozen");
+    (mine[0] as () => void)();
+    sentAtExit = w.sent.slice();
+    exitCount = process.listenerCount('exit');
+  });
+  const reaper = new LeftoverReaper(l.child.pid!, w.opts);
+  reaper.childExited();
+  const report = await reaper.reap();
+  assert.equal(report.error, null);
+  assert.deepEqual(sentAtExit, ['SIGSTOP', 'SIGTERM', 'SIGCONT']);
+  assert.equal(exitCount, base.exit, 'the listener was removed by the release');
+  assert.deepEqual(listenerCounts(), base);
+  assert.equal(running(l.pid), false);
+});
