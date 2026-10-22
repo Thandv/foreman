@@ -429,6 +429,7 @@ test('listSceneFiles: two levels of subdirectory count, node_modules and dotdirs
     put('node_modules/pkg/readme.md');
     put('.drafts/chapter-04.md');
     put('series-bible/characters.md'); // canon, not a scene
+    put('reviews/chapter-01-critic.md'); // a report about the book, not a scene
     put('chapters/STYLE_SHEET.md');
     put('chapters/notes.pdf.bak');
 
