@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { recordFileName } from '../src/runners/freezeRecord.ts';
+import { nameMatchesRecord, parseFreezeRecord, recordFileName } from '../src/runners/freezeRecord.ts';
 import { FREEZE_READ_MAX_FILES } from '../src/runners/freezeRead.ts';
 import { runFreezeSweep, sweepFrozen, type FreezeSweepOptions } from '../src/runners/freezeSweep.ts';
 import { signalGroups, snapshotProcs, type ProcRow } from '../src/runners/proctree.ts';
@@ -421,6 +421,10 @@ test('serve sweeps the home it resolved before it is up: a dead record and a dea
   const left = fs.readdirSync(frozen).filter((n) => n !== 'cursor');
   assert.equal(left.length, 1, `only the cursor and serve's own marker are left: ${left.join(', ')}`);
   assert.ok(left[0]!.endsWith('.json') && left[0] !== record, 'the one other file is a marker, not the dead record');
+  const marker = parseFreezeRecord(fs.readFileSync(path.join(frozen, left[0]!), 'utf8'));
+  assert.ok(marker && nameMatchesRecord(left[0]!, marker), 'it is a valid record under its own name');
+  assert.deepEqual(marker.groups, [], 'a presence marker: no group');
+  assert.notEqual(marker.recorder.pid, 4_000_001);
 });
 
 test('at most 64 stale temp files go per sweep; the rest go on the next', async (t) => {

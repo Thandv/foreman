@@ -13,6 +13,17 @@ import {
 } from '../src/backup.ts';
 
 const CLI = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
+
+/**
+ * A home's entries, sorted, less the `frozen/` every `foreman` command now leaves there (src/runners/freezeInstall.ts):
+ * it must be empty, since the command's presence marker goes at its clean exit.
+ */
+function listHome(home: string): string[] {
+  const names = fs.readdirSync(home).sort();
+  if (!names.includes('frozen')) return names;
+  assert.deepEqual(fs.readdirSync(path.join(home, 'frozen')), [], "the command's presence marker went at its exit");
+  return names.filter((n) => n !== 'frozen');
+}
 const NOW = new Date(2026, 9, 11, 12, 0, 0); // Sunday 11 Oct 2026, the last day of ISO week 41
 const TABLES = { memory: 5, receipts: 7, verdicts: 3 } as const;
 
@@ -334,14 +345,14 @@ test('CLI restore refuses while daemon.pid names a live process: non-zero exit a
   scratchDb(dbPath, 'current');
   fs.writeFileSync(path.join(home, 'daemon.pid'), `${process.pid}\n`); // this test process: certainly alive
   const before = fs.readFileSync(dbPath);
-  const listing = fs.readdirSync(home).sort();
+  const listing = listHome(home);
 
   const r = await cli(['restore', made.file], { FOREMAN_HOME: home, FOREMAN_DB: '' });
 
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, new RegExp(`daemon \\(pid ${process.pid}\\) is running`));
   assert.deepEqual(fs.readFileSync(dbPath), before);
-  assert.deepEqual(fs.readdirSync(home).sort(), listing);
+  assert.deepEqual(listHome(home), listing);
   assert.equal(counts(dbPath).first.startsWith('current-'), true);
 });
 
@@ -465,7 +476,7 @@ test('CLI restore of a database that is not a ledger: non-zero exit, one plain l
   const other = path.join(home, 'other-app.db.gz');
   gzippedDb(other, (db) => db.exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)'));
   const before = fs.readFileSync(dbPath);
-  const listing = fs.readdirSync(home).sort();
+  const listing = listHome(home);
 
   const r = await cli(['restore', other], { FOREMAN_HOME: home, FOREMAN_DB: '' });
 
@@ -475,7 +486,7 @@ test('CLI restore of a database that is not a ledger: non-zero exit, one plain l
   assert.match(said[0]!, /^error: not a Foreman database: .*other-app\.db\.gz has no tasks, runs, events tables/);
   assert.doesNotMatch(r.stderr, /^\s+at /m); // a message, not a stack
   assert.deepEqual(fs.readFileSync(dbPath), before);
-  assert.deepEqual(fs.readdirSync(home).sort(), listing);
+  assert.deepEqual(listHome(home), listing);
 });
 
 test('modes: archives and the restored database are 0600, folders Foreman makes are 0700, a copy dir the operator made keeps its own', async (t) => {
@@ -633,7 +644,7 @@ test('a restore killed between its renames: restore and the next start say how t
   const aside = `${dbPath}.before-restore-2026-10-11T12-00-00`;
   scratchDb(aside, 'old');
   fs.writeFileSync(`${aside}-wal`, '');
-  const listing = fs.readdirSync(home).sort();
+  const listing = listHome(home);
   const env = { FOREMAN_HOME: home, FOREMAN_DB: '', FOREMAN_BACKUP: 'off' };
   const recovery = `mv '${aside}' '${dbPath}'\n  mv '${aside}-wal' '${dbPath}-wal'\n`;
 
@@ -642,14 +653,14 @@ test('a restore killed between its renames: restore and the next start say how t
     (err: Error) => err.name === 'InterruptedRestoreError' && err.message.includes(recovery) &&
       /restore was interrupted/.test(err.message),
   );
-  assert.deepEqual(fs.readdirSync(home).sort(), listing);
+  assert.deepEqual(listHome(home), listing);
 
   for (const argv of [['restore', made.file], ['serve'], ['doctor', '--latency']]) {
     const r = await cli(argv, env, 20_000);
     assert.equal(r.code, 1, `${argv[0]}: ${r.stdout}${r.stderr}`);
     assert.ok(r.stderr.includes(recovery), `${argv[0]}: ${r.stderr}`);
     assert.equal(fs.existsSync(dbPath), false, argv[0]);
-    assert.deepEqual(fs.readdirSync(home).sort(), listing, argv[0]);
+    assert.deepEqual(listHome(home), listing, argv[0]);
   }
 
   // Doing what it says puts the old ledger back, and the restore then goes through.

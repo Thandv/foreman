@@ -9,7 +9,7 @@ import { config } from '../src/config.ts';
 import { sandboxAvailable, wrap } from '../src/security/sandbox.ts';
 import { installProcessRecorder } from '../src/runners/freezeInstall.ts';
 import { resetFreezeRecorderForTest, type FreezeRecord } from '../src/runners/freezeRecord.ts';
-import { frozenChanges, NEEDS_PS as PS, procGuard, snapshotFrozen, type ProcGuard } from './helpers/procguard.ts';
+import { foreignPids, frozenChanges, NEEDS_PS as PS, ownFrozenChanges, procGuard, processParents, recordPids, snapshotFrozen, type FrozenSnapshot, type ProcGuard } from './helpers/procguard.ts';
 
 // Where the freeze recorder is installed (src/cli.ts, src/verify/testSlot.ts) and what that does to a home. Every
 // process here is a real one with a throwaway FOREMAN_HOME; the live home's frozen/ is watched throughout.
@@ -38,9 +38,21 @@ function records(home: string): { name: string; rec: FreezeRecord }[] {
 }
 
 const leftovers = (home: string): string[] => (fs.existsSync(path.join(home, 'frozen')) ? fs.readdirSync(path.join(home, 'frozen')) : []);
-const liveFrozen = (): Map<string, ReturnType<typeof snapshotFrozen>> => new Map(realHomes.map((h) => [h, snapshotFrozen(path.join(h, 'frozen'))]));
-const liveChanges = (before: ReturnType<typeof liveFrozen>): string[] =>
-  [...before].flatMap(([h, snap]) => frozenChanges(snap, snapshotFrozen(path.join(h, 'frozen'))).map((c) => `${h}: ${c}`));
+// The live homes are shared with every Foreman process on the machine: only changes this test can have made count
+// (the records of live processes that are not ours are left out, as procGuard does).
+interface LiveFrozen {
+  snaps: Map<string, FrozenSnapshot>;
+  foreignAtStart: Set<number>;
+}
+const liveFrozen = (): LiveFrozen => {
+  const snaps = new Map(realHomes.map((h) => [h, snapshotFrozen(path.join(h, 'frozen'))]));
+  return { snaps, foreignAtStart: foreignPids(recordPids(...snaps.values()), processParents()) };
+};
+const liveChanges = (before: LiveFrozen): string[] => {
+  const after = new Map([...before.snaps.keys()].map((h) => [h, snapshotFrozen(path.join(h, 'frozen'))]));
+  const foreignNow = foreignPids(recordPids(...before.snaps.values(), ...after.values()), processParents());
+  return [...before.snaps].flatMap(([h, snap]) => ownFrozenChanges(snap, after.get(h)!, foreignNow, before.foreignAtStart).map((c) => `${h}: ${c}`));
+};
 
 /** A process that ignores SIGTERM, named by `home/daemon.pid`: `foreman stop` against it waits until the test kills it. */
 function stubbornDaemon(g: ProcGuard): ChildProcess {
@@ -125,9 +137,21 @@ setTimeout(() => {}, 700);\n`,
     ...g.env, FOREMAN_WORKER_TEST_CMD: 'node leftover.cjs', FOREMAN_LEFTOVER_SAMPLE_MS: '20', FOREMAN_PORT: '1', FOREMAN_SANDBOX: 'off',
   };
   const slot = run(t, TEST_SLOT, [], env, work);
+  g.track(slot.child.pid);
   let marker = false;
   let group: number | null = null;
+  let tracked = false;
   const poll = setInterval(() => {
+    // The leftover is handed to the guard as soon as its pid is known: a failure below (or testSlot killed mid-freeze)
+    // must not leave it stopped, and the guard's end check runs before any later t.after.
+    if (!tracked && fs.existsSync(path.join(work, 'leftover.pid'))) {
+      const pid = Number(fs.readFileSync(path.join(work, 'leftover.pid'), 'utf8'));
+      if (pid > 1) {
+        tracked = true;
+        g.track(pid);
+        g.trackGroup(pid);
+      }
+    }
     for (const { rec } of records(g.home)) {
       if (rec.recorder.pid !== slot.child.pid) continue;
       if (rec.groups.length === 0) marker = true;
@@ -139,6 +163,7 @@ setTimeout(() => {}, 700);\n`,
   clearInterval(poll);
   const leftoverPid = Number(fs.readFileSync(path.join(work, 'leftover.pid'), 'utf8'));
   g.track(leftoverPid);
+  g.trackGroup(leftoverPid);
   assert.ok(marker, 'the presence marker was there while the suite ran');
   assert.equal(group, leftoverPid, 'a record of the leftover group was there while it was frozen');
   assert.deepEqual(leftovers(g.home), [], 'after the run the home holds nothing of it');
@@ -151,7 +176,9 @@ test('a suite run under testSlot records nothing in the live home while its test
   const live = liveFrozen();
   const env = { ...g.env, FOREMAN_WORKER_TEST_CMD: `node ${INNER} ${ctrl}`, FOREMAN_PORT: '1', FOREMAN_SANDBOX: 'off' };
   const slot = run(t, TEST_SLOT, [], env, ctrl);
+  g.track(slot.child.pid);
   await until(() => fs.existsSync(path.join(ctrl, 'ready')), `the inner process to have started the CLI:\n${slot.out()}`);
+  for (const pid of fs.readFileSync(path.join(ctrl, 'pids'), 'utf8').trim().split(/\s+/).map(Number)) g.track(pid);
 
   const inner = fs.readFileSync(path.join(ctrl, 'home'), 'utf8');
   assert.notEqual(inner, g.home, 'the tests run with a home of their own');
@@ -198,9 +225,10 @@ test('installProcessRecorder: a home it cannot write installs FAILED and says wh
   assert.match(logs[0]!, /freeze recorder not installed \((?!this process).*\).*without being frozen/);
 });
 
-// The worker's real path: its testSlot runs inside the worker sandbox, where Foreman's home is closed to it. The
-// recorder cannot write there, so it is FAILED: the suite still runs and passes, the home gets nothing, and the
-// stderr line says leftovers are now ended without a freeze.
+// A testSlot inside the worker sandbox (where FOREMAN_SANDBOX=all is meant to put a worker; this build does not yet,
+// see the README), where Foreman's home is closed to it. The recorder cannot be installed there (here because ps is
+// refused, so the start cannot be read), so it is FAILED: the suite still runs and passes, the home gets nothing, and
+// the stderr line says leftovers are now ended without a freeze.
 const sandboxAnswer = await sandboxAvailable();
 const SANDBOX_SKIP = sandboxAnswer === 'ok' ? false : `the sandbox cannot be exercised here: ${sandboxAnswer}`;
 
@@ -228,4 +256,56 @@ test('a worker\'s testSlot inside the worker sandbox cannot write the home: it s
   assert.match(slot.out(), /testSlot: node suite\.cjs PASSED/);
   assert.match(slot.out(), /foreman: freeze recorder not installed .*without being frozen/);
   assert.deepEqual(frozenChanges(before, snapshotFrozen(path.join(home, 'frozen'))), [], 'nothing was written to the home');
+});
+
+// The recorder itself under the sandbox a suite runs in (the gate's, and a worker's testSlot's, 'tests'), with a valid
+// identity (ps is refused there, so a start is given): a write into Foreman's home is refused and the recorder is
+// FAILED; a write under the run's own home works. And the proof that a suite run there cannot trip procGuard on the
+// markers Foreman's processes write meanwhile (serve's, testSlot's, every command's): the home is closed to listing,
+// so the guard sees no frozen/ at all, before and after, where a listing would throw EPERM in every guarded test.
+test('inside the suite sandbox the recorder writes only under the run\'s own home, and the guard cannot see Foreman\'s home', { skip: SANDBOX_SKIP, timeout: 170_000 }, async (t) => {
+  const g = procGuard(t);
+  const area = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slotbox-')));
+  t.after(() => fs.rmSync(area, { recursive: true, force: true }));
+  const dirs = Object.fromEntries(['jail', 'tmp', 'home', 'cfg'].map((n) => [n, path.join(area, n)]));
+  for (const d of Object.values(dirs)) fs.mkdirSync(d);
+  const home = config.home;
+  // Another process's marker in the closed home, as a live daemon's would be.
+  fs.mkdirSync(path.join(home, 'frozen'), { recursive: true, mode: 0o700 });
+  const foreign = path.join(home, 'frozen', '4000001-ThuOct221000002026.json');
+  fs.writeFileSync(foreign, '{}');
+  t.after(() => fs.rmSync(foreign, { force: true }));
+  const probe = `
+    const [closed, own] = process.argv.slice(1);
+    const rec = await import(${JSON.stringify(path.join(SRC, 'runners', 'freezeRecord.ts'))});
+    const { snapshotFrozen } = await import(${JSON.stringify(path.join(import.meta.dirname, 'helpers', 'procguard.ts'))});
+    const self = { pid: process.pid, start: 'Thu Oct 22 10:00:00 2026' };
+    const a = rec.installFreezeRecorder(closed, self);
+    rec.resetFreezeRecorderForTest();
+    const b = rec.installFreezeRecorder(own, self);
+    const file = b.ok ? b.recorder.file : null;
+    const fsm = await import('node:fs');
+    console.log(JSON.stringify({ closedOk: a.ok, closedError: a.ok ? null : a.error, ownOk: b.ok, ownWritten: !!file && fsm.existsSync(file),
+      guardSees: snapshotFrozen(closed + '/frozen') === null ? null : 'something' }));
+  `;
+  const wrapped = await wrap(
+    'tests',
+    { jail: dirs['jail']!, tmp: dirs['tmp']!, home: dirs['home']!, readOnly: [path.join(SRC, '..')] },
+    process.execPath,
+    ['--input-type=module', '-e', probe, home, dirs['home']!],
+  );
+  const env = { ...process.env, FOREMAN_HOME: home, TMPDIR: dirs['tmp']!, HOME: dirs['home']! };
+  const before = snapshotFrozen(path.join(home, 'frozen'));
+  const [first, ...rest] = wrapped.args;
+  const p = run(t, first!, rest, env, dirs['jail'], wrapped.cmd);
+  g.track(p.child.pid);
+  assert.equal(await p.exit, 0, p.out());
+  const r = JSON.parse(p.out().trim().split('\n').pop()!) as { closedOk: boolean; closedError: string | null; ownOk: boolean; ownWritten: boolean; guardSees: null | string };
+  assert.equal(r.closedOk, false, 'the write into Foreman\'s home was refused');
+  assert.match(r.closedError ?? '', /EPERM|EACCES|not permitted|denied/i);
+  assert.equal(r.ownOk, true, `the recorder writes under the run's own home: ${p.out()}`);
+  assert.equal(r.ownWritten, true);
+  assert.equal(r.guardSees, null, 'procGuard sees no frozen/ in Foreman\'s home from inside the sandbox');
+  assert.deepEqual(frozenChanges(before, snapshotFrozen(path.join(home, 'frozen'))), [], 'nothing was written to Foreman\'s home');
+  assert.deepEqual(fs.readdirSync(path.join(dirs['home']!, 'frozen')), [], 'the run\'s own marker went at its clean exit');
 });

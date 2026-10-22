@@ -82,6 +82,9 @@ async function leftover(t: TestContext, g: ProcGuard, opts: { extra?: number; ow
     : '';
   const child = spawn('/bin/sh', ['-c', `${otherCmd}/bin/sh '${loop}' >/dev/null 2>&1 & exit 0`], { detached: true, stdio: 'ignore' });
   g.track(child.pid);
+  // Every member, not only the ones read below: the loop's current `sleep` is in the group too, and procGuard's own
+  // end check (which throws when a test fails) runs before the t.after below, which node then skips.
+  g.trackGroup(child.pid);
   t.after(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL');
@@ -97,6 +100,7 @@ async function leftover(t: TestContext, g: ProcGuard, opts: { extra?: number; ow
   if (!opts.ownGroup) return { child, pid, work };
   const other = Number(fs.readFileSync(otherFile, 'utf8').trim());
   g.track(other);
+  g.trackGroup(other);
   t.after(() => {
     try {
       process.kill(-other, 'SIGKILL');

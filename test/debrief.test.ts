@@ -1105,7 +1105,10 @@ test('read-only: a ledger this binary would migrate is debriefed without being t
     const out = execFileSync(process.execPath, [cli, 'debrief', epic.id, '--no-model'], { env, encoding: 'utf8' });
     assert.match(out, new RegExp(`^debrief ${epic.id}: Polish round\n`));
     assert.equal(sha(db), before, 'the ledger file is byte for byte what it was');
-    assert.deepEqual(fs.readdirSync(home).sort(), ['debriefs', 'foreman.db'], 'nothing was created beside it but the debriefs directory');
+    // Beside the debriefs directory only the empty frozen/ every `foreman` command leaves (its marker went at exit).
+    const left = fs.readdirSync(home).sort();
+    if (left.includes('frozen')) assert.deepEqual(fs.readdirSync(path.join(home, 'frozen')), [], "the command's presence marker went at its exit");
+    assert.deepEqual(left.filter((n) => n !== 'frozen'), ['debriefs', 'foreman.db'], 'nothing was created beside it but the debriefs directory');
     assert.equal(execFileSync('sqlite3', [db, "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = 'assignee'"], { encoding: 'utf8' }).trim(), '0', 'not migrated');
 
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-none-'));
@@ -1113,7 +1116,10 @@ test('read-only: a ledger this binary would migrate is debriefed without being t
       assert.throws(
         () => execFileSync(process.execPath, [cli, 'debrief', epic.id, '--no-model'], { env: { ...process.env, FOREMAN_HOME: empty }, encoding: 'utf8', stdio: 'pipe' }),
         /no ledger at .*foreman\.db \(nothing was created\)/);
-      assert.deepEqual(fs.readdirSync(empty), [], 'no empty database was made for a mistyped home');
+      // The command's own empty frozen/ (its presence marker went at exit) is all there is.
+      const made = fs.readdirSync(empty);
+      if (made.includes('frozen')) assert.deepEqual(fs.readdirSync(path.join(empty, 'frozen')), [], "the command's presence marker went at its exit");
+      assert.deepEqual(made.filter((n) => n !== 'frozen'), [], 'no empty database was made for a mistyped home');
     } finally {
       fs.rmSync(empty, { recursive: true, force: true });
     }

@@ -15,6 +15,14 @@ const holder = spawn('sh', ['-c', 'trap "" TERM; exec sleep 60'], { stdio: 'igno
 fs.writeFileSync(path.join(testHome, 'daemon.pid'), String(holder.pid));
 const cli = spawn(process.execPath, [path.join(import.meta.dirname, '..', '..', 'src', 'cli.ts'), 'stop'], { env: process.env, stdio: 'ignore' });
 const exited = new Promise<number | null>((r) => cli.on('exit', (code) => r(code)));
+fs.writeFileSync(path.join(ctrl, 'pids'), `${process.pid} ${holder.pid} ${cli.pid}`);
+// A test that fails before it writes `go` (its testSlot SIGKILLed, nothing reaping this) must not leave this waiting
+// for good: give up after 90 s.
+setTimeout(() => {
+  holder.kill('SIGKILL');
+  cli.kill('SIGKILL');
+  process.exit(3);
+}, 90_000);
 const markerSeen = (): boolean => {
   try {
     return fs.readdirSync(path.join(testHome, 'frozen')).some((n) => n.endsWith('.json'));
