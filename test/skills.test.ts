@@ -9,6 +9,7 @@ import { config } from '../src/config.ts';
 import { firstWorkerRole } from '../src/assistant/crewPlan.ts';
 import { clearPlaybookCache, getPlaybook, loadPlaybooks, type Playbook } from '../src/playbooks.ts';
 import { Store } from '../src/queue.ts';
+import { crewRunner } from '../src/localOnly.ts';
 import { roleAgent, toolBrief } from '../src/roles.ts';
 import { briefFor } from '../src/scheduler.ts';
 import {
@@ -535,9 +536,9 @@ test('skills off, or on with nothing to serve: roleAgent output is byte-identica
     writeSkill(root, 'one');
     writeLoadouts(root, { 'soft.dev': { default: ['one'] } });
     const playbook = pb({ tools: { dev: [{ name: 'no-such-tool', when: 'when needed' }] } });
-    // What roleAgent composed before skills existed: prompt, constraints, tools.
+    // What roleAgent composed before skills existed: prompt, constraints, tools (told for the crew's own runner).
     const before = (role: string): string =>
-      `${playbook.rolePrompts[role]}\n\nHard constraints:\n- Never do the bad thing.${toolBrief(playbook, role)}`;
+      `${playbook.rolePrompts[role]}\n\nHard constraints:\n- Never do the bad thing.${toolBrief(playbook, role, crewRunner())}`;
     assert.match(before('dev'), /no-such-tool/);
 
     assert.notEqual(roleAgent(playbook, 'dev').systemPrompt, before('dev'), 'on: the fixture does change the brief');

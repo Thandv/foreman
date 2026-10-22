@@ -96,3 +96,20 @@ test('cards go through the same admission scan as role prompts: a blocking patte
   assert.equal(pb, undefined, 'refused, exactly as the same text in a role prompt is');
   assert.match(refused.join('\n'), /admission refused[^"]*remote-exec/);
 });
+
+test('a claude-code worker is told the truth about catalog tools: no use_tool, do it by hand, never claim a tool result', async () => {
+  const { toolBrief } = await import('../src/roles.ts');
+  const pb = loadPlaybooksFrom('playbooks').playbooks.find((p) => p.id === 'investment')!;
+  const cli = toolBrief(pb, 'analyst', 'claude-code');
+  assert.ok(cli.length > 0, 'the analyst has tools');
+  assert.match(cli, /cannot call them \(there is no use_tool here\)/);
+  assert.match(cli, /never claim a result a tool would have given/);
+  assert.doesNotMatch(cli, /Call them with use_tool|Build it with build_tool/);
+  const api = toolBrief(pb, 'analyst', 'api');
+  assert.match(api, /Call them with use_tool/, 'the api runner, which has use_tool, keeps its instruction');
+  assert.equal(toolBrief(pb, 'analyst'), api, 'the default is the api wording, as before');
+  const hosted = withLocalOnly(false, () => roleAgent(pb, 'analyst').systemPrompt);
+  assert.match(hosted, /there is no use_tool here/, 'roleAgent passes the crew runner: hosted crews are claude-code');
+  const local = withLocalOnly(true, () => roleAgent(pb, 'analyst').systemPrompt);
+  assert.match(local, /Call them with use_tool/, 'a local crew runs on the api runner, which has the tools');
+});

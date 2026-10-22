@@ -89,7 +89,7 @@
     "analyst": [
       {
         "name": "finance-metrics",
-        "when": "for any return, drawdown or ratio — never compute these by hand"
+        "when": "for any return, drawdown or ratio — with use_tool where you have it; by hand only with the working shown"
       },
       {
         "name": "stats-test",
