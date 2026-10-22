@@ -286,8 +286,9 @@ export function workerShellAllowlist(task: Pick<Task, 'testCmd'> & Partial<Pick<
 }
 
 /**
- * Web search and fetch for a worker whose playbook opts in (`"web": true`, research). Never for an S2 ticket: its
- * text must not leave the machine, and a search query is text leaving it. Reviewers run with no tools at all.
+ * Web search and per-host fetch for a worker whose playbook grants them (`"web": { search, domains }`, research), and
+ * only for an S0/S1 ticket: an S2 ticket's text must not leave the machine, and a search query is text leaving it.
+ * Reviewers run with no tools at all. The rules limit the WebFetch TOOL, not the worker's network (README, "web").
  */
 export function workerWebTools(task: Partial<Pick<Task, 'playbook' | 'sensitivity'>>): string[] {
   // Granted only for a sensitivity that is known to allow text to leave the machine: an unset one fails closed.

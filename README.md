@@ -295,18 +295,30 @@ temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). A
 `required` rule refuses the playbook.
 
 A playbook may grant web access with `"web": { "search": true, "domains": ["arxiv.org", "doi.org", …] }` (research
-does, with a list of scholarly and public-data hosts). Its claude-code workers then get `WebSearch` (if `search`) and one
-`WebFetch(domain:<host>)` allow rule per listed host, only for an S0/S1 ticket (an unset sensitivity gets none): a
-fetch to any other host needs an approval no headless worker can get, so it is refused. Plain `"web": true` (any
-host) refuses the playbook, as does a host with a scheme, path, port or wildcard. Every claude-code worker not granted
-them has `WebSearch`/`WebFetch` on its deny list, and a diff that changes `.claude/settings*.json` or `.mcp.json` is a
-hard pre-review finding, so a worker cannot widen its own permissions for its next round. Reviewers never get tools;
-the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces the whole list, web tools
-included; a forged playbook may not set it (the forge strips it, approve refuses it). What it still opens: a search
-query and a fetch URL carry text out of the machine to those hosts and the search service, and every fetched page is
-text an outsider wrote, now inside a worker that is not sandboxed (see [The sandbox](#the-sandbox-foreman_sandbox)). The
-research roles are told fetched pages are untrusted data, never to follow instructions in them, and to cite the URL
-with the line a claim rests on. Turn it off with `"web": false` in your copy of the playbook.
+does, with a list of scholarly and public-data hosts). Its claude-code workers then get `WebSearch` (only if `search`
+is true) and one `WebFetch(domain:<host>)` allow rule per listed host, only for an S0/S1 ticket (an unset sensitivity
+gets none). A rule names one exact host (`arxiv.org` does not cover `export.arxiv.org`); a fetch to any other host
+needs an approval no headless worker can get, so it is refused. The CLI's WebFetch also fetches about 90
+documentation hosts with no rule at all (docs.python.org, github.com/anthropics, …); each one a playbook does not
+list is on the worker's deny list (`CLI_PREAPPROVED_FETCH_HOSTS` in `src/runners/cliRunners.ts`, read from CLI
+2.1.287 — re-check it when the CLI is upgraded). A redirect to another host is not followed: the worker is told the
+new URL, and fetching it is a new request under the same rules, so a DOI usually resolves to a publisher that is not
+on the list. Plain `"web": true` (any host) refuses the playbook, as does a host with a scheme, path, port or
+wildcard, or more than 64 hosts. Every claude-code worker not granted them has `WebSearch`/`WebFetch` on its deny
+list. A worker cannot widen its own permissions for its next round: before every claude-code round the jail's
+`.claude/settings.json` and `.claude/settings.local.json` are put back to the base commit's (a symlink is removed,
+never followed), and a diff that changes them or a `.mcp.json` is a hard pre-review finding. Reviewers never get
+tools; the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces the whole allow
+list and `FOREMAN_CLAUDE_DISALLOWED_TOOLS` the whole deny list, web rules included; a forged playbook may not set
+`web` (the forge strips it, approve refuses it). What the host list does NOT do: it limits the `WebFetch` tool, not
+the worker. The claude-code worker is not sandboxed (see [The sandbox](#the-sandbox-foreman_sandbox)) and can reach
+any host from an `npm run` script, so the list keeps an honest worker on its sources; it is not a network boundary
+against one that a page has steered. What it still opens: a search query and a fetch URL carry text out of the
+machine to the search service and those hosts (and WebFetch sends each host name to Anthropic for a safety check);
+search results and fetched pages are text an outsider wrote — search results from any site, not only the listed
+ones — inside that unsandboxed worker. The research roles are told fetched pages are untrusted data, never to follow
+instructions in them, and to cite the URL with the line a claim rests on. Turn it off with `"web": false` in your
+copy of the playbook.
 
 Each role has a `## role: <name>` prompt section. A role may also have a shorter
 `## role-card: <name>` section: a worker gets the card instead of the full prompt

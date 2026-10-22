@@ -178,3 +178,15 @@ test('search is granted only when asked for, S0 is granted like S1, and the host
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('the README and the research assistant say what the host list does not do', () => {
+  const readme = fs.readFileSync(path.resolve('README.md'), 'utf8');
+  const web = readme.slice(readme.indexOf('A playbook may grant web access'), readme.indexOf('Turn it off with `"web": false`'));
+  assert.match(web, /not a network boundary/, 'the list limits the tool, not an unsandboxed worker');
+  assert.match(web, /CLI_PREAPPROVED_FETCH_HOSTS/, 'the hosts the CLI fetches without a rule are named');
+  assert.match(web, /FOREMAN_CLAUDE_DISALLOWED_TOOLS/, 'the deny-list override drops the web rules too');
+  assert.match(web, /put back to the base commit/, 'a worker cannot keep a settings change for its next round');
+  withRepoPlaybooks(() => {
+    assert.match(getPlaybook('research')!.rolePrompts['assistant'] ?? '', /DOI link redirects to its publisher/);
+  });
+});
