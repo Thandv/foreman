@@ -604,6 +604,7 @@ test("the crew review prompt carries the reviewer role's skills between the styl
       return i;
     };
     assert.ok(at('REVIEW STYLE (code-review)') < at(SKILLS_HEADER), 'after the style');
+    assert.ok(at('YOUR ROLE (') < at(SKILLS_HEADER), "after the reviewer's role prompt");
     assert.ok(at(SKILLS_HEADER) < at('Reply with JSON only'), 'before the reply contract');
     assert.ok(at(SKILLS_HEADER) < at('DEFINITION OF DONE'), 'before the definition of done');
     assert.ok(at('FULL-BODY-review-silent-failures') < at('WORK UNDER REVIEW'), 'and before the ticket and the diff');

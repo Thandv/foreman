@@ -1140,8 +1140,8 @@ served the brief carries no block, and `foreman skills show` prints the reasons)
 the worker's brief, under a header that says the ticket's brief, acceptance and operator demands
 outrank it, and is bounded by `FOREMAN_SKILL_BRIEF_BYTES` (9,000) with any cut marked. A crew
 reviewer gets its own `## role:` prompt from the playbook (bounded at 4,000 bytes, under a line saying it reviews
-with no tools and must say what it could not check) and then its role's skills (full text), between its review style
-and the reply contract.
+with no tools, must say what it could not check, and reports in the reply contract's shape, a critical finding being a
+"blocker") and then its role's skills (full text), between its review style and the reply contract.
 A worker gets `card.md` when its role's tier resolves to a local model (or the crew is on the local
 plane); everything else gets `full.md`. The choice is made from the role's tier, not the ticket: a
 ticket routed to a local model by an adopted persona still gets `full.md`.

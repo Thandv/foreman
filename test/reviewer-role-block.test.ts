@@ -28,6 +28,8 @@ test("a crew review carries the reviewer's own role prompt, between the style an
     assert.ok(at(`YOUR ROLE (${reviewer.role}`) < at('Reply with JSON only'), 'before the reply contract, which still binds');
     assert.ok(at(`YOUR ROLE (${reviewer.role}`) < at('WORK UNDER REVIEW'), 'static, before the per-ticket content');
     assert.match(prompt, /You have no tools in this review/);
+    // The role's "Report back" (critical/important/minor) must not outrank the JSON reply: the header says so.
+    assert.match(prompt, /the reply contract below decides the shape[^\n]*severity "blocker" \(a critical finding\) or "normal"/);
   }
 });
 

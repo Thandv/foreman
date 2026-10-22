@@ -510,14 +510,20 @@ const REVIEWER_ROLE_BYTES = 4_000;
  * reviewing was read by nobody. Static per role, so it sits with the style and
  * the prompt cache still hits. The reviewer runs with no tools; the header says
  * so, so a role prompt written for a reviewer that can run things is read as
- * "reason it through from what is shown". '' when the role has no prompt.
+ * "reason it through from what is shown". A role's "Report back" is written for
+ * a worker's prose report and grades findings critical/important/minor; the
+ * reply here is JSON whose issue severity is only blocker or normal (anything
+ * else is read as normal), so the header says the contract decides the shape
+ * and that a critical finding is a blocker. '' when the role has no prompt.
  */
 export function reviewerRoleBlock(pb: Playbook, role: string): string {
   const text = (pb.rolePrompts[role] ?? '').trim();
   if (!text) return '';
   return (
     `YOUR ROLE (${role}, from the ${pb.id} playbook). You are reviewing, so its reviewing guidance applies. ` +
-    'You have no tools in this review: judge from what this prompt shows you, and say what you could not check.\n' +
+    'You have no tools in this review: judge from what this prompt shows you, and say what you could not check. ' +
+    'Where it says how to report, the reply contract below decides the shape: findings, their severity and what you ' +
+    'could not check go in the critique, and an issue is severity "blocker" (a critical finding) or "normal".\n' +
     boundBrief(text, REVIEWER_ROLE_BYTES, 'reviewer-role')
   );
 }
