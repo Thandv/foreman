@@ -479,8 +479,8 @@ const SEEN_CAP = 20_000;
 
 /**
  * The reapers that have begun a freeze and not released it. They share one listener per event, installed when the
- * first enrols and removed when the last withdraws, so any number of concurrent reaps adds two listeners, not two
- * each. Only 'exit' and SIGHUP are held: SIGTERM and SIGINT are not listened for here yet.
+ * first enrols and removed when the last withdraws, so any number of concurrent reaps adds one listener per event,
+ * not one each. 'exit', SIGHUP, SIGTERM and SIGINT are held.
  */
 const freezing = new Set<LeftoverReaper>();
 
@@ -489,22 +489,38 @@ const onProcessExit = (): void => {
   for (const r of [...freezing]) r.releaseOnEvent(false);
 };
 
+type FreezeSignal = 'SIGHUP' | 'SIGTERM' | 'SIGINT';
+
 /**
- * A hangup (a closed terminal) emits no 'exit', so without this the frozen groups would stay stopped. It releases
- * every reaper, then, if nothing else listens for SIGHUP, raises it again so the process still ends the way a hangup
- * ends it (a listener otherwise swallows the signal's default action). A host with a SIGHUP listener of its own (the
- * daemon) lives on into its shutdown.
+ * A hangup (a closed terminal), SIGTERM or SIGINT emits no 'exit' when nothing handles it, so without these the
+ * frozen groups would stay stopped. Each releases every reaper (ending the freeze for good), then, if nothing else
+ * listens for the signal, raises it again so the process still ends the way the signal ends it (a listener otherwise
+ * swallows the signal's default action). The registry's listener is installed first in the emit order, so every
+ * other listener (a process.once one included, which detaches only when its turn comes) is still attached when the
+ * others are counted, after the registry's own has been removed. A host with a listener of its own (the daemon's
+ * shutdown, testSlot's process.once) runs it and decides the exit. A re-raise ends the process with no 'exit' event: its presence marker and recorded groups stay for the next
+ * `foreman serve` sweep.
  */
-const onProcessHup = (): void => {
+function onFreezeSignal(sig: FreezeSignal): void {
   for (const r of [...freezing]) r.releaseOnEvent(true);
-  if (process.listenerCount('SIGHUP') === 0) process.kill(process.pid, 'SIGHUP');
+  process.removeListener(sig, signalListeners[sig]);
+  if (process.listenerCount(sig) === 0) process.kill(process.pid, sig);
+}
+
+const signalListeners: Record<FreezeSignal, () => void> = {
+  SIGHUP: () => onFreezeSignal('SIGHUP'),
+  SIGTERM: () => onFreezeSignal('SIGTERM'),
+  SIGINT: () => onFreezeSignal('SIGINT'),
 };
+const FREEZE_SIGNALS = Object.keys(signalListeners) as FreezeSignal[];
 
 function enroll(r: LeftoverReaper): void {
   if (freezing.has(r)) return;
   if (freezing.size === 0) {
     process.on('exit', onProcessExit);
-    process.on('SIGHUP', onProcessHup);
+    // Ahead of every other listener, so the count below sees them as they were when the signal was emitted: a
+    // process.once host added earlier has not yet detached itself, whatever order it was added in.
+    for (const sig of FREEZE_SIGNALS) process.prependListener(sig, signalListeners[sig]);
   }
   freezing.add(r);
 }
@@ -512,7 +528,7 @@ function enroll(r: LeftoverReaper): void {
 function withdraw(r: LeftoverReaper): void {
   if (!freezing.delete(r) || freezing.size > 0) return;
   process.removeListener('exit', onProcessExit);
-  process.removeListener('SIGHUP', onProcessHup);
+  for (const sig of FREEZE_SIGNALS) process.removeListener(sig, signalListeners[sig]);
 }
 
 /**

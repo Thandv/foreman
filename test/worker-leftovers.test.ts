@@ -575,6 +575,44 @@ setTimeout(() => { fs.appendFileSync(${JSON.stringify(log)}, 'still alive\\n'); 
   }
 });
 
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  test(`a real ${sig} to a process with no ${sig} listener of its own: the frozen groups are continued, then the signal still ends the process`, async () => {
+    const dir = scratch();
+    try {
+      const log = path.join(dir, 'signals.log');
+      const script = path.join(dir, 'sig.ts');
+      const proctree = path.join(import.meta.dirname, '..', 'src', 'runners', 'proctree.ts');
+      fs.writeFileSync(script, `
+import fs from 'node:fs';
+import { LeftoverReaper } from ${JSON.stringify(proctree)};
+const row = (pid, ppid, pgid, sid) => ({ pid, ppid, pgid, sid, start: ${JSON.stringify(START)} });
+const first = [row(1, 0, 1, 1), row(500, 1, 500, 500), row(901, 1, 901, 900), row(902, 1, 902, 900)];
+let n = 0;
+const reaper = new LeftoverReaper(900, {
+  sampleMs: 0, graceMs: 0, killWaitMs: 0, selfPid: 500, boundMs: 60000,
+  snapshot: () => (n++ === 0 ? Promise.resolve(first) : new Promise(() => {})),
+  kill: (pid, sig) => {
+    if (sig === 0) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+    fs.appendFileSync(${JSON.stringify(log)}, pid + ' ' + sig + '\\n');
+  },
+});
+reaper.childExited();
+void reaper.reap();
+setTimeout(() => process.kill(process.pid, ${JSON.stringify(sig)}), 100);
+setTimeout(() => { fs.appendFileSync(${JSON.stringify(log)}, 'still alive\\n'); process.exit(3); }, 10000);
+`);
+      const child = spawn(process.execPath, [script], { stdio: 'ignore' });
+      const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) => child.on('exit', (c, s) => resolve([c, s])));
+      assert.equal(signal, sig, `ended by the signal (code ${code})`);
+      assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [
+        '-901 SIGSTOP', '-902 SIGSTOP', '-901 SIGTERM', '-901 SIGCONT', '-902 SIGTERM', '-902 SIGCONT',
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 test('a SIGHUP mid-freeze in a process that lives on (its own SIGHUP listener): the late look freezes nothing more, and still ends what it found', async () => {
   const before = process.listeners('SIGHUP').slice();
   const keep = (): void => {};
