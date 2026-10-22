@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { clearPlaybookCache, getPlaybook, loadPlaybooksFrom } from '../src/playbooks.ts';
-import { workerShellAllowlist, workerShellDenylist, workerWebTools } from '../src/runners/cliRunners.ts';
+import { CLI_PREAPPROVED_FETCH_HOSTS, workerShellAllowlist, workerShellDenylist, workerWebTools } from '../src/runners/cliRunners.ts';
 import { shellBrief } from '../src/scheduler.ts';
 import { probeTask } from '../src/types.ts';
 
@@ -127,5 +127,21 @@ test('a worker whose playbook does not grant the web is denied it (a repo settin
     assert.deepEqual(workerWebTools({ playbook: 'research' }), [], 'no sensitivity: no web');
     const task = probeTask({ title: 'T', prompt: 'p', playbook: 'software', role: 'dev', runner: 'claude-code' });
     assert.doesNotMatch(shellBrief(task), /use the wrapper:[^.]*WebFetch/, 'the brief lists only shell commands as use-the-wrapper');
+  });
+});
+
+test('a worker limited to its hosts is denied the hosts the CLI would fetch without a rule; a granted one is not', () => {
+  withRepoPlaybooks(() => {
+    const deny = workerShellDenylist({ testCmd: null, playbook: 'research', sensitivity: 'S1' });
+    // WebFetch passes a "Preapproved host" (docs sites) before it looks for an allow rule: only a deny rule stops it.
+    for (const h of ['docs.python.org', 'github.com', 'huggingface.co', 'cloud.google.com']) {
+      assert.ok(deny.includes(`WebFetch(domain:${h})`), `${h} is denied`);
+    }
+    assert.ok(CLI_PREAPPROVED_FETCH_HOSTS.length > 50 && CLI_PREAPPROVED_FETCH_HOSTS.every((h) => !h.includes('/')), 'hosts, not paths');
+    const granted = workerWebTools({ playbook: 'research', sensitivity: 'S1' }).filter((t) => t.startsWith('WebFetch('));
+    assert.ok(granted.every((t) => !deny.includes(t)), 'no granted host is denied (deny beats allow)');
+    // A worker with no WebFetch at all: the bare tool, which covers every host.
+    const software = workerShellDenylist({ testCmd: null, playbook: 'software', sensitivity: 'S1' });
+    assert.ok(software.includes('WebFetch') && !software.some((t) => t.startsWith('WebFetch(')));
   });
 });

@@ -298,6 +298,32 @@ export function workerWebTools(task: Partial<Pick<Task, 'playbook' | 'sensitivit
   return [...(web.search ? ['WebSearch'] : []), ...web.domains.map((d) => `WebFetch(domain:${d})`)];
 }
 
+/**
+ * The hosts Claude Code's WebFetch fetches with NO permission rule at all ("Preapproved host": documentation sites,
+ * as of CLI 2.1.287 — a path-limited entry such as github.com/anthropics is listed by its host). Allow rules cannot
+ * narrow that, so a worker whose WebFetch is limited to its playbook's hosts gets a deny rule for each of these it
+ * was not granted (deny is checked before the pre-approval). A worker with no WebFetch has the bare tool denied,
+ * which covers them. When the CLI is upgraded, re-read its list: search its bundle for "Preapproved host".
+ */
+export const CLI_PREAPPROVED_FETCH_HOSTS: readonly string[] = [
+  'platform.claude.com', 'code.claude.com', 'claude.com', 'modelcontextprotocol.io', 'github.com', 'agentskills.io',
+  'docs.python.org', 'en.cppreference.com', 'docs.oracle.com', 'learn.microsoft.com', 'developer.mozilla.org',
+  'go.dev', 'www.php.net', 'docs.swift.org', 'kotlinlang.org', 'ruby-doc.org', 'doc.rust-lang.org',
+  'www.typescriptlang.org', 'react.dev', 'angular.io', 'vuejs.org', 'nextjs.org', 'expressjs.com', 'nodejs.org',
+  'bun.sh', 'jquery.com', 'getbootstrap.com', 'tailwindcss.com', 'd3js.org', 'threejs.org', 'redux.js.org',
+  'webpack.js.org', 'jestjs.io', 'reactrouter.com', 'docs.djangoproject.com', 'flask.palletsprojects.com',
+  'fastapi.tiangolo.com', 'pandas.pydata.org', 'numpy.org', 'www.tensorflow.org', 'pytorch.org', 'scikit-learn.org',
+  'matplotlib.org', 'requests.readthedocs.io', 'jupyter.org', 'laravel.com', 'symfony.com', 'wordpress.org',
+  'docs.spring.io', 'hibernate.org', 'tomcat.apache.org', 'gradle.org', 'maven.apache.org', 'asp.net',
+  'dotnet.microsoft.com', 'blazor.net', 'reactnative.dev', 'docs.flutter.dev', 'developer.apple.com',
+  'developer.android.com', 'keras.io', 'spark.apache.org', 'huggingface.co', 'www.kaggle.com', 'www.mongodb.com',
+  'redis.io', 'www.postgresql.org', 'dev.mysql.com', 'www.sqlite.org', 'graphql.org', 'prisma.io', 'docs.getdbt.com',
+  'docs.aws.amazon.com', 'cloud.google.com', 'kubernetes.io', 'www.docker.com', 'www.terraform.io',
+  'www.ansible.com', 'vercel.com', 'docs.stripe.com', 'docs.netlify.com', 'devcenter.heroku.com', 'dev.wix.com',
+  'cypress.io', 'selenium.dev', 'docs.unity.com', 'docs.unrealengine.com', 'git-scm.com', 'nginx.org',
+  'httpd.apache.org',
+];
+
 /** How a worker invokes the slot wrapper: an absolute path, so it works from any jail. */
 export function testSlotCommand(): string {
   return `node ${path.join(config.sourceRoot, 'src', 'verify', 'testSlot.ts')}`;
@@ -325,9 +351,13 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
   // Denied outright unless granted: WebSearch when the grant has no search, every WebFetch when it names no host.
   // (A domain-limited grant is not denied — deny beats allow — the allow rules alone limit it.)
   const granted = workerWebTools(task);
+  const fetchHosts = new Set(granted.filter((t) => t.startsWith('WebFetch(domain:')).map((t) => t.slice('WebFetch(domain:'.length, -1)));
   const noWeb = [
     ...(granted.includes('WebSearch') ? [] : ['WebSearch']),
-    ...(granted.some((t) => t.startsWith('WebFetch(')) ? [] : ['WebFetch']),
+    // No host granted: the bare tool. Some hosts granted: every host the CLI would fetch without a rule, unless granted.
+    ...(fetchHosts.size === 0
+      ? ['WebFetch']
+      : CLI_PREAPPROVED_FETCH_HOSTS.filter((h) => !fetchHosts.has(h)).map((h) => `WebFetch(domain:${h})`)),
   ];
   return ['--disallowedTools', 'Bash(npm test:*)', 'Bash(npm t:*)', 'Bash(npm run test:*)', 'Bash(npm run verify:*)', ...noWeb];
 }
