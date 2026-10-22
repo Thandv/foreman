@@ -234,3 +234,23 @@ test('required content: a file exactly at the cap is checked, and the over-cap f
   assert.match(over[0]!, /disclaimer/);
   assert.match(over[0]!, /bear case/);
 });
+
+test('required content: a file swapped for a FIFO after the lstat does not hang the daemon on open', { skip: process.platform === 'win32' }, async () => {
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-fifo-'));
+  execFileSync('mkfifo', [path.join(tree, 'notes.md')]);
+  // In a child with a deadline: a blocking open stalls the event loop, so this process's own timers could not fire.
+  // lstat is made to report a regular file, standing in for the swap between the lstat and the open.
+  const script = `
+    import fs from 'node:fs';
+    import { requiredContentFindings } from ${JSON.stringify(path.resolve('src/verify/determinism.ts'))};
+    const lstat = fs.lstatSync;
+    fs.lstatSync = (p, ...a) => Object.assign(lstat(p, ...a), { isFile: () => true });
+    const pb = { required: [{ label: 'a limitations section', pattern: 'limitations' }] };
+    process.stdout.write(JSON.stringify(requiredContentFindings(pb, 'researcher', [{ path: 'notes.md', deleted: false }], ${JSON.stringify(tree)})));
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10_000, encoding: 'utf8' });
+  assert.equal(r.signal, null, `the check hung on the FIFO (killed by ${r.signal})`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), [], 'not a regular file once open: not read');
+});

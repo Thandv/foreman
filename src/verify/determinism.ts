@@ -237,8 +237,9 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
       if (!real.startsWith(realRoot + path.sep)) continue;
       // Open without following a final symlink and take the size from the open handle, then read at most the cap:
       // the bound holds even if the file grows after the checks. (A parent swapped for a link between realpath and
-      // open is narrowed by reading the resolved path, not ruled out; the leak is one bit per rule.)
-      const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      // open is narrowed by reading the resolved path, not ruled out; the leak is one bit per rule.) Non-blocking, so a
+      // FIFO swapped in after the lstat is refused by the fstat below instead of hanging the daemon thread in open().
+      const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
       try {
         const fst = fs.fstatSync(fd);
         if (!fst.isFile()) continue;
