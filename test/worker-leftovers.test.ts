@@ -613,26 +613,29 @@ setTimeout(() => { fs.appendFileSync(${JSON.stringify(log)}, 'still alive\\n'); 
   });
 }
 
-test('a SIGHUP mid-freeze in a process that lives on (its own SIGHUP listener): the late look freezes nothing more, and still ends what it found', async () => {
-  const before = process.listeners('SIGHUP').slice();
-  const keep = (): void => {};
-  process.on('SIGHUP', keep);
-  try {
-    const { reaper, real, release } = hangingReaper([A7_FIRST, A7_LATE], 1, { boundMs: 60_000 });
-    const done = reaper.reap();
-    await new Promise((r) => setTimeout(r, 20));
-    const added = process.listeners('SIGHUP').filter((l) => !before.includes(l) && l !== keep);
-    assert.equal(added.length, 1);
-    (added[0] as () => void)();
-    release(); // the second look comes back after the hangup and finds 903
-    await done;
-    assert.deepEqual(real().slice(6), [[-901, 'SIGTERM'], [-902, 'SIGTERM'], [-903, 'SIGTERM']],
-      'no SIGSTOP of 903 after the hangup: no handler is installed any more to continue it');
-    assert.deepEqual(process.listeners('SIGHUP').filter((l) => l !== keep), before);
-  } finally {
-    process.removeListener('SIGHUP', keep);
-  }
-});
+// SIGTERM and SIGINT end the freeze for good as a hangup does: serve and testSlot live on into their shutdown.
+for (const sig of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) {
+  test(`a ${sig} mid-freeze in a process that lives on (its own ${sig} listener): the late look freezes nothing more, and still ends what it found`, async () => {
+    const before = process.listeners(sig).slice();
+    const keep = (): void => {};
+    process.on(sig, keep);
+    try {
+      const { reaper, real, release } = hangingReaper([A7_FIRST, A7_LATE], 1, { boundMs: 60_000 });
+      const done = reaper.reap();
+      await new Promise((r) => setTimeout(r, 20));
+      const added = process.listeners(sig).filter((l) => !before.includes(l) && l !== keep);
+      assert.equal(added.length, 1);
+      (added[0] as () => void)();
+      release(); // the second look comes back after the signal and finds 903
+      await done;
+      assert.deepEqual(real().slice(6), [[-901, 'SIGTERM'], [-902, 'SIGTERM'], [-903, 'SIGTERM']],
+        `no SIGSTOP of 903 after the ${sig}: no handler is installed any more to continue it`);
+      assert.deepEqual(process.listeners(sig).filter((l) => l !== keep), before);
+    } finally {
+      process.removeListener(sig, keep);
+    }
+  });
+}
 
 test('the daemon (`serve`) ends in order on SIGHUP, as on SIGTERM: "stopping", exit 0, its lock released', async (t) => {
   const home = scratch();
