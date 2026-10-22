@@ -145,3 +145,36 @@ test('a worker limited to its hosts is denied the hosts the CLI would fetch with
     assert.ok(software.includes('WebFetch') && !software.some((t) => t.startsWith('WebFetch(')));
   });
 });
+
+test('search is granted only when asked for, S0 is granted like S1, and the host list is bounded', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-search-'));
+  const before = process.env['FOREMAN_PLAYBOOKS_DIR'];
+  const text = fs.readFileSync(path.resolve('playbooks/research.md'), 'utf8');
+  const withWeb = (web: string): void => {
+    const next = text.replace(/"web": \{[\s\S]*?\]\s*\}/, `"web": ${web}`);
+    assert.notEqual(next, text, 'the fixture edit applied');
+    fs.writeFileSync(path.join(dir, 'research.md'), next);
+    clearPlaybookCache();
+  };
+  process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
+  try {
+    withWeb('{ "search": false, "domains": ["arxiv.org"] }');
+    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), ['WebFetch(domain:arxiv.org)'], 'search: false, no WebSearch');
+    assert.ok(workerShellDenylist({ testCmd: null, playbook: 'research', sensitivity: 'S1' }).includes('WebSearch'), 'and it is denied');
+    withWeb('{ "domains": ["arxiv.org", "arxiv.org"] }');
+    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), ['WebFetch(domain:arxiv.org)'], 'no search unless asked; one rule per host');
+    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S0' }), ['WebFetch(domain:arxiv.org)'], 'S0 like S1');
+    const hosts = (n: number): string => JSON.stringify(Array.from({ length: n }, (_, i) => `h${i}.example.org`));
+    withWeb(`{ "domains": ${hosts(64)} }`);
+    assert.equal(workerWebTools({ playbook: 'research', sensitivity: 'S1' }).length, 64, '64 hosts load');
+    withWeb(`{ "domains": ${hosts(65)} }`);
+    assert.equal(getPlaybook('research'), null, '65 hosts refuse the playbook');
+    withWeb(`{ "domains": ["${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}.org"] }`);
+    assert.equal(getPlaybook('research'), null, 'a host longer than 253 characters refuses the playbook');
+  } finally {
+    if (before === undefined) delete process.env['FOREMAN_PLAYBOOKS_DIR'];
+    else process.env['FOREMAN_PLAYBOOKS_DIR'] = before;
+    clearPlaybookCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

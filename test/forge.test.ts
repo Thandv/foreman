@@ -484,6 +484,10 @@ test('forgePlaybook: a draft that asks for web access has it stripped and named;
     fs.writeFileSync(forged.path, pbText(kitchenFront({ web: true }), KITCHEN_BODY));
     assert.throws(() => approvePending('kitchen'), /refusing to install 'kitchen': web is set/);
     assert.equal(fs.existsSync(path.join(pbDir, 'kitchen.md')), false, 'nothing was installed');
+    // The domain-list form is the same grant: stripped by the forge and refused by approve.
+    const listed = { search: true, domains: ['arxiv.org'] };
+    fs.writeFileSync(forged.path, pbText(kitchenFront({ web: listed }), KITCHEN_BODY));
+    assert.throws(() => approvePending('kitchen'), /refusing to install 'kitchen': web is set/);
   } finally {
     store.close();
     cleanup([pbDir, stub.dir]);
