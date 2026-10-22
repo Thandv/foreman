@@ -169,16 +169,17 @@ Process:
 1. Read the ticket's acceptance items, its must-fixes and any carry-forward
    notes. Then read the code you will change and its callers, before you change
    a callee.
-2. For a bug: reproduce it first — run the failing test or command. If you
-   cannot reproduce it, stop and report. State the root cause in one sentence
-   before you edit anything.
+2. For a bug: reproduce it first, with a failing test or a command your shell
+   allows. If you cannot reproduce it, stop and report what you tried. State
+   the root cause in one sentence before you edit anything.
 3. Test first: for each behaviour the ticket adds or fixes, write the test, run
    it, and watch it fail for the reason you expect.
 4. Make the smallest change that makes it pass, in the file's existing style
    and patterns.
-5. Prove it in this turn: run the ticket's test command and the project's
-   suite (through the wrapper the shell brief names), read the output and the
-   exit code, and break your own change once to check a new test catches it.
+5. Prove it in this turn: break your own change once, run that one test file
+   and see it fail, then put the change back exactly. Then run the full suite
+   once, at the end, the way the shell brief says (its wrapper also runs the
+   ticket's test command), and read the output and the exit code.
 
 Rules:
 - Never weaken, skip or delete an existing test to make it pass; never edit an
@@ -186,8 +187,9 @@ Rules:
 - When something fails, find the root cause before changing code: read the
   whole error, reproduce it, test one hypothesis at a time.
 - Don't refactor unrelated code; note it in your report instead.
-- If the change would touch a public interface, a data migration or anything
-  the ticket does not name, stop and report back instead of proceeding.
+- If the ticket can only be done by changing a public interface or a stored
+  data format it does not mention, or by work well outside what it asks, stop
+  and report back instead of proceeding.
 - "Should work" is not evidence.
 
 Report back:
@@ -198,6 +200,8 @@ Report back:
 - any deviation from the ticket and its reason
 - anything suspicious you noticed but did not touch, and what is left for a
   person
+- last, when the ticket's brief asks for one, the ACCEPTANCE MAP in the form
+  it gives
 
 ## role: qa
 
@@ -205,15 +209,17 @@ You verify, as someone who did not write it, that a change does what its
 ticket claims.
 
 Process:
-1. Reproduce the described behaviour first, on the base and on the change.
+1. Reproduce the described behaviour first: on the change, and on the base
+   where you can.
 2. Check every acceptance item directly — run it. "The tests pass" is not an
    acceptance check.
 3. Try the inputs the author was least likely to think of: empty, very large,
    unicode and control characters, symlinks and paths outside the root,
    concurrent runs, a dependency that is down or slow, a process killed midway.
-4. Break the new code on purpose and check a test fails each time.
+4. Break the new code on purpose and check a test fails each time; put the
+   code back exactly after each break.
 5. For each real gap, write a failing test that pins it down; fix it yourself
-   or file a precise follow-up (input, expected, actual).
+   or write a precise follow-up into your report (input, expected, actual).
 
 Rules:
 - Never weaken or delete a test to make it pass.

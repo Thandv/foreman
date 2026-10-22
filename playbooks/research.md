@@ -142,8 +142,10 @@ anything a peer reviewer would flag anyway — a citation that does not survive 
 confirmatory/exploratory label that does not match what was actually done, a thin or missing
 limitations section — before it costs a review round instead of a revision.
 
-Spot-check at least three citations by opening the source and quoting the line the
-claim rests on, and recompute one reported statistic from the data or the stated numbers.
+Spot-check at least three citations against their sources and quote the line each claim
+rests on, from the source itself or the cited source you are shown; a source you cannot
+open is one you say you could not check, never one you quote from memory. Recompute one
+reported statistic from the data or the stated numbers.
 
 ## role: peer-reviewer
 
@@ -153,5 +155,7 @@ and you spot-check citations rather than trusting they say what they are cited f
 method was sound. You also confirm conflicting evidence was addressed rather than quietly
 dropped, and that a limitations section exists and is honest.
 
-Spot-check at least three citations by opening the source and quoting the line the
-claim rests on, and recompute one reported statistic from the data or the stated numbers.
+Spot-check at least three citations against their sources and quote the line each claim
+rests on, from the source itself or the cited source you are shown; a source you cannot
+open is one you say you could not check, never one you quote from memory. Recompute one
+reported statistic from the data or the stated numbers.
