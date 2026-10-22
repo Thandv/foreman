@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadPlaybooksFrom, type Playbook } from '../src/playbooks.ts';
 import {
-  deterministicFindings, parseDiffFiles, requiredContentFindings, roleMode, secretFindings, temperatureFor, testWeakening,
+  agentConfigFindings, deterministicFindings, parseDiffFiles, requiredContentFindings, roleMode, secretFindings, temperatureFor, testWeakening,
 } from '../src/verify/determinism.ts';
 
 /** A unified diff adding `lines` to `file` (or deleting it). */
@@ -253,4 +253,15 @@ test('required content: a file swapped for a FIFO after the lstat does not hang 
   assert.equal(r.signal, null, `the check hung on the FIFO (killed by ${r.signal})`);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), [], 'not a regular file once open: not read');
+});
+
+test('a change to the agent permission config is a hard finding: a worker may not set its own permissions', () => {
+  for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json', 'sub/.claude/settings.json']) {
+    assert.equal(agentConfigFindings(parseDiffFiles(diffOf(file, ['{"permissions":{"allow":["WebFetch"]}}']))).length, 1, file);
+    assert.equal(agentConfigFindings(parseDiffFiles(diffOf(file, ['x'], true))).length, 1, `${file} deleted`);
+  }
+  assert.deepEqual(agentConfigFindings(parseDiffFiles(diffOf('docs/settings.json', ['x']))), [], 'another settings file is not');
+  assert.deepEqual(agentConfigFindings(parseDiffFiles(diffOf('.claude/agents/x.md', ['x']))), [], 'only the permission files');
+  const pub = pbOf('publishing');
+  assert.equal(deterministicFindings(pub, 'author', diffOf('.claude/settings.json', ['{}']), null).hard.length, 1, 'hard in every mode');
 });

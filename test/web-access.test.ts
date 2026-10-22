@@ -26,12 +26,15 @@ function withRepoPlaybooks<T>(fn: () => T): T {
 
 test('a research worker gets web search and fetch; an S2 ticket and other playbooks do not', () => {
   withRepoPlaybooks(() => {
-    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), ['WebSearch', 'WebFetch']);
+    const granted = workerWebTools({ playbook: 'research', sensitivity: 'S1' });
+    assert.equal(granted[0], 'WebSearch');
+    assert.ok(granted.length > 1 && granted.slice(1).every((t) => /^WebFetch\(domain:[a-z0-9.-]+\)$/.test(t)), 'fetch only by named host');
+    assert.ok(!granted.includes('WebFetch'), 'never bare WebFetch');
     assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S2' }), [], 'S2 text never leaves the machine');
     assert.deepEqual(workerWebTools({ playbook: 'software', sensitivity: 'S1' }), []);
     assert.deepEqual(workerWebTools({}), [], 'no playbook, no web');
     const research = workerShellAllowlist({ testCmd: null, playbook: 'research', sensitivity: 'S1' });
-    assert.ok(research.includes('WebSearch') && research.includes('WebFetch'));
+    assert.ok(research.includes('WebSearch') && research.includes('WebFetch(domain:arxiv.org)'));
     assert.ok(!workerShellAllowlist({ testCmd: null, playbook: 'software', sensitivity: 'S1' }).includes('WebFetch'));
   });
 });
@@ -39,24 +42,35 @@ test('a research worker gets web search and fetch; an S2 ticket and other playbo
 test('the shell brief tells a research worker it may search and fetch; the operator override still replaces the list', () => {
   withRepoPlaybooks(() => {
     const task = probeTask({ title: 'T', prompt: 'p', playbook: 'research', role: 'assistant', runner: 'claude-code', kind: 'research' });
-    assert.match(shellBrief(task), /WebSearch, WebFetch/);
+    assert.match(shellBrief(task), /WebSearch, WebFetch\(domain:/);
     process.env['FOREMAN_CLAUDE_ALLOWED_TOOLS'] = 'Bash(make:*)';
     assert.deepEqual(workerShellAllowlist({ testCmd: null, playbook: 'research', sensitivity: 'S1' }), ['--allowedTools', 'Bash(make:*)']);
     delete process.env['FOREMAN_CLAUDE_ALLOWED_TOOLS'];
   });
 });
 
-test('a web value that is not true or false refuses the playbook', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-'));
-  const fm = {
-    id: 'webtest', description: 'w', triggers: ['webtest'], roles: { dev: { tier: 'worker' }, senior: { tier: 'senior' } },
-    reviewers: [{ role: 'senior', style: 'code-review' }], escalation: { chair: 'senior', afterFailures: 2 },
-    checks: [], gate: { default: 'human', hardHuman: [] }, constraints: [], web: 'yes',
+test('web must name its hosts: open fetch, a bad host or an empty list refuses the playbook; a valid grant loads', () => {
+  const load = (web: unknown): { ok: boolean; refused: string } => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-'));
+    const fm = {
+      id: 'webtest', description: 'w', triggers: ['webtest'], roles: { dev: { tier: 'worker' }, senior: { tier: 'senior' } },
+      reviewers: [{ role: 'senior', style: 'code-review' }], escalation: { chair: 'senior', afterFailures: 2 },
+      checks: [], gate: { default: 'human', hardHuman: [] }, constraints: [], web,
+    };
+    fs.writeFileSync(path.join(dir, 'webtest.md'), `---\n${JSON.stringify(fm)}\n---\n\n## role: dev\n\nD.\n\n## role: senior\n\nS.\n`);
+    const c = loadPlaybooksFrom(dir);
+    return { ok: c.playbooks.length === 1, refused: JSON.stringify(c.refused) };
   };
-  fs.writeFileSync(path.join(dir, 'webtest.md'), `---\n${JSON.stringify(fm)}\n---\n\n## role: dev\n\nD.\n\n## role: senior\n\nS.\n`);
-  const c = loadPlaybooksFrom(dir);
-  assert.equal(c.playbooks.length, 0);
-  assert.match(JSON.stringify(c.refused), /web must be true or false/);
+  assert.match(load(true).refused, /web must be false or/, 'open fetch to any host is refused');
+  assert.match(load('yes').refused, /web must be false or/);
+  assert.match(load({ search: true }).refused, /web.domains must list/);
+  assert.match(load({ domains: [] }).refused, /web.domains must list/);
+  for (const bad of ['https://arxiv.org', 'arxiv.org/abs', '*.arxiv.org', 'ArXiv.org', 'localhost', 'arxiv.org:443', '']) {
+    assert.match(load({ domains: [bad] }).refused, /web.domains has/, `refused: ${bad}`);
+  }
+  assert.match(load({ search: 'yes', domains: ['arxiv.org'] }).refused, /web.search must be true or false/);
+  assert.equal(load({ search: true, domains: ['arxiv.org', 'doi.org'] }).ok, true);
+  assert.equal(load(false).ok, true, 'false is no web');
 });
 
 test('evidence before claims: a constraint in research and investment; in publishing only the reviewing roles carry it', () => {
@@ -83,9 +97,14 @@ test('a ticket whose playbook is gone or opts out gets no web tools', () => {
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   clearPlaybookCache();
   try {
-    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), ['WebSearch', 'WebFetch']);
+    const granted = workerWebTools({ playbook: 'research', sensitivity: 'S1' });
+    assert.equal(granted[0], 'WebSearch');
+    assert.ok(granted.length > 1 && granted.slice(1).every((t) => /^WebFetch\(domain:[a-z0-9.-]+\)$/.test(t)), 'fetch only by named host');
+    assert.ok(!granted.includes('WebFetch'), 'never bare WebFetch');
     const text = fs.readFileSync(path.join(dir, 'research.md'), 'utf8');
-    fs.writeFileSync(path.join(dir, 'research.md'), text.replace('"web": true', '"web": false'));
+    const off = text.replace(/"web": \{[\s\S]*?\]\s*\}/, '"web": false');
+    assert.notEqual(off, text, 'the fixture edit applied');
+    fs.writeFileSync(path.join(dir, 'research.md'), off);
     clearPlaybookCache();
     assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), [], 'the operator turned it off');
     fs.rmSync(path.join(dir, 'research.md'));
@@ -103,7 +122,8 @@ test('a worker whose playbook does not grant the web is denied it (a repo settin
     const deny = (t: Parameters<typeof workerShellDenylist>[0]): string[] => workerShellDenylist(t);
     assert.ok(deny({ testCmd: null, playbook: 'software', sensitivity: 'S1' }).includes('WebFetch'), 'software: denied');
     assert.ok(deny({ testCmd: null, playbook: 'research', sensitivity: 'S2' }).includes('WebSearch'), 'S2 research: denied');
-    assert.ok(!deny({ testCmd: null, playbook: 'research', sensitivity: 'S1' }).includes('WebFetch'), 'granted: not denied');
+    const researchDeny = deny({ testCmd: null, playbook: 'research', sensitivity: 'S1' });
+    assert.ok(!researchDeny.includes('WebFetch') && !researchDeny.includes('WebSearch'), 'granted: neither denied (deny beats allow)');
     assert.deepEqual(workerWebTools({ playbook: 'research' }), [], 'no sensitivity: no web');
     const task = probeTask({ title: 'T', prompt: 'p', playbook: 'software', role: 'dev', runner: 'claude-code' });
     assert.doesNotMatch(shellBrief(task), /use the wrapper:[^.]*WebFetch/, 'the brief lists only shell commands as use-the-wrapper');

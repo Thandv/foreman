@@ -60,12 +60,13 @@ export interface Playbook {
    */
   required?: Array<{ label: string; pattern: string; roles?: string[] }>;
   /**
-   * Web access for this playbook's claude-code workers: WebSearch and WebFetch join their allowlist (never for an S2
-   * ticket). For work whose job is finding sources (research); reviewers never get it. Fetched text is untrusted
-   * data and only the role text says so; WebFetch reaches any host, and the claude-code worker is not sandboxed, so a
-   * page that steers the worker reaches its jail and the network (README, "web"). A forged playbook may not set it.
+   * Web access for this playbook's claude-code workers (S0/S1 tickets only; reviewers never get it): `search` adds
+   * WebSearch, and each of `domains` adds a `WebFetch(domain:<host>)` allow rule, so a fetch to any other host needs an
+   * approval no headless worker can get and is refused. For work whose job is finding sources (research). Fetched
+   * text is still untrusted data that only the role text guards against, and the claude-code worker is not
+   * sandboxed (README, "web"). A forged playbook may not set it.
    */
-  web?: boolean;
+  web?: { search: boolean; domains: string[] };
   /** Playbook-wide default for who does the work. Omitted means "don't decide here". */
   assignee: Assignee | null;
   /**
@@ -174,6 +175,11 @@ function blankFencedRegions(body: string): string {
   }
   return parts.join('');
 }
+
+/** At most this many hosts in a playbook's web allowlist. */
+const MAX_WEB_DOMAINS = 64;
+/** A host name: lowercase labels joined by dots, at least one dot, no scheme, path, port or wildcard. */
+const HOST_RE = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 /** Split the body into '## role: <name>' prompts and the '## pipeline' prose. */
 function parseSections(body: string): {
@@ -406,8 +412,22 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     if (blocked) return { pb: null, reason: `check ${JSON.stringify(check)} refused: ${blocked}` };
   }
 
-  if (raw.web !== undefined && typeof raw.web !== 'boolean') {
-    return { pb: null, reason: `web must be true or false, not ${JSON.stringify(raw.web)}` };
+  // Web access must name its hosts: open fetch to any host is not something a playbook can grant.
+  let web: { search: boolean; domains: string[] } | undefined;
+  if (raw.web !== undefined && raw.web !== false) {
+    const w = raw.web as { search?: unknown; domains?: unknown } | null;
+    if (!w || typeof w !== 'object' || Array.isArray(w)) {
+      return { pb: null, reason: `web must be false or { "search": true|false, "domains": ["host", …] }, not ${JSON.stringify(raw.web)}` };
+    }
+    if (w.search !== undefined && typeof w.search !== 'boolean') return { pb: null, reason: 'web.search must be true or false' };
+    if (!Array.isArray(w.domains) || !w.domains.length || w.domains.length > MAX_WEB_DOMAINS) {
+      return { pb: null, reason: `web.domains must list 1-${MAX_WEB_DOMAINS} hosts` };
+    }
+    const bad = w.domains.find((d) => typeof d !== 'string' || !HOST_RE.test(d));
+    if (bad !== undefined) {
+      return { pb: null, reason: `web.domains has ${JSON.stringify(bad)}: a lowercase host name with a dot, no scheme, path, port or wildcard` };
+    }
+    web = { search: w.search === true, domains: [...new Set(w.domains as string[])] };
   }
   // Required content (verify/determinism.ts). A malformed rule is a mistake in the file, not something to skip
   // quietly: a rule that silently never runs is a check the author believes exists.
@@ -457,7 +477,7 @@ function parseFile(text: string, file: string): { pb: Playbook | null; reason: s
     gate: { default: gateDefault as 'human' | 'owner', hardHuman },
     constraints: Array.isArray(raw.constraints) ? raw.constraints.map(String) : [],
     ...(required.length ? { required } : {}),
-    ...(raw.web === true ? { web: true } : {}),
+    ...(web ? { web } : {}),
     pipeline,
     rolePrompts,
     ...(Object.keys(roleCards).length ? { roleCards } : {}),

@@ -294,15 +294,19 @@ investment's disclaimer, bear case and exit criteria — and is checked in every
 temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). An unknown mode or a malformed
 `required` rule refuses the playbook.
 
-A playbook may set `"web": true` (research does): its claude-code workers get `WebSearch` and `WebFetch` on their
-allowlist only for an S0/S1 ticket (an unset sensitivity gets none); every other claude-code worker has them on its deny list, so a repo's own `.claude/settings.json` cannot switch them on (a search query is text leaving the machine), and the shell brief tells them so.
-Reviewers never get tools; the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces
-the whole list, web tools included; a forged playbook may not set it (the forge strips it, approve refuses it). What
-it opens: `WebFetch` reaches any host, so a URL can carry text from the jail out of the machine, and every fetched page
-is text an outsider wrote, now inside a worker that is not sandboxed (see [The sandbox](#the-sandbox-foreman_sandbox)).
-The only screen is the role text: the research roles are told fetched pages are untrusted data, never to follow
-instructions in them, and to cite the URL with the line a claim rests on. Turn it off with `"web": false` in your copy
-of the playbook.
+A playbook may grant web access with `"web": { "search": true, "domains": ["arxiv.org", "doi.org", …] }` (research
+does, with a list of scholarly and public-data hosts). Its claude-code workers then get `WebSearch` (if `search`) and one
+`WebFetch(domain:<host>)` allow rule per listed host, only for an S0/S1 ticket (an unset sensitivity gets none): a
+fetch to any other host needs an approval no headless worker can get, so it is refused. Plain `"web": true` (any
+host) refuses the playbook, as does a host with a scheme, path, port or wildcard. Every claude-code worker not granted
+them has `WebSearch`/`WebFetch` on its deny list, and a diff that changes `.claude/settings*.json` or `.mcp.json` is a
+hard pre-review finding, so a worker cannot widen its own permissions for its next round. Reviewers never get tools;
+the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces the whole list, web tools
+included; a forged playbook may not set it (the forge strips it, approve refuses it). What it still opens: a search
+query and a fetch URL carry text out of the machine to those hosts and the search service, and every fetched page is
+text an outsider wrote, now inside a worker that is not sandboxed (see [The sandbox](#the-sandbox-foreman_sandbox)). The
+research roles are told fetched pages are untrusted data, never to follow instructions in them, and to cite the URL
+with the line a claim rests on. Turn it off with `"web": false` in your copy of the playbook.
 
 Each role has a `## role: <name>` prompt section. A role may also have a shorter
 `## role-card: <name>` section: a worker gets the card instead of the full prompt

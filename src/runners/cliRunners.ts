@@ -292,10 +292,11 @@ export function workerShellAllowlist(task: Pick<Task, 'testCmd'> & Partial<Pick<
 export function workerWebTools(task: Partial<Pick<Task, 'playbook' | 'sensitivity'>>): string[] {
   // Granted only for a sensitivity that is known to allow text to leave the machine: an unset one fails closed.
   if (!task.playbook || (task.sensitivity !== 'S0' && task.sensitivity !== 'S1')) return [];
-  return getPlaybook(task.playbook)?.web === true ? WEB_TOOLS : [];
+  const web = getPlaybook(task.playbook)?.web;
+  if (!web) return [];
+  // One allow rule per host: a fetch anywhere else needs an approval a headless worker cannot get, so it is refused.
+  return [...(web.search ? ['WebSearch'] : []), ...web.domains.map((d) => `WebFetch(domain:${d})`)];
 }
-
-const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 
 /** How a worker invokes the slot wrapper: an absolute path, so it works from any jail. */
 export function testSlotCommand(): string {
@@ -321,7 +322,13 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
   }
   // A worker whose playbook does not grant the web is denied it outright: deny beats allow in the CLI, so a repo's own
   // .claude/settings.json (which a worker can write for its next round) cannot switch web access on.
-  const noWeb = workerWebTools(task).length ? [] : WEB_TOOLS;
+  // Denied outright unless granted: WebSearch when the grant has no search, every WebFetch when it names no host.
+  // (A domain-limited grant is not denied — deny beats allow — the allow rules alone limit it.)
+  const granted = workerWebTools(task);
+  const noWeb = [
+    ...(granted.includes('WebSearch') ? [] : ['WebSearch']),
+    ...(granted.some((t) => t.startsWith('WebFetch(')) ? [] : ['WebFetch']),
+  ];
   return ['--disallowedTools', 'Bash(npm test:*)', 'Bash(npm t:*)', 'Bash(npm run test:*)', 'Bash(npm run verify:*)', ...noWeb];
 }
 

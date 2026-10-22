@@ -265,6 +265,20 @@ export function requiredContentFindings(pb: Playbook, role: string | null | unde
   return out;
 }
 
+/**
+ * Agent permission config: the files that decide what a Claude Code worker may do (its tool allow/deny rules, its
+ * MCP servers). A worker that changed them would set its own permissions for its next round — say, an allow rule that
+ * lets WebFetch reach any host past its playbook's domain list — so any change to them is a hard finding: a person
+ * makes such a change, never a worker.
+ */
+const AGENT_CONFIG = /(^|\/)\.claude\/settings(\.local)?\.json$|(^|\/)\.mcp\.json$/;
+
+export function agentConfigFindings(files: FileDiff[]): string[] {
+  return files
+    .filter((f) => AGENT_CONFIG.test(f.path))
+    .map((f) => `${f.path}: the agent permission config is changed — revert it; only a person may change what agents are allowed to do`);
+}
+
 /** Every deterministic check the role's mode turns on, for one ticket's diff. */
 export function deterministicFindings(
   pb: Playbook,
@@ -275,7 +289,7 @@ export function deterministicFindings(
   const mode = roleMode(pb, role);
   const files = parseDiffFiles(diff);
   const tests = testWeakening(files);
-  const hard = [...secretFindings(files), ...tests.hard];
+  const hard = [...secretFindings(files), ...agentConfigFindings(files), ...tests.hard];
   const envEdits = envFileEdits(files);
   // Required content is an explicit rule the playbook names roles for, so it holds in every mode; the mode only
   // decides whether the heuristic test-weakening findings are raised for a role that writes prose.
