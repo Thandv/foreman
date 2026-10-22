@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clearPlaybookCache, loadPlaybooksFrom } from '../src/playbooks.ts';
+import { clearPlaybookCache, getPlaybook, loadPlaybooksFrom } from '../src/playbooks.ts';
 import { workerShellAllowlist, workerWebTools } from '../src/runners/cliRunners.ts';
 import { shellBrief } from '../src/scheduler.ts';
 import { probeTask } from '../src/types.ts';
@@ -57,4 +57,43 @@ test('a web value that is not true or false refuses the playbook', () => {
   const c = loadPlaybooksFrom(dir);
   assert.equal(c.playbooks.length, 0);
   assert.match(JSON.stringify(c.refused), /web must be true or false/);
+});
+
+test('evidence before claims: a constraint in research and investment; in publishing only the reviewing roles carry it', () => {
+  withRepoPlaybooks(() => {
+    const rule = /Evidence before claims/;
+    for (const id of ['research', 'investment']) {
+      assert.ok(getPlaybook(id)!.constraints.some((c) => rule.test(c)), `${id} keeps it as a constraint`);
+    }
+    const pub = getPlaybook('publishing')!;
+    assert.ok(!pub.constraints.some((c) => rule.test(c)), 'not a publishing constraint: those reach every role');
+    for (const role of ['publisher', 'dev-editor', 'line-editor', 'copyeditor', 'proofreader']) {
+      assert.match(pub.rolePrompts[role] ?? '', rule, `${role} carries it`);
+    }
+    for (const role of ['author', 'beta-reader', 'critic']) {
+      assert.doesNotMatch(pub.rolePrompts[role] ?? '', rule, `${role} does not`);
+    }
+  });
+});
+
+test('a ticket whose playbook is gone or opts out gets no web tools', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-off-'));
+  const before = process.env['FOREMAN_PLAYBOOKS_DIR'];
+  fs.copyFileSync(path.resolve('playbooks/research.md'), path.join(dir, 'research.md'));
+  process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
+  clearPlaybookCache();
+  try {
+    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), ['WebSearch', 'WebFetch']);
+    const text = fs.readFileSync(path.join(dir, 'research.md'), 'utf8');
+    fs.writeFileSync(path.join(dir, 'research.md'), text.replace('"web": true', '"web": false'));
+    clearPlaybookCache();
+    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), [], 'the operator turned it off');
+    fs.rmSync(path.join(dir, 'research.md'));
+    clearPlaybookCache();
+    assert.deepEqual(workerWebTools({ playbook: 'research', sensitivity: 'S1' }), [], 'a playbook that is gone grants nothing');
+  } finally {
+    if (before === undefined) delete process.env['FOREMAN_PLAYBOOKS_DIR'];
+    else process.env['FOREMAN_PLAYBOOKS_DIR'] = before;
+    clearPlaybookCache();
+  }
 });
