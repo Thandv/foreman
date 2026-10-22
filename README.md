@@ -296,8 +296,13 @@ temperature 0 / 0.3 / 0.8 by mode (the Claude CLI has no temperature setting). A
 
 A playbook may set `"web": true` (research does): its claude-code workers get `WebSearch` and `WebFetch` on their
 allowlist, never for an S2 ticket (a search query is text leaving the machine), and the shell brief tells them so.
-Reviewers never get tools. Fetched pages are untrusted data: the research roles are told never to follow
-instructions in them and to cite the URL with the line a claim rests on.
+Reviewers never get tools; the `api` and `codex-cli` runners get no web tools; `FOREMAN_CLAUDE_ALLOWED_TOOLS` replaces
+the whole list, web tools included; a forged playbook may not set it (the forge strips it, approve refuses it). What
+it opens: `WebFetch` reaches any host, so a URL can carry text from the jail out of the machine, and every fetched page
+is text an outsider wrote, now inside a worker that is not sandboxed (see [The sandbox](#the-sandbox-foreman_sandbox)).
+The only screen is the role text: the research roles are told fetched pages are untrusted data, never to follow
+instructions in them, and to cite the URL with the line a claim rests on. Turn it off with `"web": false` in your copy
+of the playbook.
 
 Each role has a `## role: <name>` prompt section. A role may also have a shorter
 `## role-card: <name>` section: a worker gets the card instead of the full prompt

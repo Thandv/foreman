@@ -62,7 +62,8 @@ export interface Playbook {
   /**
    * Web access for this playbook's claude-code workers: WebSearch and WebFetch join their allowlist (never for an S2
    * ticket). For work whose job is finding sources (research); reviewers never get it. Fetched text is untrusted
-   * data — the roles are told so — and the worker's own sandbox and jail rules still apply.
+   * data and only the role text says so; WebFetch reaches any host, and the claude-code worker is not sandboxed, so a
+   * page that steers the worker reaches its jail and the network (README, "web"). A forged playbook may not set it.
    */
   web?: boolean;
   /** Playbook-wide default for who does the work. Omitted means "don't decide here". */
