@@ -282,8 +282,9 @@ admission-scanned like agents; roles map to model tiers — owner
 
 Each role has a `## role: <name>` prompt section. A role may also have a shorter
 `## role-card: <name>` section: a worker gets the card instead of the full prompt
-when its role's tier resolves to a local model (the same rule that serves a skill's
-`card.md`), because a long process prompt is harder for a small model to follow. A
+when its role's tier resolves to a local model or the crew is on the local plane
+(local-only, or the CLI is down and auto mode fell back; the same rule that serves a
+skill's `card.md`), because a long process prompt is harder for a small model to follow. A
 role with no card gets its full prompt everywhere, and a crew review always carries the
 full prompt. A duplicate card, a card for a role the playbook does not declare, or an
 empty card refuses the playbook; cards are admission-scanned like the prompts.
