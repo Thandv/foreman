@@ -17,7 +17,7 @@ import {
   effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
   ownerGateBatch, quotedPathsInDiff, type GateBatchItem,
 } from './gate.ts';
-import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
 import { factDrift } from './prose/linecheck.ts';
@@ -640,6 +640,16 @@ export class Scheduler {
   private readonly dirtyHolds = new Map<string, { files: string; probes: number; nextProbeAt: number; probing: boolean }>();
   /** Rate limit for recording tick failures: the last recorded message, when, and how many were suppressed since. */
   private tickError: { message: string; at: number; suppressed: number } | null = null;
+  /** restoreAgentSettings, said in the timeline; a jail whose settings cannot be checked does not start a round. */
+  private async restoreAgentSettingsOrThrow(jail: Jail, emit: (line: string) => void): Promise<void> {
+    let changed: string[];
+    try {
+      changed = await restoreAgentSettings(jail);
+    } catch (err) {
+      throw new Error(`could not check the jail's agent permission files before the round: ${(err as Error).message}`);
+    }
+    for (const line of changed) emit(`agent settings: ${line} — only a person changes what agents may do`);
+  }
   private get taskTimeoutMs(): number {
     return this.fixedTaskTimeoutMs ?? config.taskTimeoutMs;
   }
@@ -1263,6 +1273,8 @@ export class Scheduler {
           return child;
         },
       };
+      // Before the CLI starts: what the worker wrote into its own permission files last round is undone (isolate.ts).
+      if (task.runner === 'claude-code' && jail.repo) await this.restoreAgentSettingsOrThrow(jail, emit);
       let result = await runner.run(ctx);
       noteResult(facts, result);
       // A provider quota refusal is not a verdict on the work: hold, don't fail.
@@ -1282,6 +1294,7 @@ export class Scheduler {
         if (session) {
           emit(`the worker ended its turn with a test run still in the background; resuming session ${session} once for its result`);
           const first = result;
+          if (jail.repo) await this.restoreAgentSettingsOrThrow(jail, emit);
           const resumed = await runner.run({ ...ctx, resumeSession: session, task: { ...ctx.task, prompt: BACKGROUND_RESUME_PROMPT } });
           if (!resumed.ok && isProviderLimit(resumed.summary)) throw new ProviderLimited(resumed.summary ?? 'provider usage limit');
           if (!resumed.ok) {
