@@ -642,7 +642,7 @@ export function buildChairPrompt(o: {
 const LEAD = /^[\s>*_#~|\x60\[\]-]*/;
 const FOREMAN_PHRASE = new RegExp(
   String.raw`^(?:foreman (?:check|cut)\b|added by foreman\b|source the document cites|acceptance (?:status|criteria)\b|work under review|worker's report\b|` +
-    String.raw`not shown, over this block|cited but not read|definition of done|operator demands|this is a repair round|files already tracked|review style\b)`,
+    String.raw`not shown, over this block|cited but not read|definition of done|operator demands|this is a repair round|files already tracked|review style\b|your role \()`,
   'i',
 );
 const FOREMAN_WORD = /^(?:FOREMAN\b|TEST GATE\b|TICKET:|BRIEF:)/;
