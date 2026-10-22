@@ -29,6 +29,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { config, daemonUrl } from '../config.ts';
+import { installProcessRecorder } from '../runners/freezeInstall.ts';
 import { OUTPUT_HEADER, RUN_HEADER, WRAPPER_PID_HEADER } from './slots.ts';
 import { outputDir, savedOutputs, SuiteLog } from './suiteOutput.ts';
 import { detectTestCmd, runTests } from './tests.ts';
@@ -264,6 +265,8 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`testSlot: no Foreman daemon at ${base} to share slots with; running ${cmd} unslotted\n`);
   }
 
+  // The marker and any frozen leftover groups of the suite go in <home>/frozen; refused to a sandboxed worker (said on stderr).
+  await installProcessRecorder(config.home);
   const controller = new AbortController();
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
     process.once(sig, () => controller.abort());

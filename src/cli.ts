@@ -20,6 +20,7 @@ import { acquireDaemonLock } from './lock.ts';
 import { Store } from './queue.ts';
 import { Scheduler } from './scheduler.ts';
 import { listen } from './server.ts';
+import { installProcessRecorder } from './runners/freezeInstall.ts';
 import { freezeSweepOptionsFromEnv, runFreezeSweep } from './runners/freezeSweep.ts';
 import { Tracer } from './trace.ts';
 import { benchModels, benchPath } from './bench.ts';
@@ -442,6 +443,10 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // This process's freeze recorder (<home>/frozen), after the guard so a refused command writes nothing. `serve`
+  // installs its own after the start-up sweep, so that its own marker is never one the sweep reads.
+  if (cmd !== 'serve') await installProcessRecorder(config.home);
+
   // A restore killed between its two renames leaves no database, only the old
   // one under its set-aside name. Every command that opens the store would
   // make an empty one in its place, so none of them runs until that is
@@ -541,6 +546,7 @@ async function main(): Promise<number> {
     // Groups a dead process left stopped (<home>/frozen): ended before anything is dispatched. Bounded and
     // contained (a failure or an overrun is logged here and serve goes on).
     await runFreezeSweep(freezeSweepOptionsFromEnv(config.home, (line) => process.stdout.write(`${line}\n`)));
+    await installProcessRecorder(config.home);
     scheduler.start();
     // Warm rung-0 in the background: the first review otherwise pays a cold
     // load for both advisors, serialised by the VRAM guard.

@@ -417,7 +417,10 @@ test('serve sweeps the home it resolved before it is up: a dead record and a dea
     frozen = path.join(home, 'frozen');
     fs.writeFileSync(path.join(frozen, `${record}.tmp`), 'x');
   });
-  assert.deepEqual(fs.readdirSync(frozen), ['cursor'], 'only the cursor is left');
+  // The cursor, and serve's own presence marker (written after the sweep, which is why the sweep did not count it).
+  const left = fs.readdirSync(frozen).filter((n) => n !== 'cursor');
+  assert.equal(left.length, 1, `only the cursor and serve's own marker are left: ${left.join(', ')}`);
+  assert.ok(left[0]!.endsWith('.json') && left[0] !== record, 'the one other file is a marker, not the dead record');
 });
 
 test('at most 64 stale temp files go per sweep; the rest go on the next', async (t) => {
