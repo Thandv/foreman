@@ -112,4 +112,27 @@ test('a claude-code worker is told the truth about catalog tools: no use_tool, d
   assert.match(hosted, /there is no use_tool here/, 'roleAgent passes the crew runner: hosted crews are claude-code');
   const local = withLocalOnly(true, () => roleAgent(pb, 'analyst').systemPrompt);
   assert.match(local, /Call them with use_tool/, 'a local crew runs on the api runner, which has the tools');
+  const onApi = withLocalOnly(false, () => roleAgent(pb, 'analyst', { runner: 'api' }).systemPrompt);
+  assert.match(onApi, /Call them with use_tool/, 'a ticket queued on the api runner is told it has the tools, whatever the crew default');
+});
+
+test('briefFor tells the tool brief for the ticket\'s own runner', async () => {
+  const { briefFor } = await import('../src/scheduler.ts');
+  const { Store } = await import('../src/queue.ts');
+  const { clearPlaybookCache } = await import('../src/playbooks.ts');
+  const before = process.env['FOREMAN_PLAYBOOKS_DIR'];
+  process.env['FOREMAN_PLAYBOOKS_DIR'] = path.resolve('playbooks');
+  clearPlaybookCache();
+  const store = new Store(':memory:');
+  try {
+    const ask = (runner: 'api' | 'claude-code'): string => withLocalOnly(false, () =>
+      briefFor(store, probeTask({ title: 'T', prompt: 'p', playbook: 'investment', role: 'analyst', kind: 'writing', runner })));
+    assert.match(ask('api'), /Call them with use_tool/);
+    assert.match(ask('claude-code'), /there is no use_tool here/);
+  } finally {
+    store.close();
+    if (before === undefined) delete process.env['FOREMAN_PLAYBOOKS_DIR'];
+    else process.env['FOREMAN_PLAYBOOKS_DIR'] = before;
+    clearPlaybookCache();
+  }
 });

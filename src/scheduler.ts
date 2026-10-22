@@ -275,7 +275,10 @@ export function briefFor(store: Store, task: Task, selfRoot?: string, isSelf?: b
   if (task.playbook && task.role && !task.agent) {
     const pb = getPlaybook(task.playbook);
     if (pb?.roles[task.role]) {
-      parts.push(`${roleAgent(pb, task.role, { skills: task.skills }).systemPrompt}\n\n---\n`);
+      // The tool brief is told for the runner this ticket runs on (only the api runner has use_tool), which can
+      // differ from the crew's default: a crew queued with an explicit runner, or one queued before the plane changed.
+      const runner = task.runner === 'api' ? 'api' : 'claude-code';
+      parts.push(`${roleAgent(pb, task.role, { skills: task.skills, runner }).systemPrompt}\n\n---\n`);
     }
   }
   parts.push(task.prompt);

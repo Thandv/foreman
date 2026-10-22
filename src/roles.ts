@@ -249,7 +249,11 @@ export function skillVariantFor(model: string | undefined | null): SkillVariant 
  * never collides with a catalog agent. Findings are the playbook's own
  * admission scan (already run at load time), reused rather than re-scanned.
  */
-export function roleAgent(pb: Playbook, role: string, opts: { skills?: readonly string[] | null } = {}): AgentDef {
+export function roleAgent(
+  pb: Playbook,
+  role: string,
+  opts: { skills?: readonly string[] | null; runner?: 'claude-code' | 'api' } = {},
+): AgentDef {
   const roleDef = pb.roles[role];
   if (!roleDef) throw new Error(`playbook '${pb.id}' has no role '${role}'`);
   const model = tierModel(roleDef.tier);
@@ -265,7 +269,7 @@ export function roleAgent(pb: Playbook, role: string, opts: { skills?: readonly 
     description: `${pb.id} playbook — ${role}`,
     // Skills trail the tools: '' with FOREMAN_SKILLS_DIR unset or no skill to
     // serve, so the prompt is then exactly what it was before skills existed.
-    systemPrompt: `${prompt}${constraints}${toolBrief(pb, role, crewRunner())}${skillBrief(pb, role, variant, opts.skills)}`,
+    systemPrompt: `${prompt}${constraints}${toolBrief(pb, role, opts.runner ?? crewRunner())}${skillBrief(pb, role, variant, opts.skills)}`,
     model,
     // The hosted CLI dies with the subscription; in local-only mode every crew
     // ticket runs on the one runner that speaks the local plane (local-only policy).
