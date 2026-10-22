@@ -447,8 +447,7 @@ test('two reapers in one process: one settling does not forget the group the oth
   assert.equal(running(b.pid), false);
 });
 
-// The process listeners of the reapers (one registry in proctree.ts). SIGTERM and SIGINT are not registered yet: their
-// counts are asserted only to show that nothing was added to them.
+// The process listeners of the reapers (one registry in proctree.ts: exit, SIGHUP, SIGTERM and SIGINT, one each).
 type Counts = { exit: number; SIGHUP: number; SIGTERM: number; SIGINT: number };
 
 function listenerCounts(): Counts {
@@ -456,8 +455,8 @@ function listenerCounts(): Counts {
 }
 
 /** The listeners on `event` that were not in `before`. */
-function addedTo(event: 'exit' | 'SIGHUP', before: Function[]): Function[] {
-  const now: Function[] = event === 'exit' ? process.listeners('exit') : process.listeners('SIGHUP');
+function addedTo(event: 'exit' | 'SIGHUP' | 'SIGTERM' | 'SIGINT', before: Function[]): Function[] {
+  const now: Function[] = event === 'exit' ? process.listeners('exit') : process.listeners(event);
   return now.filter((l) => !before.includes(l));
 }
 
@@ -497,8 +496,8 @@ test('20 concurrent reapers share one listener per event, and every event\'s lis
   assert.ok(during, 'the 20 were frozen together');
   assert.equal((during as Counts).exit, base.exit + 1, "one 'exit' listener for all 20");
   assert.equal((during as Counts).SIGHUP, base.SIGHUP + 1, 'one SIGHUP listener for all 20');
-  assert.equal((during as Counts).SIGTERM, base.SIGTERM);
-  assert.equal((during as Counts).SIGINT, base.SIGINT);
+  assert.equal((during as Counts).SIGTERM, base.SIGTERM + 1, 'one SIGTERM listener for all 20');
+  assert.equal((during as Counts).SIGINT, base.SIGINT + 1, 'one SIGINT listener for all 20');
   assert.deepEqual(listenerCounts(), base);
   for (const l of leftovers) assert.equal(running(l.pid), false);
 });
@@ -559,16 +558,17 @@ test("two reapers: one's release leaves the other's groups frozen until its own 
 
 // The registry's point: one event reaches every reaper that is freezing, not only the first one enrolled. Each case
 // has three reapers frozen at once and fires the registry's own listener once, from the third reaper's look.
-for (const event of ['SIGHUP', 'exit'] as const) {
+for (const event of ['SIGHUP', 'SIGTERM', 'SIGINT', 'exit'] as const) {
   test(`an event mid-freeze (${event}) releases every active reaper at once (TERM, CONT each) and removes the shared listeners`, NEEDS_PS, async (t) => {
     const g = procGuard(t);
     resetFreezeRecorderForTest();
-    // A host listener of its own, so the hangup does not raise SIGHUP on the test process.
+    // A host listener of its own, so the signal is not raised again on the test process.
     const host = (): void => {};
-    process.on('SIGHUP', host);
-    t.after(() => process.removeListener('SIGHUP', host));
+    const hostEvent = event === 'exit' ? 'SIGHUP' : event;
+    process.on(hostEvent, host);
+    t.after(() => process.removeListener(hostEvent, host));
     const base = listenerCounts();
-    const before = event === 'exit' ? process.listeners('exit') : process.listeners('SIGHUP');
+    const before: Function[] = event === 'exit' ? process.listeners('exit') : process.listeners(event);
     const leftovers = [];
     for (let i = 0; i < 3; i++) leftovers.push(await leftover(t, g));
     let stops = 0;
@@ -604,7 +604,7 @@ for (const event of ['SIGHUP', 'exit'] as const) {
     assert.equal(shared, 1, 'one shared listener for the three');
     assert.deepEqual(sentAtEvent, leftovers.map(() => ['SIGSTOP', 'SIGTERM', 'SIGCONT']), 'every reaper released by the one event');
     assert.deepEqual(countsAtEvent, base, 'the shared listeners went with the last release');
-    if (event === 'SIGHUP') for (const w of ws) assert.equal(w.sent.filter((s) => s === 'SIGSTOP').length, 1, 'nothing frozen after the hangup');
+    if (event !== 'exit') for (const w of ws) assert.equal(w.sent.filter((s) => s === 'SIGSTOP').length, 1, 'nothing frozen after the hangup');
     assert.deepEqual(listenerCounts(), base);
     for (const l of leftovers) assert.equal(running(l.pid), false);
   });
@@ -669,3 +669,105 @@ test("pinned: the 'exit' listener releases the frozen group (TERM, CONT) and goe
   assert.deepEqual(listenerCounts(), base);
   assert.equal(running(l.pid), false);
 });
+
+// A real SIGTERM / SIGINT to a node process that holds a reaper mid-freeze on a real leftover group. The child freezes
+// the group (its second look never answers), writes `frozen`, and waits to be signalled.
+// 'onceAsync' is installed at start-up, before the freeze, and finishes later: marker and exit 7 from a setTimeout.
+type Host = 'none' | 'once' | 'on' | 'onceAsync';
+
+function spawnFrozenHolder(t: TestContext, g: ProcGuard, l: Leftover, host: Host, sig: 'SIGTERM' | 'SIGINT') {
+  const script = path.join(l.work, 'holder.ts');
+  const marker = path.join(l.work, 'marker');
+  const frozenFile = path.join(l.work, 'frozen');
+  const proctree = path.join(import.meta.dirname, '..', 'src', 'runners', 'proctree.ts');
+  const hostCode =
+    host === 'once' ? `process.once(${JSON.stringify(sig)}, () => { fs.writeFileSync(${JSON.stringify(marker)}, 'once'); process.exit(7); });`
+    : host === 'onceAsync' ? `process.once(${JSON.stringify(sig)}, () => { setTimeout(() => { fs.writeFileSync(${JSON.stringify(marker)}, 'async'); process.exit(7); }, 400); });`
+    : host === 'on' ? `process.on(${JSON.stringify(sig)}, () => { fs.appendFileSync(${JSON.stringify(marker)}, 'on\\n'); });`
+    : '';
+  fs.writeFileSync(script, `
+import fs from 'node:fs';
+import { LeftoverReaper, snapshotProcs } from ${JSON.stringify(proctree)};
+// Installed once the freeze has begun, so the registry's listener is ahead of the host's in the emit order.
+let hosted = false;
+const installHost = () => { if (hosted) return; hosted = true; ${host === 'onceAsync' ? '' : hostCode} };
+${host === 'onceAsync' ? hostCode : ''}
+let n = 0;
+const reaper = new LeftoverReaper(${l.child.pid}, {
+  sampleMs: 0, graceMs: 200, killWaitMs: 1000, boundMs: 120000,
+  snapshot: () => (n++ === 0 ? snapshotProcs() : new Promise(() => {})),
+  kill: (pid, s) => {
+    process.kill(pid, s);
+    if (s === 'SIGSTOP') { installHost(); fs.writeFileSync(${JSON.stringify(frozenFile)}, 'x'); }
+  },
+});
+reaper.childExited();
+void reaper.reap();
+setInterval(() => {}, 1000);
+`);
+  const child = spawn(process.execPath, [script], { stdio: 'ignore' });
+  g.track(child.pid);
+  t.after(() => {
+    try {
+      process.kill(child.pid!, 'SIGKILL');
+    } catch {
+      /* gone */
+    }
+  });
+  const ended = new Promise<[number | null, NodeJS.Signals | null]>((resolve) => child.on('exit', (c, s) => resolve([c, s])));
+  const ready = until(() => fs.existsSync(frozenFile) && stopped(l.pid), 60_000);
+  return { child, ended, ready, marker };
+}
+
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  test(`a real ${sig} to a process with no listener of its own: the frozen group is released, then the signal still ends the process`, NEEDS_PS, async (t) => {
+    const g = procGuard(t);
+    const l = await leftover(t, g);
+    const h = spawnFrozenHolder(t, g, l, 'none', sig);
+    assert.ok(await h.ready, 'the group is frozen');
+    h.child.kill(sig);
+    const [code, signal] = await h.ended;
+    assert.equal(signal, sig, `ended by the signal (code ${code})`);
+    assert.equal(stopped(l.pid), false, 'the group was released');
+  });
+
+  test(`a real ${sig} to a host with a process.once handler: the handler runs and chooses the exit, the group is released`, NEEDS_PS, async (t) => {
+    const g = procGuard(t);
+    const l = await leftover(t, g);
+    const h = spawnFrozenHolder(t, g, l, 'once', sig);
+    assert.ok(await h.ready, 'the group is frozen');
+    h.child.kill(sig);
+    const [code, signal] = await h.ended;
+    assert.equal(code, 7, `the host's exit code (signal ${signal})`);
+    assert.equal(fs.readFileSync(h.marker, 'utf8'), 'once');
+    assert.equal(stopped(l.pid), false, 'the group was released');
+  });
+
+  test(`a real ${sig} to a host whose process.once handler was installed before the freeze and exits later: it chooses the exit, the group is released`, NEEDS_PS, async (t) => {
+    const g = procGuard(t);
+    const l = await leftover(t, g);
+    const h = spawnFrozenHolder(t, g, l, 'onceAsync', sig);
+    assert.ok(await h.ready, 'the group is frozen');
+    h.child.kill(sig);
+    const [code, signal] = await h.ended;
+    assert.equal(code, 7, `the host's exit code (signal ${signal})`);
+    assert.equal(fs.readFileSync(h.marker, 'utf8'), 'async');
+    assert.equal(stopped(l.pid), false, 'the group was released');
+  });
+
+  test(`a real ${sig} to a host with a process.on handler that does not exit: the process lives on, the group is released`, NEEDS_PS, async (t) => {
+    const g = procGuard(t);
+    const l = await leftover(t, g);
+    const h = spawnFrozenHolder(t, g, l, 'on', sig);
+    assert.ok(await h.ready, 'the group is frozen');
+    h.child.kill(sig);
+    assert.ok(await until(() => fs.existsSync(h.marker) && !stopped(l.pid), 30_000), 'handler ran and the group was released');
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(fs.readFileSync(h.marker, 'utf8'), 'on\n', 'the host saw the signal once: it was not raised again');
+    assert.equal(h.child.exitCode, null, 'still alive');
+    assert.equal(h.child.signalCode, null, 'not ended by the signal');
+    assert.equal(running(h.child.pid!), true);
+    process.kill(h.child.pid!, 'SIGKILL');
+    await h.ended;
+  });
+}

@@ -147,8 +147,13 @@ without one (a library caller, a test) writes nothing, and its reap is as it was
 Foreman's own processes install the recorder (`src/runners/freezeInstall.ts`) for the absolute `FOREMAN_HOME` and write a
 presence marker there: every `foreman` command (after the worker ledger guard, so a refused command writes nothing),
 `foreman serve` (after its start-up sweep below, so its own marker is never read by it), and `src/verify/testSlot.ts`.
-The marker is removed at a clean exit. A process ended by a signal it does not handle (Ctrl-C of `foreman watch`, a
-SIGTERM, a SIGKILL) leaves its marker, and the next `foreman serve` sweep removes it with any other dead recorder's
+The marker is removed at a clean exit. While a reap has groups frozen, one listener per event (`exit`, SIGHUP, SIGTERM,
+SIGINT) in `proctree.ts` continues every frozen group when the process is signalled or exits. A signal that nothing else
+in the process listens for is then raised again, so the process still ends by it. The registry's listener runs ahead of
+every other listener for the signal, so a host that handles it itself (`process.once` or `process.on`, installed before
+or after the freeze began) is counted, is not cut short and decides its own exit. A process
+ended by a signal it does not handle (Ctrl-C of `foreman watch`, a SIGTERM, a SIGKILL, or one of those re-raised as
+above) has no `exit` event, so it leaves its marker, and the next `foreman serve` sweep removes it with any other dead recorder's
 files. The process's identity is its pid and its zone-free start time; if that cannot be read, the recorder is FAILED.
 A worker's `testSlot.ts` is not itself sandboxed in this build (the `claude-code` worker is not; see below), so it
 records like any other Foreman process: its marker, and the suite's leftover groups it freezes, go in the daemon's
