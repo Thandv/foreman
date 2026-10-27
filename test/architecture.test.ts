@@ -131,15 +131,10 @@ const CYCLES: { files: string[]; reason: string }[] = [
     files: ['src/isolate.ts', 'src/security/coreGuard.ts'],
     reason: 'coreGuard takes driverlessEnv from isolate.ts, and isolate.ts takes changedPaths from coreGuard',
   },
-  {
-    files: ['src/security/admit.ts', 'src/improve.ts', 'src/models.ts', 'src/align/personas.ts', 'src/bench.ts', 'src/tools/catalog.ts'],
-    reason: 'admit.ts takes isSelfTask and PROTECTED_PATHS from improve.ts, which reaches back to admit.ts through models, bench and the tool catalog; every cycle passes admit.ts -> improve.ts',
-  },
 ];
 
 // (b) Edges out of src/security/* beyond config, types, localOnly and security itself, with why.
 const SECURITY_EDGES: Record<string, string> = {
-  'src/security/admit.ts -> src/improve.ts':'admit.ts takes isSelfTask and PROTECTED_PATHS from improve.ts (the edge every cycle in the six-file component passes through)',
   'src/security/coreGuard.ts -> src/isolate.ts': 'coreGuard takes driverlessEnv from isolate.ts',
 };
 
@@ -222,6 +217,17 @@ test('src/security value imports stay inside config, types, localOnly, security 
     }
   }
   assert.deepEqual(stray.sort(), Object.keys(SECURITY_EDGES).sort(), 'update SECURITY_EDGES (stale or new edge)');
+});
+
+test('admit.ts does not reach improve.ts, models.ts, personas.ts, bench.ts or the tool catalog through value imports', () => {
+  const reached = new Set<string>();
+  const queue = ['src/security/admit.ts'];
+  for (let f = queue.pop(); f !== undefined; f = queue.pop()) {
+    for (const to of value.get(f) ?? []) if (!reached.has(to)) { reached.add(to); queue.push(to); }
+  }
+  assert.ok(reached.has('src/security/coreGuard.ts'), 'the walk starts from admit.ts and follows its imports');
+  const banned = ['src/improve.ts', 'src/models.ts', 'src/align/personas.ts', 'src/bench.ts', 'src/tools/catalog.ts'];
+  assert.deepEqual(banned.filter((b) => reached.has(b)), []);
 });
 
 test('db.ts imports only types and queue.ts imports exactly its listed modules', () => {

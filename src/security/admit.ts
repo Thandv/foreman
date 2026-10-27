@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { isSelfTask, PROTECTED_PATHS } from '../improve.ts';
+import { isSelfTask, PROTECTED_PATHS } from './coreGuard.ts';
 import { localOnly, localOnlyLabel } from '../localOnly.ts';
 import type { Task } from '../types.ts';
 
