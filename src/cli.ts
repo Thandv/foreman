@@ -22,6 +22,7 @@ import { Scheduler } from './scheduler.ts';
 import { listen } from './server.ts';
 import { installProcessRecorder } from './runners/freezeInstall.ts';
 import { freezeSweepOptionsFromEnv, runFreezeSweep } from './runners/freezeSweep.ts';
+import { containProcessErrors } from './daemonGuard.ts';
 import { Tracer } from './trace.ts';
 import { benchModels, benchPath } from './bench.ts';
 import { Broker } from './budget.ts';
@@ -547,16 +548,10 @@ async function main(): Promise<number> {
     // contained (a failure or an overrun is logged here and serve goes on).
     await runFreezeSweep(freezeSweepOptionsFromEnv(config.home, (line) => process.stdout.write(`${line}\n`)));
     await installProcessRecorder(config.home);
-    scheduler.start();
-    // Warm rung-0 in the background: the first review otherwise pays a cold
-    // load for both advisors, serialised by the VRAM guard.
-    void prewarmRoster({ onLine: (line) => process.stdout.write(`${line}\n`) }).catch(() => {});
-    const server = await listen(store, scheduler);
-    process.stdout.write(
-      `foreman up — board ${daemonUrl(config.host, config.port)}  db ${config.dbPath}  workers ${config.maxWorkers}\n` +
-        `trace ${tracer.path}\n`,
-    );
-    const shutdown = async (): Promise<void> => {
+    // The server does not exist until listen() resolves, and a persona spawn 'error' can fire before that:
+    // shutdown closes it only once it is listening.
+    let server: http.Server | undefined;
+    const shutdown = async (code: number): Promise<void> => {
       if (closing) return;
       closing = true;
       process.stdout.write('\nstopping…\n');
@@ -565,7 +560,7 @@ async function main(): Promise<number> {
         clearTimeout(firstSweep);
         clearInterval(backupTimer);
         clearTimeout(firstBackup);
-        server.close();
+        if (server?.listening) server.close();
         // Claim nothing more: the drain below can take a minute, and a worker
         // started now would only be aborted by stop() at its end.
         scheduler.pauseDispatch();
@@ -589,14 +584,31 @@ async function main(): Promise<number> {
           /* already closed or never usable; the lock still goes */
         }
         releaseLock();
-        process.exit(0);
+        process.exit(code);
       }
     };
-    process.on('SIGINT', () => void shutdown());
-    process.on('SIGTERM', () => void shutdown());
+    // After the recorder and before anything that can spawn: a stray rejection is recorded and survived, an uncaught
+    // exception ends the daemon in order (exit 1). No signal or 'exit' listener, so the freeze registry is untouched.
+    containProcessErrors({
+      record: (type, message) => void store.record({ type, message }),
+      shutdown,
+      now: Date.now,
+      write: (line) => void process.stderr.write(line),
+    });
+    scheduler.start();
+    // Warm rung-0 in the background: the first review otherwise pays a cold
+    // load for both advisors, serialised by the VRAM guard.
+    void prewarmRoster({ onLine: (line) => process.stdout.write(`${line}\n`) }).catch(() => {});
+    server = await listen(store, scheduler);
+    process.stdout.write(
+      `foreman up — board ${daemonUrl(config.host, config.port)}  db ${config.dbPath}  workers ${config.maxWorkers}\n` +
+        `trace ${tracer.path}\n`,
+    );
+    process.on('SIGINT', () => void shutdown(0));
+    process.on('SIGTERM', () => void shutdown(0));
     // A hangup (the terminal or the app that started the daemon went away) ends it the same orderly way: without a
     // listener SIGHUP would kill it outright, skipping the lock release, the trace flush and the 'exit' handlers.
-    process.on('SIGHUP', () => void shutdown());
+    process.on('SIGHUP', () => void shutdown(0));
     return -1; // stay alive
   }
 

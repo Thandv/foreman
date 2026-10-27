@@ -21,6 +21,12 @@ npm link                   # puts `foreman` on your PATH (package.json `bin`)
 foreman serve              # daemon + board on http://127.0.0.1:4100; startup prints `home <absolute path>` (the resolved `FOREMAN_HOME`; the `foreman up` line names the db)
 ```
 
+`foreman serve` exits 0 after a SIGINT, SIGTERM or SIGHUP (an orderly stop: in-flight work is drained, the lock is released),
+1 when it refuses to start (sandbox self-test, a held lock, a port in use) and 1 after an uncaught exception, which it
+records as an `error` event and then stops the same orderly way (`src/daemonGuard.ts`). An unhandled promise rejection
+does not stop it: it is written to stderr, recorded as an `error` event at most once a minute per message (the next
+record carries the count it suppressed), and the daemon keeps running.
+
 `npm link` writes to npm's global prefix. With a system-installed Node that may be a directory you
 cannot write to; set a user prefix first, e.g. `npm_config_prefix=~/.npm-global npm link`, and put
 `~/.npm-global/bin` on your PATH. If port 4100 is taken, start with `FOREMAN_PORT=<port>` (and keep it
