@@ -650,9 +650,10 @@ the full suite as its gate.
 
 **The guardrails are code, not prose.** `PROTECTED_PATHS` (security scanning
 and the core guard, the merge logic, the jail, tool registration, the daemon
-lock, the guardrail file itself, the tests that pin the guard, and the files
-that hold the rules around it: the gate, the scheduler, the queue, the HTTP API
-and the store's schema) are enforced on the change, not on the request. Admission
+lock and its process-error guard, the guardrail file itself, the tests that pin
+the guard, and the files that hold the rules around it: the gate, the scheduler,
+the queue, the HTTP API and the store's schema) are enforced on the change, not
+on the request. Admission
 flags a task against foreman whose text spells one of them out (exact spelling,
 outside a "do not touch" list) with a warning; if the ticket parks, the warning
 leads its note at the gate. It is a hint for the reader, not a check, and it

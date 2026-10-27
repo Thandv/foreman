@@ -49,6 +49,8 @@ async function leftover(t: TestContext): Promise<{ pid: number; group: number; w
 test('an uncaught exception in a guarded process holding a frozen group: it exits 1 and the group is running again, not stopped', NEEDS_PS, async (t) => {
   const l = await leftover(t);
   const frozenFile = path.join(l.work, 'frozen');
+  // Written by the guard's shutdown only: Node's own uncaught-exception path also exits 1 and emits 'exit'.
+  const guardedFile = path.join(l.work, 'guarded');
   const guardModule = path.join(import.meta.dirname, '..', 'src', 'daemonGuard.ts');
   const proctree = path.join(import.meta.dirname, '..', 'src', 'runners', 'proctree.ts');
   const script = path.join(l.work, 'holder.ts');
@@ -57,7 +59,7 @@ import fs from 'node:fs';
 import { LeftoverReaper, snapshotProcs } from ${JSON.stringify(proctree)};
 import { containProcessErrors } from ${JSON.stringify(guardModule)};
 // Installed first, as the daemon does, ahead of the registry's own listeners.
-containProcessErrors({ record: () => {}, shutdown: (code) => process.exit(code), now: Date.now, write: () => {} });
+containProcessErrors({ record: () => {}, shutdown: (code) => { fs.writeFileSync(${JSON.stringify(guardedFile)}, String(code)); process.exit(code); }, now: Date.now, write: () => {} });
 let n = 0;
 const reaper = new LeftoverReaper(${l.group}, {
   sampleMs: 0, graceMs: 200, killWaitMs: 1000, boundMs: 120000,
@@ -85,7 +87,8 @@ setInterval(() => {}, 1000);
   const ended = new Promise<[number | null, NodeJS.Signals | null]>((resolve) => child.on('exit', (c, s) => resolve([c, s])));
   assert.ok(await until(() => fs.existsSync(frozenFile), 60_000), 'the group was frozen');
   const [code, signal] = await ended;
-  assert.deepEqual([code, signal], [1, null], 'exited 1 through the guard');
+  assert.deepEqual([code, signal], [1, null], 'exited 1');
+  assert.equal(fs.readFileSync(guardedFile, 'utf8'), '1', 'through the guard: its shutdown(1) ran');
   assert.ok(await until(() => !stat(l.pid).startsWith('T'), 30_000), `the group is running again (stat ${stat(l.pid)})`);
   assert.ok(stat(l.pid) !== '' && !stat(l.pid).startsWith('Z'), 'and alive');
 });
