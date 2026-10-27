@@ -370,16 +370,21 @@ test('a trace sweep that cannot delete a stale day escapes nothing, and record r
     throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
   });
   t.after(() => {
-    rm.mock.restore();
     tracer.stop();
     store.close();
   });
   now = Date.UTC(2026, 0, 16, 0, 0, 1);
   takeEscaped();
-  assert.doesNotThrow(() => store.record({ type: 'status', message: 'the first event of the new day' }), 'record returns');
-  assert.ok(rm.mock.callCount() > 0, 'the sweep did try to delete the stale day');
-  await landed();
-  assert.deepEqual(takeEscaped(), [], 'nothing escaped the sweep');
+  try {
+    assert.doesNotThrow(() => store.record({ type: 'status', message: 'the first event of the new day' }), 'record returns');
+    assert.ok(rm.mock.callCount() > 0, 'the sweep did try to delete the stale day');
+    await landed();
+    assert.deepEqual(takeEscaped(), [], 'nothing escaped the sweep');
+  } finally {
+    // Restored here, not in an after hook: hooks run in the order they were registered, so scratch()'s removal of
+    // the dir would run first, hit the mock, throw, and skip every hook after it (leaving the dir behind).
+    rm.mock.restore();
+  }
 });
 
 // ------------------------------------------------------------------ a run's output
