@@ -65,9 +65,11 @@ export function scanSource(text: string): Spec[] {
       throw new Error(`scanner gap: the import or export-from statement at line ${line} yields no specifier: ${stmt.slice(0, 80)}`);
     }
   }
-  const dynamic = [...code.matchAll(/\bimport\(\s*(['"])([^'"]+)\1\s*\)/g)];
+  const mid = /[;}][ \t]*(?:import(?![\w$(.])|export\s+(?:type\s+)?[{*])/.exec(code);
+  if (mid) throw new Error(`scanner gap: an import or export statement follows other code at line ${code.slice(0, mid.index).split('\n').length}`);
+  const dynamic = [...code.matchAll(/\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/g)];
   for (const m of dynamic) out.push({ spec: m[2]!, typeOnly: false });
-  const calls = [...code.matchAll(/\bimport\(/g)].length;
+  const calls = [...code.matchAll(/\bimport\s*\(/g)].length;
   if (calls !== dynamic.length) throw new Error(`scanner gap: ${calls - dynamic.length} import() call(s) with a non-literal specifier`);
   return out;
 }
@@ -272,4 +274,13 @@ test('the scanner throws on an import() with a non-literal specifier', () => {
 
 test('the scanner throws on an import statement it cannot read', () => {
   assert.throws(() => scanSource('import {\n  a\n} from ./x.ts;'), /scanner gap/);
+});
+
+test('the scanner reads import ( with a space, and throws on a statement after other code on its line', () => {
+  assert.deepEqual(scanSource("const m = await import ('./a.ts');\nconst n = () => import\n('./b.ts');"), [
+    { spec: './a.ts', typeOnly: false },
+    { spec: './b.ts', typeOnly: false },
+  ]);
+  assert.throws(() => scanSource("import './a.ts'; import './b.ts';"), /scanner gap/);
+  assert.throws(() => scanSource("export const a = 1; export * from './b.ts';"), /scanner gap/);
 });
