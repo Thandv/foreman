@@ -39,8 +39,9 @@ test('a throw from onLine on the first line ends the child, stops the lines and 
   const escaped = watchEscapes(t);
   const seen: string[] = [];
   let pid = 0;
+  // The child outlives the suite's 180 s test timeout, so only ending its group can settle the spawn in time.
   await assert.rejects(
-    spawnStreaming('sh', ['-c', 'echo one; echo two; echo three >&2; sleep 60'], {
+    spawnStreaming('sh', ['-c', 'echo one; echo two; echo three >&2; sleep 600'], {
       cwd: scratch(t),
       signal: new AbortController().signal,
       onSpawn: (p) => {

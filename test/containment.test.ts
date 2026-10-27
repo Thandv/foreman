@@ -91,13 +91,10 @@ function scratch(t: TestContext, prefix: string): string {
   return dir;
 }
 
-function rig(t: TestContext, opts: SchedulerOptions = {}, stopsCleanly = true): { store: Store; sched: Scheduler } {
+function rig(t: TestContext, opts: SchedulerOptions = {}): { store: Store; sched: Scheduler } {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false, ...opts });
   t.after(async () => {
-    // A run whose output stream was broken by the fault never settles, and stop() waits for every run to settle:
-    // that case leaves its scheduler alone and lets the process end.
-    if (!stopsCleanly) return;
     await sched.stop();
     store.close();
   });
@@ -404,6 +401,9 @@ test('a ledger fault while a run prints its output escapes nothing', async (t) =
   assert.equal(store.latestRun(noisy.id)!.status, 'failed', 'and that run ended failed');
   const next = queueEcho(store);
   await assertEchoDispatches(t, store, sched, next.id);
+  // Waited out here, not aborted by stop() in cleanup: on node 26.0.0 a run aborted that way after a shell run made a
+  // later case's uncaught exception abort this file natively, and the runner dropped the cases left without a failure.
+  await pump(t, sched, () => sched.activeCount === 0);
 });
 
 // ------------------------------------------------------------------ the persona server
