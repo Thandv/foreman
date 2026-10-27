@@ -358,7 +358,7 @@ test('a manual re-review that fails, with the ledger refusing the failure, escap
 // ------------------------------------------------------------------ the tracer
 
 // Seam: Tracer.sweep at the first write past midnight, reached from store.record through the 'event' listener.
-test('a trace sweep that cannot delete a stale day escapes nothing, and record returns', { todo: 't8 removes this mark' }, async (t) => {
+test('a trace sweep that cannot delete a stale day escapes nothing, and record returns', async (t) => {
   const dir = scratch(t, 'foreman-containment-traces-');
   const store = new Store(':memory:');
   let now = Date.UTC(2026, 0, 15, 23, 59, 0);
@@ -406,7 +406,7 @@ test('a ledger fault while a run prints its output escapes nothing', { todo: 't9
 // ------------------------------------------------------------------ the persona server
 
 // Seam: servePersona's spawn of `nice`, with PATH holding no `nice`, so the child emits 'error' with no listener.
-test('serving a persona when the server cannot be spawned resolves not-serving and escapes nothing', { todo: 't8 removes this mark' }, async (t) => {
+test('serving a persona when the server cannot be spawned resolves not-serving and escapes nothing', async (t) => {
   const home = scratch(t, 'foreman-containment-persona-');
   const emptyBin = path.join(home, 'bin');
   fs.mkdirSync(emptyBin);
