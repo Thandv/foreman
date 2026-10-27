@@ -114,7 +114,14 @@ export class Tracer {
     }
     for (const name of names) {
       const m = TRACE_FILE.exec(name);
-      if (m && m[1]! < cutoff) fs.rmSync(path.join(this.dir, name), { force: true });
+      if (!m || m[1]! >= cutoff) continue;
+      try {
+        fs.rmSync(path.join(this.dir, name), { force: true });
+      } catch (err) {
+        // Not recorded as an event: this runs inside the store's synchronous listener, so recording would recurse.
+        const code =(err as NodeJS.ErrnoException).code ?? (err as Error).message;
+        process.stderr.write(`trace sweep could not remove ${name}: ${code}\n`);
+      }
     }
   }
 

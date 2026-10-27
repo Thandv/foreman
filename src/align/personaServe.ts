@@ -88,6 +88,14 @@ export async function servePersona(
     detached: true,
   });
   child.unref();
+  // A spawn that fails (no `nice` on PATH) emits 'error'; with no listener that is an uncaught exception.
+  let spawnError: Error | null = null;
+  const failed = new Promise<void>((resolve) => {
+    child.on('error', (err) => {
+      spawnError = err;
+      resolve();
+    });
+  });
 
   fs.mkdirSync(path.dirname(pidFile(persona.id)), { recursive: true });
   fs.writeFileSync(pidFile(persona.id), String(child.pid ?? 0));
@@ -95,20 +103,27 @@ export async function servePersona(
   const base = personaServerUrl(persona.id);
   const deadline = Date.now() + (opts.startTimeoutMs ?? 300_000);
   for (;;) {
+    if (spawnError) {
+      fs.rmSync(pidFile(persona.id), { force: true });
+      return { ok: false, reason: `could not start the server: ${(spawnError as Error).message}`, pid: null };
+    }
     if (child.exitCode !== null) {
       fs.rmSync(pidFile(persona.id), { force: true });
       return { ok: false, reason: `mlx_lm server exited ${child.exitCode}`, pid: null };
     }
     try {
-      const res = await fetch(`${base}/models`, { signal: AbortSignal.timeout(5_000) });
-      if (res.ok) return { ok: true, reason: 'serving', pid: child.pid ?? null };
+      const res = await Promise.race([fetch(`${base}/models`, { signal: AbortSignal.timeout(5_000) }), failed]);
+      if (res && res.ok) return { ok: true, reason: 'serving', pid: child.pid ?? null };
     } catch {
       /* not up yet */
     }
+    if (spawnError) continue;
     if (Date.now() > deadline) {
       stopPersonaServer(persona.id);
       return { ok: false, reason: `did not come up on ${base} within the start timeout`, pid: null };
     }
-    await new Promise((r) => setTimeout(r, 2_000));
+    let nap: NodeJS.Timeout | undefined;
+    await Promise.race([new Promise((r) => (nap = setTimeout(r, 2_000))), failed]);
+    clearTimeout(nap);
   }
 }
