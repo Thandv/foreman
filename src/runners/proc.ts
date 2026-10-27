@@ -134,6 +134,20 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
     if (opts.signal.aborted) onAbort();
     else opts.signal.addEventListener('abort', onAbort, { once: true });
 
+    // The first throw from opts.onLine (a ledger fault in the caller's callback) fails closed: no later line reaches
+    // it, the child's group ends as on an abort, and the promise rejects once the child has closed and been reaped.
+    let lineFault: Error | null = null;
+    const deliver = (line: string, stream: 'stdout' | 'stderr'): void => {
+      if (lineFault) return;
+      try {
+        opts.onLine(line, stream);
+      } catch (err) {
+        lineFault = err instanceof Error ? err : new Error(String(err));
+        process.stderr.write(`'${cmd}': onLine threw, ending the command: ${lineFault.message}\n`);
+        onAbort();
+      }
+    };
+
     const cleanup = (): void => {
       // A descendant in its own group can outlive the child, so its escalation
       // stays armed (it is unref'd and re-checks liveness before signalling).
@@ -150,16 +164,16 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
         while ((nl = buf.indexOf('\n')) !== -1) {
           const line = buf.slice(0, nl);
           buf = buf.slice(nl + 1);
-          if (line.trim()) opts.onLine(line, stream);
+          if (line.trim()) deliver(line, stream);
         }
         // Guard against a child that never emits a newline.
         if (buf.length > 1_000_000) {
-          opts.onLine(buf.slice(0, 1_000_000), stream);
+          deliver(buf.slice(0, 1_000_000), stream);
           buf = '';
         }
       });
       child[stream]?.on('end', () => {
-        if (buf.trim()) opts.onLine(buf, stream);
+        if (buf.trim()) deliver(buf, stream);
         buf = '';
       });
     }
@@ -176,7 +190,10 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
       if (settled) return;
       settled = true;
       cleanup();
-      void reapLeftovers().then(() => resolve(code ?? (sig ? 128 : 1)));
+      void reapLeftovers().then(() => {
+        if (lineFault) reject(new Error(`onLine threw: ${lineFault.message}`, { cause: lineFault }));
+        else resolve(code ?? (sig ? 128 : 1));
+      });
     });
   });
 }

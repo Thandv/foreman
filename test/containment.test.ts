@@ -390,8 +390,8 @@ test('a trace sweep that cannot delete a stale day escapes nothing, and record r
 // ------------------------------------------------------------------ a run's output
 
 // Seam: the shell runner's stream 'data' listener, whose ctx.log records each output line as a 'log' event.
-test('a ledger fault while a run prints its output escapes nothing', { todo: 't9 removes this mark' }, async (t) => {
-  const { store, sched } = rig(t, {}, false);
+test('a ledger fault while a run prints its output escapes nothing', async (t) => {
+  const { store, sched } = rig(t);
   const noisy = store.addTask({ title: 'prints lines', prompt: 'echo one; echo two; echo three', runner: 'shell', maxAttempts: 1 });
   const fault = throwOn(t, store, 'record', (e) => e.taskId === noisy.id && e.type === 'log');
   takeEscaped();
@@ -399,6 +399,9 @@ test('a ledger fault while a run prints its output escapes nothing', { todo: 't9
   await landed();
   assert.deepEqual(takeEscaped(), [], 'nothing escaped the output stream');
   await pump(t, sched, () => sched.activeCount === 0);
+  assert.equal(store.getTask(noisy.id)!.status, 'failed', 'a run whose output could not be recorded fails the ticket');
+  assert.ok(store.latestRun(noisy.id), 'the ticket has a run');
+  assert.equal(store.latestRun(noisy.id)!.status, 'failed', 'and that run ended failed');
   const next = queueEcho(store);
   await assertEchoDispatches(t, store, sched, next.id);
 });
