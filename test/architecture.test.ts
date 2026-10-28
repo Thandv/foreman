@@ -242,6 +242,43 @@ test('FOREMAN_* reads outside config.ts match the per-file allowlist', () => {
   assert.deepEqual(actual, allowed, 'update ENV_READS (new read, or a stale entry)');
 });
 
+/**
+ * Every `.catch(` / `.finally(` handler in a source text whose body calls store.record( or this.store.record( directly.
+ * A handler runs where nothing can catch what it throws, so its writes go through safeRecord (src/queue.ts).
+ */
+export function rawRecordInHandlers(text: string): string[] {
+  const code = stripComments(text);
+  const found: string[] = [];
+  for (const m of code.matchAll(/\.(catch|finally)\(/g)) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < code.length && depth > 0; i++) {
+      const c = code[i]!;
+      if (c === "'" || c === '"' || c === '`') {
+        i++;
+        while (i < code.length && code[i] !== c && !(c !== '`' && code[i] === '\n')) i += code[i] === '\\' ? 2 : 1;
+      } else if (c === '(') depth++;
+      else if (c === ')') depth--;
+    }
+    const body = code.slice(m.index, i);
+    if (/\bstore\.record\(/.test(body)) found.push(`line ${code.slice(0, m.index).split('\n').length}: .${m[1]}( handler calls store.record(`);
+  }
+  return found;
+}
+
+test('no .catch or .finally handler in scheduler.ts or server.ts calls store.record directly', () => {
+  for (const file of ['scheduler.ts', 'server.ts']) {
+    const found = rawRecordInHandlers(fs.readFileSync(path.join(SRC, file), 'utf8'));
+    assert.deepEqual(found, [], `src/${file}: use safeRecord(store, ...) in a handler`);
+  }
+});
+
+test('the handler scan flags store.record and this.store.record in a catch or finally, and not safeRecord', () => {
+  assert.equal(rawRecordInHandlers("p.catch((err) => store.record({ type: 'error', message: `x (${err})` }));").length, 1);
+  assert.equal(rawRecordInHandlers('p.then(a).finally(() => {\n  this.store.record({});\n});').length, 1);
+  assert.deepEqual(rawRecordInHandlers('p.catch((err) => safeRecord(store, {}));\nstore.record({});'), []);
+});
+
 test('the scanner reads a multi-line import', () => {
   const s = scanSource("import {\n  a,\n  b,\n} from './x.ts';\nimport d, { e } from './y.ts';");
   assert.deepEqual(s, [{ spec: './x.ts', typeOnly: false }, { spec: './y.ts', typeOnly: false }]);
