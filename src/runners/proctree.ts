@@ -498,8 +498,8 @@ type FreezeSignal = 'SIGHUP' | 'SIGTERM' | 'SIGINT';
  * swallows the signal's default action). The registry's listener is installed first in the emit order, so every
  * other listener (a process.once one included, which detaches only when its turn comes) is still attached when the
  * others are counted, after the registry's own has been removed. A host with a listener of its own (the daemon's
- * shutdown, testSlot's process.once) runs it and decides the exit. A re-raise ends the process with no 'exit' event: its presence marker and recorded groups stay for the next
- * `foreman serve` sweep.
+ * shutdown, testSlot's process.once) runs it and decides the exit. A re-raise ends the process with no 'exit' event:
+ * its presence marker and recorded groups stay for the next `foreman serve` sweep.
  */
 function onFreezeSignal(sig: FreezeSignal): void {
   for (const r of [...freezing]) r.releaseOnEvent(true);
