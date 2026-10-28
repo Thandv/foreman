@@ -20,6 +20,15 @@ function gatedVerify(store: Store) {
   };
 }
 
+/** Polls `cond` until it holds; a loaded machine only makes this take longer, never fail early. */
+async function until(cond: () => boolean, what: string, ms = 60_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 test('work proceeds while another task is stuck in verify', async () => {
   process.env['FOREMAN_ECHO_STEP_MS'] = '10';
   const store = new Store(':memory:');
@@ -30,13 +39,13 @@ test('work proceeds while another task is stuck in verify', async () => {
   for (let i = 0; i < 3; i++) store.addTask({ title: `t${i}`, prompt: 'true', runner: 'shell' });
 
   await sched.tick();
-  await new Promise((r) => setTimeout(r, 300));
+  const started = (): number => store.listTasks().filter((t) => t.status === 'running' || t.status === 'verifying').length;
+  await until(() => gate.entered >= 1 && sched.verifyingCount >= 1 && started() >= 2, 'a task parked in verify and a second one started');
 
   // One task is parked in verify; the single worker slot must be free for the next.
   assert.ok(gate.entered >= 1, 'a task reached verify');
   assert.ok(sched.verifyingCount >= 1, `expected a task in the verify lane, saw ${sched.verifyingCount}`);
-  const started = store.listTasks().filter((t) => t.status === 'running' || t.status === 'verifying').length;
-  assert.ok(started >= 2, `expected work to overlap verify, only ${started} task(s) started`);
+  assert.ok(started() >= 2, `expected work to overlap verify, only ${started()} task(s) started`);
 
   gate.release();
   await sched.drain(30_000);
@@ -76,11 +85,11 @@ test('cancelling a task parked in the verify lane releases its slot', async () =
   const first = store.addTask({ title: 'a', prompt: 'true', runner: 'shell' });
   const second = store.addTask({ title: 'b', prompt: 'true', runner: 'shell' });
   await sched.tick();
-  await new Promise((r) => setTimeout(r, 300));
+  await until(() => sched.verifyingCount === 1, 'a task in the verify lane');
   assert.equal(sched.verifyingCount, 1);
 
   store.cancel(first.id);
-  await new Promise((r) => setTimeout(r, 300));
+  await until(() => store.getTask(first.id)!.status === 'canceled', 'the cancelled task to read canceled');
   assert.equal(store.getTask(first.id)!.status, 'canceled');
 
   gate.release();

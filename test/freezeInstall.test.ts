@@ -30,11 +30,26 @@ async function until(cond: () => boolean, what: string, ms = 60_000): Promise<vo
 /** Every record file under `<home>/frozen`, parsed. */
 function records(home: string): { name: string; rec: FreezeRecord }[] {
   const dir = path.join(home, 'frozen');
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
+  }
+  // The processes that own these files remove them as they exit, and the pollers below list the directory while that
+  // happens: a record listed a moment ago and gone by the read is not a record any more (a rename is atomic, so a
+  // file that is there is whole).
+  return names
     .filter((n) => n.endsWith('.json'))
-    .map((name) => ({ name, rec: JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')) as FreezeRecord }));
+    .flatMap((name) => {
+      try {
+        return [{ name, rec: JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')) as FreezeRecord }];
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw e;
+      }
+    });
 }
 
 const leftovers = (home: string): string[] => (fs.existsSync(path.join(home, 'frozen')) ? fs.readdirSync(path.join(home, 'frozen')) : []);
