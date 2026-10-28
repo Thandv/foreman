@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.ts';
 import { DOCTOR_DEADLINE_MS, DOCTOR_PING_TIMEOUT_MS } from './doctorTiming.ts';
 import type { ReceiptWindow, Store } from './queue.ts';
-import { REVIEW_SOURCE_MAX } from './queue.ts';
+import { REVIEW_SOURCE_MAX, safeRecord } from './queue.ts';
 import type { Scheduler } from './scheduler.ts';
 import { loadCatalog } from './agents.ts';
 import { getPlaybook, loadPlaybooks } from './playbooks.ts';
@@ -802,7 +802,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           const before = store.verdictsForTask(taskId).length;
           void scheduler.reverify(taskId)
             .then(() => scheduler.tick().catch(() => {}))
-            .catch((err: Error) => store.record({ taskId, type: 'error', message: `re-review failed: ${err.message}` }));
+            .catch((err: Error) => safeRecord(store, { taskId, type: 'error', message: `re-review failed: ${err.message}` }));
           return json(res, 202, { started: true, verdictsBefore: before });
         }
         if (action === 'gate') {

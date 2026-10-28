@@ -616,6 +616,11 @@ export function preReviewGaps(task: Task, diff: string, report: string | null, t
   return items.length ? { items, notes: sections.join('\n\n'), scope, advisory: det.soft } : null;
 }
 
+/** A thrown value as text; a catch block that records must not throw on a non-Error. */
+function causeOf(err: unknown, max: number): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, max);
+}
+
 export class Scheduler {
   private readonly store: Store;
   private readonly maxWorkers: number;
@@ -1010,7 +1015,7 @@ export class Scheduler {
           });
         })
         .catch((err: Error) => {
-          this.store.record({ type: 'error', message: `standing ask '${due.title}' failed to plan: ${err.message}` });
+          safeRecord(this.store, { type: 'error', message: `standing ask '${due.title}' failed to plan: ${err.message}` });
         });
     }
   }
@@ -1028,7 +1033,7 @@ export class Scheduler {
           });
         })
         .catch((err: Error) => {
-          this.store.record({ type: 'error', message: `scheduled improvement '${due.title}' failed: ${err.message}` });
+          safeRecord(this.store, { type: 'error', message: `scheduled improvement '${due.title}' failed: ${err.message}` });
         });
     }
   }
@@ -1140,6 +1145,16 @@ export class Scheduler {
         fs.writeSync(logFd, `${new Date().toISOString()} ${line}\n`);
       } catch {
         /* log best-effort; never fail a run on a log write */
+      }
+    };
+    const closeLog = (): void => {
+      const fd = logFd;
+      logFd = undefined;
+      if (fd === undefined) return;
+      try {
+        fs.closeSync(fd);
+      } catch (err) {
+        process.stderr.write(`foreman: run log not closed (${runId}): ${causeOf(err, 300)}\n`);
       }
     };
     const emit = (line: string): void => {
@@ -2109,11 +2124,6 @@ export class Scheduler {
       }
     } finally {
       clock.stop();
-      try {
-        if (logFd !== undefined) fs.closeSync(logFd);
-      } catch (err) {
-        writeLog(`log not closed: ${(err as Error).message}`);
-      }
       // A reused worktree belongs to the run that created it — and that run's
       // row still points at it. This one only cleans up what it made.
       if (jail && createdJail && !keepJail) await removeJail(jail).catch(() => {});
@@ -2128,6 +2138,8 @@ export class Scheduler {
       } catch (err) {
         writeLog(`events not pruned: ${(err as Error).message}`);
       }
+      // Last: writeLog is a no-op once the fd is cleared, so no later line lands in a file that reuses its number.
+      closeLog();
     }
   }
 
@@ -2460,8 +2472,12 @@ export class Scheduler {
         // retried in a loop that spends money once per tick. Not when the daemon
         // is stopping — that is no decision, and it is asked again after — nor
         // once a newer run has parked: the marker would keep it from its own review.
-        if (!this.lifetime.signal.aborted && this.stillParkedOn(taskId, gatedRun?.id)) this.store.markGateDecision(taskId, 'hold');
-        this.store.record({
+        try {
+          if (!this.lifetime.signal.aborted && this.stillParkedOn(taskId, gatedRun?.id)) this.store.markGateDecision(taskId, 'hold');
+        } catch {
+          /* the record below still says the gate failed */
+        }
+        safeRecord(this.store, {
           taskId,
           type: 'error',
           message: `owner-gate: hold — the gate itself failed, leaving the ticket for the human: ${err.message.slice(0, 500)}`,
@@ -2472,8 +2488,12 @@ export class Scheduler {
         // A newer run parked while this one was being gated (a rejection, a
         // retry, a fresh park): it keeps its at-park eligibility and gets its
         // own owner review now.
-        if (this.store.latestRun(taskId)?.id !== gatedRun?.id) this.runOwnerGate(taskId);
-        else this.parkedHere.delete(taskId);
+        try {
+          if (this.store.latestRun(taskId)?.id !== gatedRun?.id) this.runOwnerGate(taskId);
+          else this.parkedHere.delete(taskId);
+        } catch (err) {
+          safeRecord(this.store, { taskId, type: 'error', message: `owner-gate: could not look for a newer run: ${causeOf(err, 300)}` });
+        }
       });
     this.gating.set(taskId, promise);
   }
@@ -2522,12 +2542,24 @@ export class Scheduler {
   private runDueGates(): void {
     // The batch takes the first look: whatever it claims occupies the single
     // gating slot, and whatever it leaves is gated one at a time below.
-    this.runDueGateBatch();
+    // A ledger fault on one ticket's gate must not stop the rest of the tick: dispatch comes after this sweep.
+    const sweepFailed = (taskId: string | undefined, err: unknown): void => {
+      safeRecord(this.store, { taskId, type: 'error', message: `owner-gate: sweep failed: ${causeOf(err, 300)}` });
+    };
+    try {
+      this.runDueGateBatch();
+    } catch (err) {
+      sweepFailed(undefined, err);
+    }
     for (const task of this.store.awaitingApproval()) {
       if (this.gating.size >= 1) break; // one gate at a time; the rest wait a tick
       if (this.gating.has(task.id)) continue;
-      if (!this.gateEligible(task)) continue;
-      this.runOwnerGate(task.id);
+      try {
+        if (!this.gateEligible(task)) continue;
+        this.runOwnerGate(task.id);
+      } catch (err) {
+        sweepFailed(task.id, err);
+      }
     }
     // A ticket that left the gate needs neither the at-park exemption nor its
     // budget note again; both sets are bounded by what is parked right now.
@@ -2598,10 +2630,14 @@ export class Scheduler {
         // Marked decided per ticket, like a real hold: a batch that blew up must
         // not be retried in a loop that spends money once per tick.
         for (const taskId of ids) {
-          if (!this.lifetime.signal.aborted && this.stillParkedOn(taskId, gatedRuns.get(taskId))) {
-            this.store.markGateDecision(taskId, 'hold');
+          try {
+            if (!this.lifetime.signal.aborted && this.stillParkedOn(taskId, gatedRuns.get(taskId))) {
+              this.store.markGateDecision(taskId, 'hold');
+            }
+          } catch {
+            /* the record below still says the gate failed */
           }
-          this.store.record({
+          safeRecord(this.store, {
             taskId,
             type: 'error',
             message: `owner-gate: hold — the batched gate itself failed, leaving the ticket for the human: ${err.message.slice(0, 500)}`,
@@ -2614,10 +2650,20 @@ export class Scheduler {
           this.gating.delete(taskId);
           // As on the single path: a newer run parked during the call keeps its
           // at-park eligibility and is gated in turn.
-          if (this.store.latestRun(taskId)?.id !== gatedRuns.get(taskId)) moved.push(taskId);
-          else this.parkedHere.delete(taskId);
+          try {
+            if (this.store.latestRun(taskId)?.id !== gatedRuns.get(taskId)) moved.push(taskId);
+            else this.parkedHere.delete(taskId);
+          } catch (err) {
+            safeRecord(this.store, { taskId, type: 'error', message: `owner-gate: could not look for a newer run: ${causeOf(err, 300)}` });
+          }
         }
-        for (const taskId of moved) this.runOwnerGate(taskId);
+        for (const taskId of moved) {
+          try {
+            this.runOwnerGate(taskId);
+          } catch (err) {
+            safeRecord(this.store, { taskId, type: 'error', message: `owner-gate: could not start: ${causeOf(err, 300)}` });
+          }
+        }
       });
     // Every batched ticket holds the slot, so the single path cannot re-fire one
     // of them while the call is in flight.
@@ -2828,38 +2874,51 @@ export class Scheduler {
       .filter((t) => (this.recheckNotBefore.get(keyOf(t)) ?? 0) <= now && !this.reverifying.has(t.id))
       .slice(0, 10);
     if (!candidates.length) return;
+    // Came back provisional again (memory filled mid-way), did not finish, or failed:
+    // back off, doubling, and after four tries stop and say so —
+    // a machine that never frees up is the operator's to know about.
+    const backOff = (key: string, taskId: string): void => {
+      const attempts = (this.recheckAttempts.get(key) ?? 0) + 1;
+      this.recheckAttempts.set(key, attempts);
+      if (attempts >= 4) {
+        this.recheckNotBefore.set(key, Number.POSITIVE_INFINITY);
+        safeRecord(this.store, {
+          taskId, type: 'status',
+          message: 'gave up re-checking automatically after 4 tries — the full council never fit; re-review by hand when the machine is free',
+        });
+      } else {
+        this.recheckNotBefore.set(key, Date.now() + 15 * 60_000 * 2 ** (attempts - 1));
+      }
+    };
     this.recheckInFlight = (async () => {
-      for (const task of candidates) {
-        if (!(await this.fullCouncilFits(task))) continue;
-        const key = keyOf(task);
-        this.store.record({ taskId: task.id, type: 'status', message: 'the full council fits now — re-checking the provisional review' });
-        let verdict: Verdict | null = null;
-        try {
-          verdict = await this.reverify(task.id);
-        } catch (err) {
-          this.store.record({ taskId: task.id, type: 'log', message: `re-check did not complete: ${(err as Error).message.slice(0, 300)}` });
-        }
-        if (verdict && !verdict.provisional) {
-          this.recheckNotBefore.delete(key);
-          this.recheckAttempts.delete(key);
-          this.settleRecheck(task.id, verdict);
+      // Never rejects: a fault anywhere in a re-check is recorded and backs its task off like a re-check that did not complete.
+      let at: { id: string; key: string } | null = null;
+      try {
+        for (const task of candidates) {
+          const current = { id: task.id, key: keyOf(task) };
+          at = current;
+          if (!(await this.fullCouncilFits(task))) continue;
+          this.store.record({ taskId: task.id, type: 'status', message: 'the full council fits now — re-checking the provisional review' });
+          let verdict: Verdict | null = null;
+          try {
+            verdict = await this.reverify(task.id);
+          } catch (err) {
+            this.store.record({ taskId: task.id, type: 'log', message: `re-check did not complete: ${(err as Error).message.slice(0, 300)}` });
+          }
+          if (verdict && !verdict.provisional) {
+            this.recheckNotBefore.delete(current.key);
+            this.recheckAttempts.delete(current.key);
+            this.settleRecheck(task.id, verdict);
+            return;
+          }
+          backOff(current.key, task.id);
           return;
         }
-        // Came back provisional again (memory filled mid-way) or did not
-        // finish: back off, doubling, and after four tries stop and say so —
-        // a machine that never frees up is the operator's to know about.
-        const attempts = (this.recheckAttempts.get(key) ?? 0) + 1;
-        this.recheckAttempts.set(key, attempts);
-        if (attempts >= 4) {
-          this.recheckNotBefore.set(key, Number.POSITIVE_INFINITY);
-          this.store.record({
-            taskId: task.id, type: 'status',
-            message: 'gave up re-checking automatically after 4 tries — the full council never fit; re-review by hand when the machine is free',
-          });
-        } else {
-          this.recheckNotBefore.set(key, Date.now() + 15 * 60_000 * 2 ** (attempts - 1));
+      } catch (err) {
+        if (at) {
+          safeRecord(this.store, { taskId: at.id, type: 'log', message: `re-check did not complete: ${causeOf(err, 300)}` });
+          backOff(at.key, at.id);
         }
-        return;
       }
     })().finally(() => {
       this.recheckInFlight = null;

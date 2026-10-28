@@ -19,8 +19,7 @@ import type { Task, Verdict } from '../src/types.ts';
 
 // A fault in a ledger write, a spawn or a sweep must stay inside the thing that hit it. Each case below injects one
 // such fault on a path that today lets it escape, as an unhandled rejection or an uncaught exception, and asserts that
-// nothing escaped. They are TODO until the ticket named on each removes the mark: a TODO that fails is the known gap,
-// and a TODO that passes would be a report.
+// nothing escaped.
 
 const escaped: unknown[] = [];
 const collect = (reason: unknown): void => {
@@ -207,7 +206,7 @@ test('a run refused by the provider usage limit, with the ledger refusing its fa
 
 // Seam: Scheduler.runOwnerGate. ownerGate rejects because markGateDecision throws on a decided hold (a failed review,
 // hard-human, on a ticket still parked); the .catch then makes the same two writes, and they throw too.
-test('a single owner gate whose hold cannot be written escapes nothing', { todo: 't7 removes this mark' }, async (t) => {
+test('a single owner gate whose hold cannot be written escapes nothing', async (t) => {
   const { store, sched } = rig(t);
   const held = park(store, {}, 'fail');
   const faults = [
@@ -224,7 +223,7 @@ test('a single owner gate whose hold cannot be written escapes nothing', { todo:
 
 // Seam: Scheduler.runDueGateBatch (two eligible tickets under one parent). markGateDecision and record throw, and
 // latestRun throws for the first id once the .catch has failed, so the .finally throws as well.
-test('a batched owner gate whose hold cannot be written escapes nothing', { todo: 't7 removes this mark' }, async (t) => {
+test('a batched owner gate whose hold cannot be written escapes nothing', async (t) => {
   // The batched call is answered by a fake claude that fails, which the gate must turn into a hold per ticket.
   useClaude(t, fakeClaude(t, 'no answer', 1));
   const { store, sched } = rig(t);
@@ -273,7 +272,7 @@ function provisional(t: TestContext): { store: Store; sched: Scheduler; task: Ta
 }
 
 // Seam: Scheduler.runDueRechecks, the record of 'the full council fits now' at the head of the re-check.
-test('a re-check whose first ledger write fails escapes nothing', { todo: 't7 removes this mark' }, async (t) => {
+test('a re-check whose first ledger write fails escapes nothing', async (t) => {
   const { store, sched, task } = provisional(t);
   const fault = throwOn(t, store, 'record', (e) => e.taskId === task.id && /full council fits now/.test(e.message));
   takeEscaped();
@@ -285,7 +284,7 @@ test('a re-check whose first ledger write fails escapes nothing', { todo: 't7 re
 });
 
 // Seam: Scheduler.fullCouncilFits, through a broker.fits that rejects.
-test('a re-check whose memory probe rejects escapes nothing', { todo: 't7 removes this mark' }, async (t) => {
+test('a re-check whose memory probe rejects escapes nothing', async (t) => {
   const { store, sched } = provisional(t);
   let thrown = 0;
   t.mock.method(sched.broker, 'fits', async () => {
@@ -301,7 +300,7 @@ test('a re-check whose memory probe rejects escapes nothing', { todo: 't7 remove
 });
 
 // Seam: Scheduler.settleRecheck, whose setStatus writes the cleared park note once the full council has passed it.
-test('a re-check whose verdict cannot be settled escapes nothing', { todo: 't7 removes this mark' }, async (t) => {
+test('a re-check whose verdict cannot be settled escapes nothing', async (t) => {
   const { store, sched, task } = provisional(t);
   const fault = throwOn(t, store, 'setStatus', (id) => id === task.id);
   takeEscaped();
@@ -315,7 +314,7 @@ test('a re-check whose verdict cannot be settled escapes nothing', { todo: 't7 r
 // ------------------------------------------------------------------ the server
 
 // Seam: POST /api/tasks/:id/reverify through createServer on port 0; the review rejects, then the handler's own record throws.
-test('a manual re-review that fails, with the ledger refusing the failure, escapes nothing', { todo: 't7 removes this mark' }, async (t) => {
+test('a manual re-review that fails, with the ledger refusing the failure, escapes nothing', async (t) => {
   const dir = scratch(t, 'foreman-containment-server-');
   const store = new Store(':memory:');
   const sched = new Scheduler(store, {
