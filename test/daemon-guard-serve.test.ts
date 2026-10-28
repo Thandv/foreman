@@ -68,7 +68,8 @@ test('an unhandled rejection in a running serve is recorded as an error event, t
     }
   };
   assert.ok(await until(recorded, 30_000), `the rejection was recorded: ${s.out.text}`);
-  assert.ok(s.out.text.includes('unhandled rejection: Error: injected rejection'), 'and written to stderr');
+  // The event row lands over SQLite, the stderr line over a pipe: the pipe's 'data' event can arrive after the row is visible.
+  assert.ok(await until(() => s.out.text.includes('unhandled rejection: Error: injected rejection'), 30_000), `and written to stderr: ${s.out.text}`);
   assert.equal(s.child.exitCode, null, 'still running');
   assert.equal(await status(Number(fs.readFileSync(s.portFile, 'utf8'))), 200, 'still answering');
   s.child.kill('SIGTERM');
