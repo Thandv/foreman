@@ -54,7 +54,10 @@ test('a throw from onLine on the first line ends the child, stops the lines and 
     }),
     /SQLITE_BUSY/,
   );
-  assert.deepEqual(seen, ['one'], 'only the line that threw reached onLine');
+  // stdout and stderr are separate pipes with no ordering between them: under load the stderr line can be read first.
+  // Either way exactly one line, the first the callback was given (never "two", which follows "one" on stdout), got in.
+  assert.equal(seen.length, 1, `only the line that threw reached onLine, saw ${JSON.stringify(seen)}`);
+  assert.ok(seen[0] === 'one' || seen[0] === 'three', `the line that threw was the first of its pipe, saw ${seen[0]}`);
   assert.ok(pid > 0);
   assert.equal(groupAlive(pid), false, "the child's group has ended");
   await new Promise((resolve) => setImmediate(resolve));
