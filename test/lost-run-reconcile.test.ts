@@ -11,17 +11,20 @@ import { claimRunLease } from '../src/verify/slots.ts';
 
 const STEP = 60_000;
 
-function rig(t: TestContext): { store: Store; sched: Scheduler; tick: () => Promise<void> } {
+function rig(t: TestContext): { store: Store; sched: Scheduler; tick: (ms?: number) => Promise<void> } {
   let clock = 1_000_000;
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false, now: () => clock });
   t.after(async () => {
+    // stop() SIGKILLs the group of every pid still on a running row. The pids here are groups these tests own and
+    // end themselves, and one that has exited may already be reused: a test that fails must not signal it.
+    store.db.prepare("UPDATE runs SET pid = NULL WHERE status = 'running'").run();
     await sched.stop();
     store.close();
   });
-  // One tick one interval after the last. A tick that throws (a launch whose record fails) is the scenario, not the test.
-  const tick = async (): Promise<void> => {
-    clock += STEP;
+  // One tick one interval (or `ms`) after the last. A tick that throws (a launch whose record fails) is the scenario, not the test.
+  const tick = async (ms = STEP): Promise<void> => {
+    clock += ms;
     await sched.tick().catch(() => {});
   };
   return { store, sched, tick };
@@ -80,6 +83,16 @@ test('a run lost when startRun records nothing is ended and its task requeued wi
   assert.equal(ended.status, 'failed');
   assert.equal(ended.summary, 'lost by this daemon');
   assert.ok(messages(store, task.id).includes('requeued after a lost run'));
+});
+
+test('a lost run is looked at again only once a full interval has passed on the injected clock', async (t) => {
+  const { store, tick } = rig(t);
+  const { runId } = lostRun(store);
+  await tick(); // seen once
+  await tick(STEP - 1);
+  assert.equal(store.getRun(runId)!.status, 'running', 'no second look within the interval');
+  await tick(1);
+  assert.equal(store.getRun(runId)!.status, 'failed');
 });
 
 test('a lost run with no attempts left fails its task with an event', async (t) => {
@@ -152,7 +165,7 @@ test('a run its daemon still holds is untouched across 100 ticks', async (t) => 
   const verify = lostRun(store);
   internals.active.set(verify.taskId, entry('verify', verify.taskId, verify.runId));
   const gating = lostRun(store);
-  internals.gating.set(gating.taskId, new Promise<void>(() => {}));
+  internals.gating.set(gating.taskId, Promise.resolve());
   const reverifying = lostRun(store);
   internals.reverifying.add(reverifying.taskId);
   const landing = lostRun(store);
@@ -162,7 +175,10 @@ test('a run its daemon still holds is untouched across 100 ticks', async (t) => 
   t.after(held.release);
   const reserved = lostRun(store);
   internals.broker.pending.set(reserved.taskId, 1);
-  const cases = { work, verify, gating, reverifying, landing, lease, reserved };
+  // An older row of a task its daemon is running again under a newer run: skipped for its task, not its run id.
+  const sibling = lostRun(store);
+  internals.active.set(sibling.taskId, entry('work', sibling.taskId, store.startRun(sibling.taskId).id));
+  const cases = { work, verify, gating, reverifying, landing, lease, reserved, sibling };
   // A plain lost run alongside: ended, which shows the reconcile ran on those ticks while each case above was skipped.
   const plain = lostRun(store);
   for (let i = 0; i < 100; i++) await tick();
