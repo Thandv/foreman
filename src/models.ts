@@ -110,7 +110,8 @@ const CLAUDE_SPECS: ModelSpec[] = [
   { alias: 'fable', provider: 'claude-cli', model: 'claude-fable-5-1', local: false, usdPerMTokIn: 10, usdPerMTokOut: 50 },
   { alias: 'opus', provider: 'claude-cli', model: 'claude-opus-5-5', local: false, usdPerMTokIn: 4, usdPerMTokOut: 20 },
   { alias: 'sonnet', provider: 'claude-cli', model: 'claude-sonnet-5-5', local: false, usdPerMTokIn: 2, usdPerMTokOut: 10 },
-  { alias: 'haiku', provider: 'claude-cli', model: 'claude-haiku-4-5', local: false, usdPerMTokIn: 1, usdPerMTokOut: 5 },
+  // Prompts over 100K tokens bill 5x ($0.50 in / $2.50 out), so cost estimates for those are low.
+  { alias: 'haiku', provider: 'claude-cli', model: 'claude-haiku-5-5', local: false, usdPerMTokIn: 0.1, usdPerMTokOut: 0.5 },
 ];
 
 /** The Claude aliases, registered or not — for status output that must name them either way. */
