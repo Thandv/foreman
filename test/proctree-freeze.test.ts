@@ -688,7 +688,7 @@ function spawnFrozenHolder(t: TestContext, g: ProcGuard, l: Leftover, host: Host
   fs.writeFileSync(script, `
 import fs from 'node:fs';
 import { LeftoverReaper, snapshotProcs } from ${JSON.stringify(proctree)};
-// Installed once the freeze has begun, so the registry's listener is ahead of the host's in the emit order.
+// Installed once the freeze has begun; the registry prepends its listeners, so it runs ahead of the host's either way.
 let hosted = false;
 const installHost = () => { if (hosted) return; hosted = true; ${host === 'onceAsync' ? '' : hostCode} };
 ${host === 'onceAsync' ? hostCode : ''}

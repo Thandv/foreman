@@ -119,7 +119,7 @@ export class Tracer {
         fs.rmSync(path.join(this.dir, name), { force: true });
       } catch (err) {
         // Not recorded as an event: this runs inside the store's synchronous listener, so recording would recurse.
-        const code =(err as NodeJS.ErrnoException).code ?? (err as Error).message;
+        const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
         process.stderr.write(`trace sweep could not remove ${name}: ${code}\n`);
       }
     }
