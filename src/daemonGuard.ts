@@ -74,9 +74,9 @@ export function processErrorHandlers(deps: ProcessErrorDeps): ProcessErrorHandle
   };
 
   const onException = (err: unknown): void => {
+    say(`uncaught exception: ${err instanceof Error && err.stack ? err.stack : describe(err)}`);
     if (ending) return;
     ending = true;
-    say(`uncaught exception: ${err instanceof Error && err.stack ? err.stack : describe(err)}`);
     try {
       record('error', `uncaught exception: ${describe(err)}`);
     } catch {
