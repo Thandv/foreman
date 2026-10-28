@@ -349,11 +349,11 @@ test('an ambiguous classification consults the router model, not the owner', () 
   const prev = process.env['FOREMAN_MODEL_ROUTER'];
   try {
     delete process.env['FOREMAN_MODEL_ROUTER'];
-    assert.equal(routerModel(), 'claude-haiku-4-5');
+    assert.equal(routerModel(), 'claude-haiku-5-5');
     process.env['FOREMAN_MODEL_ROUTER'] = 'sonnet';
     assert.equal(routerModel(), 'claude-sonnet-5-5');
     process.env['FOREMAN_MODEL_ROUTER'] = 'local-reason';
-    assert.equal(routerModel(), 'claude-haiku-4-5', 'a local alias cannot serve a CLI consult');
+    assert.equal(routerModel(), 'claude-haiku-5-5', 'a local alias cannot serve a CLI consult');
   } finally {
     if (prev === undefined) delete process.env['FOREMAN_MODEL_ROUTER'];
     else process.env['FOREMAN_MODEL_ROUTER'] = prev;
