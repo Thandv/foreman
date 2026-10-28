@@ -167,7 +167,7 @@ function setEnv(t: TestContext, name: string, value: string): void {
 // ------------------------------------------------------------------ the run's failure path
 
 // Seam: Scheduler.execute's catch block, where record(type 'error'), endRun and setStatus run for a run that threw.
-test('a run that fails before it spawns anything, with the ledger refusing its failure, escapes nothing', { todo: 't5 removes this mark' }, async (t) => {
+test('a run that fails before it spawns anything, with the ledger refusing its failure, escapes nothing', async (t) => {
   const { store, sched } = rig(t);
   // An S2 ticket on a hosted-model runner is refused in preflight, before any worker or jail exists.
   const doomed = store.addTask({ title: 'refused', prompt: 'x', runner: 'claude-code', sensitivity: 'S2', maxAttempts: 1 });
@@ -186,7 +186,7 @@ test('a run that fails before it spawns anything, with the ledger refusing its f
 });
 
 // Seam: the same catch block, reached by ProviderLimited from a fake claude bin that is refused at its usage limit.
-test('a run refused by the provider usage limit, with the ledger refusing its failure, escapes nothing', { todo: 't5 removes this mark' }, async (t) => {
+test('a run refused by the provider usage limit, with the ledger refusing its failure, escapes nothing', async (t) => {
   useClaude(t, fakeClaude(t, "You've hit your session limit · resets 4:30pm (Europe/London)", 1));
   setEnv(t, 'FOREMAN_LIMIT_BACKOFF_MS', '60000');
   const { store, sched } = rig(t);

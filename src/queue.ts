@@ -231,6 +231,28 @@ export function leadWithCoreGuard(note: string | null, messages: string[], max =
   return (note ? `${lead} | ${note}` : lead).slice(0, max);
 }
 
+/**
+ * store.record for a write that is only informational: never throws. A throw
+ * is one stderr line (event type, task id, the message cut short, the error)
+ * and a null. Store.record emits after its INSERT, so a failure here does not
+ * mean the event was not written: a listener that threw leaves the row behind.
+ */
+export function safeRecord(store: Store, event: Parameters<Store['record']>[0]): RunEvent | null {
+  try {
+    return store.record(event);
+  } catch (err) {
+    try {
+      const oneLine = (s: string): string => s.replace(/\s*\n\s*/g, ' ');
+      process.stderr.write(
+        `foreman: event not recorded (${event.type}, task ${event.taskId ?? '-'}): ${oneLine(String(event.message).slice(0, 200))}: ${oneLine(err instanceof Error ? err.message : String(err))}\n`,
+      );
+    } catch {
+      /* stderr is gone; nothing left to tell */
+    }
+    return null;
+  }
+}
+
 export class Store extends EventEmitter {
   readonly db: DatabaseSync;
 
@@ -247,6 +269,11 @@ export class Store extends EventEmitter {
 
   // ---------------------------------------------------------------- events
 
+  /**
+   * Writes the event row, then emits it. The emit is after the INSERT, so a
+   * throw (a listener's, say) does not always mean the event was not written.
+   * Use safeRecord where the write is only informational.
+   */
   record(
     e: { taskId?: string | null; runId?: string | null; type: RunEvent['type']; stage?: Stage | null; message: string },
   ): RunEvent {

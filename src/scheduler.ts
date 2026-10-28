@@ -30,7 +30,7 @@ import { boundBrief, collectBriefCuts, compactDiff, tailLog } from './context.ts
 import { endedReason, newRunFacts, noteBrief, noteResult, noteResumed } from './runFacts.ts';
 import { getRunner, type RunnerContext } from './runners/index.ts';
 import { ProviderLimited, isProviderLimit, limitBackoffMs } from './providerLimit.ts';
-import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, conflictRepairNotes, redBackoffMs, type Store } from './queue.ts';
+import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, conflictRepairNotes, redBackoffMs, safeRecord, type Store } from './queue.ts';
 import { recordEpisode, relevantFacts, scopeOf } from './assistant/memory.ts';
 import { planAsk, queuePlan } from './assistant/plan.ts';
 import { deterministicFindings } from './verify/determinism.ts';
@@ -1051,11 +1051,35 @@ export class Scheduler {
     const controller = new AbortController();
     const entry: Active = { lane: 'work', taskId: task.id, runId: run.id, controller, done: Promise.resolve() };
     this.active.set(task.id, entry);
-    entry.done = this.execute(task, run.id, controller, resume).finally(() => {
+    entry.done = this.execute(task, run.id, controller, resume).catch((err: unknown) => this.noteRunCrash(task, run.id, err)).finally(() => {
       const wasVerifying = this.active.get(task.id)?.lane === 'verify';
       this.active.delete(task.id);
       if (wasVerifying) this.releaseVerifySlot();
     });
+  }
+
+  /**
+   * execute() rejected: something past its own handling threw. Three steps, each guarded on its own, and none
+   * overwrites what execute() already settled: the error is recorded, a run still 'running' is failed, and a task
+   * still 'running' or 'verifying' goes back to the queue while attempts remain, else fails.
+   */
+  private noteRunCrash(task: Task, runId: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    safeRecord(this.store, { taskId: task.id, runId, type: 'error', message: `run crashed: ${message}`.slice(0, 4000) });
+    try {
+      if (this.store.getRun(runId)?.status === 'running') this.store.endRun(runId, 'failed', { summary: message.slice(0, 4000) });
+    } catch (e) {
+      process.stderr.write(`foreman: run ${runId} not ended after a crash: ${(e as Error).message}\n`);
+    }
+    try {
+      const status = this.store.getTask(task.id)?.status;
+      if (status === 'running' || status === 'verifying') {
+        if (task.attempts >= task.maxAttempts) this.store.setStatus(task.id, 'failed', message.slice(0, 1000));
+        else this.store.setStatus(task.id, 'queued', `attempt ${task.attempts} failed: ${message.slice(0, 500)}`);
+      }
+    } catch (e) {
+      process.stderr.write(`foreman: task ${task.id} not settled after a crash: ${(e as Error).message}\n`);
+    }
   }
 
   private async execute(
@@ -1085,7 +1109,12 @@ export class Scheduler {
     // What this run records about itself on its own row (runFacts.ts): filled in as it goes, written in the finally.
     const facts = newRunFacts();
     const clock = this.runClockFn(runTimeoutMs, () => {
-      expiredIn = this.store.getRun(runId)?.stage ?? null;
+      // Read from a timer: a ledger that cannot answer must not stop the abort.
+      try {
+        expiredIn = this.store.getRun(runId)?.stage ?? null;
+      } catch {
+        expiredIn = null;
+      }
       abortFor(controller, 'deadline');
     });
     const active = this.active.get(task.id);
@@ -2015,11 +2044,16 @@ export class Scheduler {
       facts.providerLimited = err instanceof ProviderLimited;
       const message = err instanceof Error ? err.message : String(err);
       writeLog(`ERROR: ${message}`);
-      this.store.record({ taskId: task.id, runId, type: 'error', message: message.slice(0, 4000) });
+      safeRecord(this.store, { taskId: task.id, runId, type: 'error', message: message.slice(0, 4000) });
       const cause = abortCause(controller.signal);
       // The run's own deadline is a timeout, never a cancel: nobody canceled it.
       const timedOut = cause === 'deadline' ? deadlineReached() : null;
-      this.store.endRun(runId, aborted && !timedOut ? 'canceled' : 'failed', { summary: (timedOut ?? message).slice(0, 4000) });
+      // Apart from the classification below: a ledger that refuses this must not keep the task from it.
+      try {
+        this.store.endRun(runId, aborted && !timedOut ? 'canceled' : 'failed', { summary: (timedOut ?? message).slice(0, 4000) });
+      } catch (endErr) {
+        writeLog(`run not ended: ${(endErr as Error).message}`);
+      }
 
       const current = this.store.getTask(task.id);
       const fatal = err instanceof AdmissionBlocked
@@ -2061,7 +2095,7 @@ export class Scheduler {
         // clean — see probeDirtyRepos.
         const files = message.split('\n').slice(1).join(', ') || 'uncommitted changes';
         this.holdDirtyRepo(task.repo, files);
-        this.store.record({ taskId: task.id, runId, type: 'warning', message: `held: ${task.repo} has uncommitted changes (${files}); requeued until the checkout is clean` });
+        safeRecord(this.store, { taskId: task.id, runId, type: 'warning', message: `held: ${task.repo} has uncommitted changes (${files}); requeued until the checkout is clean` });
         this.store.requeueAfterDirty(task.id, `held: the repo checkout has uncommitted changes (${files.slice(0, 300)}); resumes once it is clean`);
       } else if (err instanceof ConflictRoundAbandoned) {
         this.store.abandonConflictRound(task.id, runId, err.message);
@@ -2075,7 +2109,11 @@ export class Scheduler {
       }
     } finally {
       clock.stop();
-      if (logFd !== undefined) fs.closeSync(logFd);
+      try {
+        if (logFd !== undefined) fs.closeSync(logFd);
+      } catch (err) {
+        writeLog(`log not closed: ${(err as Error).message}`);
+      }
       // A reused worktree belongs to the run that created it — and that run's
       // row still points at it. This one only cleans up what it made.
       if (jail && createdJail && !keepJail) await removeJail(jail).catch(() => {});
@@ -2085,7 +2123,11 @@ export class Scheduler {
       } catch (err) {
         writeLog(`run facts not recorded: ${(err as Error).message}`);
       }
-      this.pruneEvents(task.id);
+      try {
+        this.pruneEvents(task.id);
+      } catch (err) {
+        writeLog(`events not pruned: ${(err as Error).message}`);
+      }
     }
   }
 
