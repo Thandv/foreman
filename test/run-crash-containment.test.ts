@@ -182,6 +182,7 @@ test('a run whose failure handling rejects with no attempts left is failed by no
   assert.deepEqual(takeEscaped(), []);
   assert.equal(store.getTask(task.id)!.status, 'failed');
   assert.equal(store.latestRun(task.id)!.status, 'failed');
+  assert.equal(store.getTask(task.id)!.attempts, 1, 'failed on its last attempt, not queued for another');
 });
 
 test('noteRunCrash never overwrites a status execute() already set', async (t) => {
@@ -196,6 +197,41 @@ test('noteRunCrash never overwrites a status execute() already set', async (t) =
   await sched.drain(10_000);
   assert.deepEqual(takeEscaped(), []);
   assert.equal(store.getTask(task.id)!.status, 'failed');
+  assert.equal(store.getTask(task.id)!.attempts, 1, 'not requeued for a second attempt');
+  assert.doesNotMatch(store.latestRun(task.id)!.summary ?? '', /SQLITE_BUSY/, 'the run execute() ended was not ended again');
+});
+
+test('noteRunCrash steps are guarded apart: its record and endRun both throwing still settle the task', async (t) => {
+  const { store, sched } = rig(t);
+  const task = store.addTask({ title: 'refused', prompt: 'x', runner: 'claude-code', sensitivity: 'S2', maxAttempts: 2 });
+  // Every error event for the task is refused, the crash record included; so is every endRun for its run.
+  const recordFault = failRecord(t, store, (e) => e.taskId === task.id && e.type === 'error');
+  let setStatusThrows = 0;
+  const realSet = store.setStatus.bind(store);
+  t.mock.method(store, 'setStatus', ((id: string, ...rest: [Parameters<Store['setStatus']>[1], Parameters<Store['setStatus']>[2]?]) => {
+    if (id === task.id && rest[0] === 'failed' && setStatusThrows === 0) {
+      setStatusThrows++;
+      throw new Error('SQLITE_BUSY');
+    }
+    return realSet(id, ...rest);
+  }) as Store['setStatus']);
+  t.mock.method(store, 'endRun', ((runId: string) => {
+    if (store.getRun(runId)?.taskId === task.id) throw new Error('SQLITE_BUSY');
+    throw new Error(`unexpected endRun ${runId}`);
+  }) as Store['endRun']);
+  const lines: string[] = [];
+  t.mock.method(process.stderr, 'write', ((chunk: string) => {
+    lines.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write);
+  takeEscaped();
+  await pump(t, sched, () => setStatusThrows > 0);
+  await landed(); // no further tick: a queued task would be launched again
+  assert.deepEqual(takeEscaped(), [], 'nothing escaped');
+  assert.equal(recordFault.thrown, 2, "execute()'s error record and the crash record were both refused");
+  assert.ok(lines.some((l) => l.includes('run crashed')), 'the refused crash record went to stderr');
+  assert.ok(lines.some((l) => l.includes('not ended after a crash')), 'the refused endRun went to stderr');
+  assert.equal(store.getTask(task.id)!.status, 'queued', 'the status step ran after the record and endRun failed');
 });
 
 test('a provider-limited failure still holds claude-code work and requeues when the error record and endRun both throw', async (t) => {
