@@ -2,7 +2,9 @@
  * Contains the two ways a stray error ends the daemon without a word: an unhandled promise rejection (fatal by
  * default) and an uncaught exception (the default skips the lock release, the trace flush and the 'exit' handlers'
  * orderly path). A rejection is written, recorded once per window per message, and the daemon keeps running; an
- * exception is recorded and ends the daemon through `shutdown(1)`, once.
+ * exception is recorded and ends the daemon through `shutdown(1)`, once; later ones are only written, at most
+ * MAX_LATER_WRITTEN of them (on a closed stderr each write raises another exception, EPIPE, so an unbounded write
+ * would feed itself for the whole drain).
  *
  * It installs no signal listener and no 'exit' listener: the freeze registry (runners/freezeRecord.ts) decides what
  * to do from the signal listeners it finds, and `shutdown` ends in process.exit, which its 'exit' listener answers.
@@ -11,6 +13,7 @@
 export const REJECTION_WINDOW_MS = 60_000;
 // Distinct messages remembered at once; past this the expired ones go first, then the oldest.
 const MAX_TRACKED = 64;
+export const MAX_LATER_WRITTEN = 10;
 
 export interface ProcessErrorDeps {
   record: (type: 'error', message: string) => void;
@@ -45,6 +48,7 @@ export function processErrorHandlers(deps: ProcessErrorDeps): ProcessErrorHandle
   const seen = new Map<string, { at: number; suppressed: number }>();
   let recording = false;
   let ending = false;
+  let later = 0;
 
   const onRejection = (reason: unknown): void => {
     if (recording) return;
@@ -74,7 +78,8 @@ export function processErrorHandlers(deps: ProcessErrorDeps): ProcessErrorHandle
   };
 
   const onException = (err: unknown): void => {
-    say(`uncaught exception: ${err instanceof Error && err.stack ? err.stack : describe(err)}`);
+    const line = `uncaught exception: ${err instanceof Error && err.stack ? err.stack : describe(err)}`;
+    if (!ending || later++ < MAX_LATER_WRITTEN) say(line);
     if (ending) return;
     ending = true;
     try {

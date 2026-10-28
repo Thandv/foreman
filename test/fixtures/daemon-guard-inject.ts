@@ -25,7 +25,7 @@ process.stdout.write = function (this: NodeJS.WriteStream, ...args: unknown[]) {
   if (!injected && String(args[0]).includes('foreman up')) {
     injected = true;
     if (mode === 'reject') void Promise.reject(new Error('injected rejection'));
-    if (mode === 'throw') {
+    if (mode === 'throw' || mode === 'throw-then-term') {
       setImmediate(() => {
         throw new Error('injected exception');
       });
@@ -35,9 +35,17 @@ process.stdout.write = function (this: NodeJS.WriteStream, ...args: unknown[]) {
 } as typeof process.stdout.write;
 
 // Shutdown-path modes (test/daemon-guard-shutdown.test.ts): they patch the scheduler's stop() in this process.
-if (mode === 'stop-throws' || mode === 'stop-hangs') {
+if (mode === 'stop-throws' || mode === 'stop-hangs' || mode === 'throw-then-term') {
   const { Scheduler } = await import('../../src/scheduler.ts');
-  if (mode === 'stop-throws') {
+  if (mode === 'throw-then-term') {
+    // The exception's shutdown(1) drains until a SIGTERM has arrived (before or after stop() was called).
+    let termed = false;
+    let wake = (): void => {};
+    process.on('SIGTERM', () => { termed = true; wake(); });
+    Scheduler.prototype.stop = function () {
+      return new Promise<void>((resolve) => { wake = () => setImmediate(resolve); if (termed) wake(); });
+    };
+  } else if (mode === 'stop-throws') {
     // An uncaught exception lands while the drain is in progress, then stop() settles.
     Scheduler.prototype.stop = function () {
       setImmediate(() => {
@@ -46,11 +54,19 @@ if (mode === 'stop-throws' || mode === 'stop-hangs') {
       return new Promise<void>((resolve) => setImmediate(resolve));
     };
   } else {
-    // stop() never settles; the 60 s drain cap is shortened to 300 ms once a SIGTERM has arrived.
+    // stop() never settles; the drain cap (APPROVAL_DRAIN_CAP_MS) is shortened to 300 ms once a SIGTERM has arrived.
+    const { APPROVAL_DRAIN_CAP_MS } = await import('../../src/gate.ts');
+    const { Store } = await import('../../src/queue.ts');
     const setT = globalThis.setTimeout;
     let hung = false;
     globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) =>
-      setT(fn, hung && ms === 60_000 ? 300 : ms, ...rest)) as typeof setTimeout;
+      setT(fn, hung && ms === APPROVAL_DRAIN_CAP_MS ? 300 : ms, ...rest)) as typeof setTimeout;
+    const kill = Store.prototype.killLiveRunGroups;
+    Store.prototype.killLiveRunGroups = function (this: InstanceType<typeof Store>) {
+      // Startup's recoverOrphans calls it too; only a call after the SIGTERM is the shutdown's.
+      if (hung) process.stdout.write('fixture: live run groups killed at shutdown\n');
+      return kill.call(this);
+    };
     // The cap timer is armed before stop() is called, so the shortening starts at the signal (this listener runs first).
     process.on('SIGTERM', () => { hung = true; });
     Scheduler.prototype.stop = function () {

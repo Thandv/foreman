@@ -582,6 +582,8 @@ async function main(): Promise<number> {
         try {
           if ((await Promise.race([scheduler.stop(), capped])) === 'capped') {
             process.stderr.write(`shutdown: the scheduler did not stop within ${APPROVAL_DRAIN_CAP_MS}ms; exiting anyway\n`);
+            // stop() ends by killing the groups of runs that never settled; it did not get there, so that is done here.
+            store.killLiveRunGroups();
           }
         } finally {
           clearTimeout(capTimer);
