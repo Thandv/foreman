@@ -2131,12 +2131,12 @@ export class Scheduler {
       try {
         this.store.setRunFacts(runId, { ...facts, endedReason: endedReason(facts, abortCause(controller.signal), this.store.getRun(runId)?.status) });
       } catch (err) {
-        writeLog(`run facts not recorded: ${(err as Error).message}`);
+        writeLog(`run facts not recorded: ${causeOf(err, 1000)}`);
       }
       try {
         this.pruneEvents(task.id);
       } catch (err) {
-        writeLog(`events not pruned: ${(err as Error).message}`);
+        writeLog(`events not pruned: ${causeOf(err, 1000)}`);
       }
       // Last: writeLog is a no-op once the fd is cleared, so no later line lands in a file that reuses its number.
       closeLog();

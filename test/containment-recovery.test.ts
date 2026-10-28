@@ -209,3 +209,37 @@ test('a run whose bookkeeping fails after the log is closed writes nothing to th
   assert.ok(closed.size > 0, 'the run opened and closed its log');
   assert.deepEqual(late, [], 'no write reached a descriptor after it was closed');
 });
+
+test('a run whose bookkeeping fails with a non-Error value still closes its log', { timeout: 30_000 }, async (t) => {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false });
+  t.after(async () => {
+    await sched.stop();
+    store.close();
+  });
+  // A catch in execute()'s finally that read `.message` of this would throw, skip the close and leak the descriptor.
+  t.mock.method(store, 'setRunFacts', () => {
+    throw undefined;
+  });
+  t.mock.method(sched as unknown as { pruneEvents: () => void }, 'pruneEvents', () => {
+    throw undefined;
+  });
+  const opened = new Set<number>();
+  const open = fs.openSync;
+  const close = fs.closeSync;
+  t.mock.method(fs, 'openSync', ((...a: Parameters<typeof fs.openSync>) => {
+    const fd = open(...a);
+    opened.add(fd);
+    return fd;
+  }) as typeof fs.openSync);
+  t.mock.method(fs, 'closeSync', ((fd: number) => {
+    opened.delete(fd);
+    return close(fd);
+  }) as typeof fs.closeSync);
+
+  const task = store.addTask({ title: 'say hello', prompt: 'say hello', runner: 'echo' });
+  await pump(t, sched, () => !['queued', 'running'].includes(store.getTask(task.id)!.status));
+  await sched.drain();
+  assert.deepEqual([...opened], [], 'every descriptor the run opened was closed');
+  assert.ok(!store.eventsForTask(task.id).some((e) => /run crashed/.test(e.message)), 'the finally did not throw');
+});

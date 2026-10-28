@@ -205,7 +205,8 @@ test('a run refused by the provider usage limit, with the ledger refusing its fa
 // ------------------------------------------------------------------ the owner gate
 
 // Seam: Scheduler.runOwnerGate. ownerGate rejects because markGateDecision throws on a decided hold (a failed review,
-// hard-human, on a ticket still parked); the .catch then makes the same two writes, and they throw too.
+// hard-human, on a ticket still parked); the .catch then makes the same two writes, and they throw too, and so does
+// the .finally's latestRun once the .catch has failed.
 test('a single owner gate whose hold cannot be written escapes nothing', async (t) => {
   const { store, sched } = rig(t);
   const held = park(store, {}, 'fail');
@@ -213,8 +214,9 @@ test('a single owner gate whose hold cannot be written escapes nothing', async (
     throwOn(t, store, 'markGateDecision', (id) => id === held.id),
     throwOn(t, store, 'record', (e) => e.taskId === held.id && e.type === 'error'),
   ];
+  const finale = throwOn(t, store, 'latestRun', (id) => id === held.id && faults[0]!.thrown >= 2);
   takeEscaped();
-  await pump(t, sched, () => faults[0]!.thrown >= 2);
+  await pump(t, sched, () => finale.thrown > 0);
   await landed();
   assert.deepEqual(takeEscaped(), [], 'nothing escaped the gate');
   const next = queueEcho(store);
