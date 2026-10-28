@@ -170,6 +170,11 @@ export function claimRunLease(headers: Record<string, string | string[] | undefi
   };
 }
 
+/** Whether this run has a slot request open (read-only). */
+export function hasRunLease(runId: string): boolean {
+  return runLeases.has(runId);
+}
+
 /** How many callers are queued ahead of one that asks now, or null when a slot is free and it would not wait. */
 export function slotsAhead(): number | null {
   return active >= maxVerifies() || queue.length > 0 ? queue.length : null;

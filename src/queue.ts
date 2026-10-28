@@ -907,21 +907,49 @@ export class Store extends EventEmitter {
         .run(now, String(row['id']));
     }
     const stuck = this.db
-      .prepare("SELECT id, attempts, max_attempts FROM tasks WHERE status IN ('running','verifying')")
+      .prepare("SELECT id FROM tasks WHERE status IN ('running','verifying')")
       .all() as Record<string, unknown>[];
     for (const row of stuck) {
-      const taskId = String(row['id']);
-      if (Number(row['attempts']) >= Number(row['max_attempts'])) {
-        this.setStatus(taskId, 'failed', 'interrupted by daemon restart; no attempts left');
-      } else {
-        this.db.prepare("UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?").run(now, taskId);
-        this.record({ taskId, type: 'status', message: 'requeued after daemon restart' });
-        // Raw SQL again: reopen the epic this ticket may have closed.
-        const parent = this.parentIdOf(taskId);
-        if (parent) this.reopenEpicIfClosed(parent);
-      }
+      this.endLostRun(String(row['id']), {
+        failed: 'interrupted by daemon restart; no attempts left',
+        requeued: 'requeued after daemon restart',
+      });
     }
     return stuck.length;
+  }
+
+  /**
+   * The task of a run that was lost: failed when its attempts are spent, else queued again (with an event) and
+   * its parent epic reopened. `texts` are the two lines the caller's story needs.
+   */
+  endLostRun(taskId: string, texts: { failed: string; requeued: string }, opts: { safe?: boolean } = {}): void {
+    const row = this.db.prepare('SELECT attempts, max_attempts FROM tasks WHERE id = ?').get(taskId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return;
+    if (Number(row['attempts']) >= Number(row['max_attempts'])) {
+      this.setStatus(taskId, 'failed', texts.failed);
+    } else {
+      this.db.prepare("UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?").run(Date.now(), taskId);
+      // `safe` (the live daemon's reconcile): a failed write must not stop the epic from being reopened.
+      if (opts.safe) safeRecord(this, { taskId, type: 'status', message: texts.requeued });
+      else this.record({ taskId, type: 'status', message: texts.requeued });
+      // Raw SQL again: reopen the epic this ticket may have closed.
+      const parent = this.parentIdOf(taskId);
+      if (!parent) return;
+      if (!opts.safe) return this.reopenEpicIfClosed(parent);
+      try {
+        this.reopenEpicIfClosed(parent);
+      } catch (err) {
+        process.stderr.write(`foreman: epic ${parent} not reopened after a lost run: ${(err as Error).message}\n`);
+      }
+    }
+  }
+
+  /** Runs whose row still says running: id, task and recorded pid. */
+  runningRuns(): Array<{ id: string; taskId: string; pid: number | null }> {
+    const rows = this.db.prepare("SELECT id, task_id, pid FROM runs WHERE status = 'running'").all() as Record<string, unknown>[];
+    return rows.map((r) => ({ id: String(r['id']), taskId: String(r['task_id']), pid: r['pid'] == null ? null : Number(r['pid']) }));
   }
 
   /**

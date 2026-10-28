@@ -124,6 +124,11 @@ export class Broker {
   private readonly liveModels = new Map<string, number>();
   private readonly drainWaiters: Array<() => void> = [];
 
+  /** Whether a model call for this task has reserved spend and not yet settled (read-only). */
+  hasReservation(taskId: string): boolean {
+    return this.pending.has(taskId);
+  }
+
   constructor(store: Store, opts: BrokerOptions = {}) {
     this.store = store;
     this.chatFn = opts.chatFn ?? chat;

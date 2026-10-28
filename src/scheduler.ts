@@ -48,7 +48,7 @@ import {
   BEHIND_ADVICE, behindLine, behindMain, behindParkNote, failuresAllChangedOnMain, gateTimeout, nothingToChangeNote, timedOutTwiceNote,
   type BehindMain,
 } from './verify/gateOutcome.ts';
-import { maxVerifies, verifySlotStats } from './verify/slots.ts';
+import { hasRunLease, maxVerifies, verifySlotStats } from './verify/slots.ts';
 import { BACKGROUND_RESUME_PROMPT, backgroundTestPending } from './verify/backgroundRun.ts';
 import { SensitivityViolation, specs } from './models.ts';
 import { TERMINAL_STATUSES } from './types.ts';
@@ -173,6 +173,18 @@ export interface VerifyArgs {
  * slot through it left workers idle in `verifying` while ready tasks queued.
  */
 type Lane = 'work' | 'verify';
+
+const RECONCILE_MS = 60_000;
+
+/** Signal 0 only: ESRCH is dead; success and EPERM (and anything unexpected) count as alive, the safe side. */
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
 
 interface Active {
   lane: Lane;
@@ -682,6 +694,10 @@ export class Scheduler {
   /** Epoch ms of the last archive sweep; 0 means "sweep on the first tick". */
   private lastArchiveSweep = 0;
   private lastRecheck = 0;
+  /** reconcileLostRuns: when it last ran, the runs it saw as candidates then, and the runs already reported alive. */
+  private lastReconcile: number | null = null;
+  private lostSeen = new Set<string>();
+  private readonly lostAlertedAlive = new Set<string>();
   private recheckInFlight: Promise<void> | null = null;
   /** Tasks with a re-review running — the automatic re-check or a manual one. */
   private readonly reverifying = new Set<string>();
@@ -948,6 +964,7 @@ export class Scheduler {
       this.runDueImprovements();
       this.runDueGates();
       this.store.reconcileBlocked();
+      this.reconcileLostRuns();
       // A trainer or an adoption gate holds the machine-wide local-model lock
       // for hours, and starting new work under it is how a 17 GB machine ends
       // up 33 GB into swap — the exact collision the lock was created for after
@@ -998,6 +1015,79 @@ export class Scheduler {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /**
+   * A run is lost when its row says 'running' but its execute() has settled; `active` is deleted only in launch's
+   * .finally, so "not in active" means exactly that. It happens when noteRunCrash's own writes fail, or when
+   * startRun's record throws in launch after the runs INSERT. At most every RECONCILE_MS by the injected clock.
+   * A candidate is seen on two reconciles in a row before anything is done to it.
+   *
+   * Registries deliberately NOT consulted, and why:
+   * - recheckInFlight is not keyed; its task is awaiting-approval and in `reverifying` while reviewed.
+   * - ApprovalTracker.inflight/.checks are not keyed; their tasks are done and covered by Store.landing.
+   * - verifyWaiters hold only runs that are in `active`.
+   * - the test-slot counter and queue carry no identity; the daemon's own test stage runs inside an active run,
+   *   and worker suites are covered by the run lease.
+   * - probes, dirtyHolds and redChecking are keyed by repo, not by run or task.
+   * - the freeze registries are keyed by group.
+   */
+  private reconcileLostRuns(): void {
+    if (this.lifetime.signal.aborted) return;
+    const now = this.now();
+    if (this.lastReconcile !== null && now - this.lastReconcile < RECONCILE_MS) return;
+    this.lastReconcile = now;
+    try {
+      const running = this.store.runningRuns();
+      const runIds = new Set(running.map((r) => r.id));
+      for (const id of this.lostAlertedAlive) if (!runIds.has(id)) this.lostAlertedAlive.delete(id);
+      const activeRuns = new Set([...this.active.values()].map((a) => a.runId));
+      const seen = new Set<string>();
+      for (const run of running) {
+        if (this.active.has(run.taskId) || activeRuns.has(run.id)) continue;
+        if (this.gating.has(run.taskId) || this.reverifying.has(run.taskId) || this.store.isLanding(run.taskId)) continue;
+        if (hasRunLease(run.id) || this.broker.hasReservation(run.taskId)) continue;
+        seen.add(run.id);
+        if (!this.lostSeen.has(run.id)) continue;
+        try {
+          this.endIfDead(run);
+        } catch (err) {
+          process.stderr.write(`foreman: lost run ${run.id} not settled: ${(err as Error).message}\n`);
+        }
+      }
+      this.lostSeen = seen;
+    } catch (err) {
+      process.stderr.write(`foreman: lost-run check failed: ${(err as Error).message}\n`);
+    }
+  }
+
+  private endIfDead(run: { id: string; taskId: string; pid: number | null }): void {
+    if (run.pid != null && Number.isInteger(run.pid) && run.pid > 0 && groupAlive(run.pid)) {
+      if (!this.lostAlertedAlive.has(run.id)) {
+        this.lostAlertedAlive.add(run.id);
+        safeRecord(this.store, {
+          taskId: run.taskId, runId: run.id, type: 'status',
+          message: `lost run ${run.id} still has a live process group ${run.pid}; left alone`,
+        });
+      }
+      return;
+    }
+    const status = this.store.getTask(run.taskId)?.status;
+    if (status === 'running' || status === 'verifying') {
+      try {
+        this.store.endLostRun(
+          run.taskId,
+          { failed: 'run lost by this daemon; no attempts left', requeued: 'requeued after a lost run' },
+          { safe: true },
+        );
+      } catch (err) {
+        process.stderr.write(`foreman: task ${run.taskId} not settled after a lost run: ${(err as Error).message}\n`);
+      }
+      // A task still running or verifying keeps its run row: ending it would leave the task nobody looks at.
+      const after = this.store.getTask(run.taskId)?.status;
+      if (after === 'running' || after === 'verifying') return;
+    }
+    this.store.endRun(run.id, 'failed', { summary: 'lost by this daemon' });
   }
 
   /**
