@@ -7,7 +7,7 @@ import { humanDuration, sweepJails } from './archive.ts';
 import {
   backupIfDue, backupMb, backupNow, backupSettings, requireNoInterruptedRestore, restoreFrom, sameDiskWarning,
 } from './backup.ts';
-import { approvals, pruneStaleMainWorktrees } from './gate.ts';
+import { APPROVAL_DRAIN_CAP_MS, approvals, pruneStaleMainWorktrees } from './gate.ts';
 import { runDrill } from './drill.ts';
 import { localOnly, modeSummary } from './localOnly.ts';
 import { sandboxMode, sandboxSummary, selfTest } from './security/sandbox.ts';
@@ -551,9 +551,15 @@ async function main(): Promise<number> {
     // The server does not exist until listen() resolves, and a persona spawn 'error' can fire before that:
     // shutdown closes it only once it is listening.
     let server: http.Server | undefined;
+    let exitCode = 0;
     const shutdown = async (code: number): Promise<void> => {
-      if (closing) return;
+      // A second call while closing (an uncaught exception during a signal's drain) only raises the code.
+      if (closing) {
+        exitCode = Math.max(exitCode, code);
+        return;
+      }
       closing = true;
+      exitCode = code;
       process.stdout.write('\nstopping…\n');
       try {
         clearInterval(jailTimer);
@@ -571,7 +577,15 @@ async function main(): Promise<number> {
         if (stuck) {
           process.stdout.write(`${stuck} approval(s) still landing after the shutdown cap; exiting anyway — check \`git status\` in their repos\n`);
         }
-        await scheduler.stop();
+        let capTimer: NodeJS.Timeout | undefined;
+        const capped = new Promise<'capped'>((r) => { capTimer = setTimeout(() => r('capped'), APPROVAL_DRAIN_CAP_MS); });
+        try {
+          if ((await Promise.race([scheduler.stop(), capped])) === 'capped') {
+            process.stderr.write(`shutdown: the scheduler did not stop within ${APPROVAL_DRAIN_CAP_MS}ms; exiting anyway\n`);
+          }
+        } finally {
+          clearTimeout(capTimer);
+        }
       } catch (err) {
         process.stderr.write(`shutdown: ${(err as Error).message}\n`);
       } finally {
@@ -584,7 +598,7 @@ async function main(): Promise<number> {
           /* already closed or never usable; the lock still goes */
         }
         releaseLock();
-        process.exit(code);
+        process.exit(exitCode);
       }
     };
     // After the recorder and before anything that can spawn: a stray rejection is recorded and survived, an uncaught

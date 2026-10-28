@@ -33,3 +33,30 @@ process.stdout.write = function (this: NodeJS.WriteStream, ...args: unknown[]) {
   }
   return done;
 } as typeof process.stdout.write;
+
+// Shutdown-path modes (test/daemon-guard-shutdown.test.ts): they patch the scheduler's stop() in this process.
+if (mode === 'stop-throws' || mode === 'stop-hangs') {
+  const { Scheduler } = await import('../../src/scheduler.ts');
+  if (mode === 'stop-throws') {
+    // An uncaught exception lands while the drain is in progress, then stop() settles.
+    Scheduler.prototype.stop = function () {
+      setImmediate(() => {
+        throw new Error('injected exception');
+      });
+      return new Promise<void>((resolve) => setImmediate(resolve));
+    };
+  } else {
+    // stop() never settles; the 60 s drain cap is shortened to 300 ms once a SIGTERM has arrived.
+    const setT = globalThis.setTimeout;
+    let hung = false;
+    globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) =>
+      setT(fn, hung && ms === 60_000 ? 300 : ms, ...rest)) as typeof setTimeout;
+    // The cap timer is armed before stop() is called, so the shortening starts at the signal (this listener runs first).
+    process.on('SIGTERM', () => { hung = true; });
+    Scheduler.prototype.stop = function () {
+      return new Promise<void>(() => {});
+    };
+  }
+}
+const marker = process.env['GUARD_EXIT_MARKER'];
+if (marker) process.on('exit', () => fs.writeFileSync(marker, 'exit listener ran'));
