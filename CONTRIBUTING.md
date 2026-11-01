@@ -25,9 +25,9 @@ npm run verify    # typecheck, then the whole suite, then scripts/checks/*.ts
 native one (`tsgo`) and `tsc` might disagree.
 
 The OS sandbox (`FOREMAN_SANDBOX`, default `tests`) exists only on macOS, where it uses `sandbox-exec`
-(`sandboxAvailable()` in `src/security/sandbox.ts`). On any other platform, including Linux, a sandboxed
-command is refused rather than run unsandboxed, so set `FOREMAN_SANDBOX=off` there. The test suites
-set it to `off` themselves, so `npm run verify` does not need a sandbox. See
+(`sandboxAvailable()` in `src/security/sandbox.ts`). On any other platform, including Linux, `foreman serve`
+refuses to start and a sandboxed command is refused rather than run unsandboxed, so set `FOREMAN_SANDBOX=off`
+there. The test suites set it to `off` themselves, so `npm run verify` does not need a sandbox. See
 "The sandbox" in [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox).
 
 A version manager that puts a shim or symlink directory on `PATH` instead of a node install (volta, fnm)
@@ -69,7 +69,7 @@ Every pull request is reviewed by the maintainer, and only the maintainer merges
 - **New check**: add a `scripts/checks/*.ts` file; never edit `scripts/verify.sh`. Verify runs each one
   as `node <file>` after the suite (see `scripts/checks/README.md`).
 - **`PROTECTED_PATHS`** (`src/security/coreGuard.ts`): a change to the list, or to any file on it, needs
-  a ticket with `allowCore`, and a maintainer lands it by hand.
+  a ticket with `allowCore`, and a maintainer approves and lands it: the owner model never may (`src/gate.ts`).
 
 ## Licence of contributions
 
