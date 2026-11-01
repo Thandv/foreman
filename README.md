@@ -24,7 +24,7 @@ npm ci          # dev-only dependencies
 npm link        # puts `foreman` on your PATH
 ```
 
-Then follow Quick start.
+Quick start repeats these three steps, then starts the daemon.
 
 ## Quick start
 
@@ -89,7 +89,8 @@ In brief; the full text is [docs/security.md](docs/security.md) and [SECURITY.md
 - **Sandbox.** `FOREMAN_SANDBOX` is `off`, `tests` or `all`; unset means `tests` (`src/security/sandbox.ts:54`).
   It runs test commands, playbook checks, `shell` tasks, the `api` runner's shell and tool calls and the post-merge
   check under macOS `sandbox-exec`: they write only their jail and a private temp/home, read nothing a person owns, and
-  cannot open the control port.
+  cannot open the control port. `FOREMAN_SANDBOX_ALLOW=fsevents` lets file watching work inside it (off by default);
+  see [The sandbox](docs/security.md#the-sandbox-foreman_sandbox).
 - **`all` behaves as `tests`.** It is accepted, but the claude-code worker is not sandboxed yet
   (`src/security/sandbox.ts:7`). A claude-code worker runs as you, with your files and the daemon's API in reach.
 - **Linux.** There is no sandbox: `sandboxAvailable()` answers that it needs macOS `sandbox-exec`
@@ -97,7 +98,7 @@ In brief; the full text is [docs/security.md](docs/security.md) and [SECURITY.md
   refuses to start. Set `FOREMAN_SANDBOX=off` to run without any sandbox.
 - **The API is unauthenticated.** It binds loopback only (`127.0.0.1`) unless `FOREMAN_ALLOW_REMOTE=1` is set
   (`src/server.ts:1419`). Approve takes no proof of who is calling: anything that can reach the port can approve a
-  task, and the route records the caller as `human` (`src/server.ts:763`).
+  task, and the route records the caller as `human` (`src/server.ts:765`).
 
 ## Known limitations
 

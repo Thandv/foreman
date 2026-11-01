@@ -5,8 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // '~2,600 tests', '2600 tests', '2600 tests passing', '2600 tests pass', '2598/2600 tests'. Digits only: prose such
-// as 'two tests' or 'the next ten' is not a count and is not matched.
-const COUNT = /(?:~\s*)?\d[\d,]*(?:\s*\/\s*\d[\d,]*)?\s+tests\b/gi;
+// as 'two tests' or 'the next ten' is not a count and is not matched, nor is a digit inside a word ('v2 tests', 'ES2022 tests').
+const COUNT = /(?<![\w.])(?:~\s*)?\d[\d,]*(?:\s*\/\s*\d[\d,]*)?\s+tests\b/gi;
 
 function markdownFiles(root: string): string[] {
   const out: string[] = [];

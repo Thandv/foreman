@@ -82,7 +82,7 @@ A daemon started with a relative `FOREMAN_HOME` (`.foreman`) resolves it once, a
 writes the absolute path back into its own environment). `claudeWorkerEnv` and `workerEnv` set a worker's
 `FOREMAN_HOME` to that resolved `config.home`, never the inherited text: a relative one resolves against the
 worker's cwd, its jail, and the sandbox then refuses the suite run with `the run's jail (…) contains Foreman's
-home`. Inside a worker run the CLI is refused (see Commands), so a worker's `foreman` command does not reach the ledger
+home`. Inside a worker run the CLI is refused (see [Commands](commands.md#commands)), so a worker's `foreman` command does not reach the ledger
 by accident.
 
 When a freeze recorder is installed (`src/runners/freezeRecord.ts`), `LeftoverReaper` writes the process groups it
@@ -103,7 +103,7 @@ or after the freeze began) is counted, is not cut short and decides its own exit
 ended by a signal it does not handle (Ctrl-C of `foreman watch`, a SIGTERM, a SIGKILL, or one of those re-raised as
 above) has no `exit` event, so it leaves its marker, and the next `foreman serve` sweep removes it with any other dead recorder's
 files. The process's identity is its pid and its zone-free start time; if that cannot be read, the recorder is FAILED.
-A worker's `testSlot.ts` is not itself sandboxed in this build (the `claude-code` worker is not; see below), so it
+A worker's `testSlot.ts` is not itself sandboxed in this build (the `claude-code` worker is not; see [The sandbox](security.md#the-sandbox-foreman_sandbox)), so it
 records like any other Foreman process: its marker, and the suite's leftover groups it freezes, go in the daemon's
 home, which its `FOREMAN_HOME` names. The suite it runs is in the `tests` sandbox, which closes Foreman's home. A
 recorder in a process that cannot write Foreman's home or read its own start (one inside the sandbox: the home is

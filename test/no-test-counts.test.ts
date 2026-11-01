@@ -38,7 +38,7 @@ test('the no-test-counts check fails and names file:line for a planted count in 
 });
 
 test('the no-test-counts check passes on prose that is not a count', () => {
-  const dir = tree({ 'README.md': 'Add two tests. The next ten tests, and tests 5 and 6, run first.\n', 'docs/a.md': 'Run the tests.\n' });
+  const dir = tree({ 'README.md': 'Add two tests. The next ten tests, and tests 5 and 6, run first. The v2 tests and ES2022 tests too.\n', 'docs/a.md': 'Run the tests.\n' });
   try {
     assert.equal(run(dir).status, 0);
   } finally {

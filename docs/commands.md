@@ -38,9 +38,9 @@ drill       local-only readiness probes (see Local-only mode)
 locks anything (`ls`, `add`, `restore`, `serve`, `approve`, `doctor`, …). The ledger is the daemon's.
 `testSlot.ts` is not `cli.ts` and is unaffected. A suite started by a worker does not inherit the marker
 (the wrapper drops it; `test/env.ts` clears it too). The guard is not a fence: a worker that unsets or empties
-`FOREMAN_RUN_ID` (`env -u FOREMAN_RUN_ID …`) is not refused, and see "A worker's `FOREMAN_HOME`".
+`FOREMAN_RUN_ID` (`env -u FOREMAN_RUN_ID …`) is not refused, and see [A worker's `FOREMAN_HOME`](lifecycle.md#a-workers-foreman_home).
 
 `foreman add` flags: `--kind --runner --repo --agent --priority --after --sensitivity --budget
---test-cmd --no-merge --repairs --prompt --role --playbook --assignee --skills --allow-core` (see Skills;
-`--allow-core` is not in `foreman help`, see Self-improvement).
+--test-cmd --no-merge --repairs --prompt --role --playbook --assignee --skills --allow-core` (see [Skills](skills.md);
+`--allow-core` is not in `foreman help`, see [Self-improvement](self-improvement.md)).
 

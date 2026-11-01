@@ -7,8 +7,8 @@ foreman schedule add "weekly self-improvement" --spec "weekly sun 09:00" --impro
 ```
 
 Foreman reads its own ledgers — outcomes by runner, council verdicts, top
-errors, rejections with reasons, quarantined tools, and this README's own
-limitations list — and proposes one fix, queued as an ordinary code task with
+errors, rejections with reasons, quarantined tools, and the README's own
+limitations list (the same list as [limitations.md](limitations.md)) — and proposes one fix, queued as an ordinary code task with
 the full suite as its gate.
 
 **The guardrails are code, not prose.** `PROTECTED_PATHS` (security scanning
