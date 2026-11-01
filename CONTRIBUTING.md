@@ -2,10 +2,10 @@
 
 Foreman is parallel agent mission control: you queue tasks, it runs them concurrently in isolated
 workers (a git worktree or scratch directory per run), verifies each result with tests and a
-multi-model council, and parks everything at a human gate. Nothing merges until a person approves
-it. The [README](README.md) is the quick start. For the design read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-for running it [docs/OPERATING.md](docs/OPERATING.md), and for every setting
-[docs/configuration.md](docs/configuration.md); read the parts you intend to change.
+multi-model council, and parks everything at a human gate. By default nothing merges until a person
+approves it (an opt-in owner gate can approve for you). The [README](README.md) is the quick start. For
+the design read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), for running it [docs/OPERATING.md](docs/OPERATING.md),
+and for every setting [docs/configuration.md](docs/configuration.md); read the parts you intend to change.
 
 ## Setup
 
