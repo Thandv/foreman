@@ -180,7 +180,7 @@ test('search is granted only when asked for, S0 is granted like S1, and the host
 });
 
 test('the README and the research assistant say what the host list does not do', () => {
-  const readme = fs.readFileSync(path.resolve('README.md'), 'utf8');
+  const readme = fs.readFileSync(path.resolve('docs/crews.md'), 'utf8');
   const web = readme.slice(readme.indexOf('A playbook may grant web access'), readme.indexOf('Turn it off with `"web": false`'));
   assert.match(web, /not a network boundary/, 'the list limits the tool, not an unsandboxed worker');
   assert.match(web, /CLI_PREAPPROVED_FETCH_HOSTS/, 'the hosts the CLI fetches without a rule are named');

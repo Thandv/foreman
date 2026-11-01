@@ -3,7 +3,7 @@
 Foreman is parallel agent mission control: you queue tasks, it runs them concurrently in isolated
 workers (a git worktree or scratch directory per run), verifies each result with tests and a
 multi-model council, and parks everything at a human gate. Nothing merges until a person approves
-it. The [README](README.md) describes the whole system; read the parts you intend to change.
+it. The [README](README.md) is the quick start and [docs/](docs/lifecycle.md) describes the whole system; read the parts you intend to change.
 
 ## Setup
 
@@ -23,11 +23,11 @@ npm run verify    # typecheck, then the whole suite, then scripts/checks/*.ts
 native one (`tsgo`) and `tsc` might disagree.
 
 Foreman is developed on macOS. The test sandbox (`FOREMAN_SANDBOX`) uses macOS `sandbox-exec`; see
-"The sandbox" in the README for what that means on other systems.
+"The sandbox" in [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox) for what that means on other systems.
 
 A version manager that puts a shim or symlink directory on `PATH` instead of a node install (volta, fnm)
 is not opened automatically: name that directory in `FOREMAN_SANDBOX_RO` before starting `foreman serve`
-(the directory itself, not your home); see [the sandbox](README.md#the-sandbox-foreman_sandbox).
+(the directory itself, not your home); see [the sandbox](docs/security.md#the-sandbox-foreman_sandbox).
 
 ## Proposing a change
 
@@ -51,7 +51,7 @@ Every pull request is reviewed by the maintainer, and only the maintainer merges
 - Safety properties do not regress: admission blocks, the worker jail, `PROTECTED_PATHS` (the core
   guard), merge-only-on-approval and the sandbox stay exactly as strict.
 - Errors are surfaced, never swallowed; a failed run leaves a trace in the ledger.
-- Documentation that describes behaviour (the README, command help) is updated in the same change.
+- Documentation that describes behaviour (the README, `docs/`, command help) is updated in the same change.
 
 ## Licence of contributions
 
