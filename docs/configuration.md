@@ -2,12 +2,12 @@
 
 Every `FOREMAN_*` variable `src/` reads has one row below; `scripts/checks/config-truth.ts` (run by `npm run verify`)
 fails when a variable is read and has no row, or has a row and is never read. "Unset" means the variable is not in the
-environment. Leave a variable unset rather than empty or wrong. The numeric ones read through `config.ts`, `budget.ts`
-and the slot code check the parsed number and fall back to the default (the Effect column says where one throws
-instead), but a reader written as `value ?? default` uses an empty value as it is: an empty path or URL stays empty
-(for example `FOREMAN_TOOLS_DIR`, `FOREMAN_OLLAMA_URL`), an empty number reads as 0, and a value that is not a number
-reads as NaN (for example `FOREMAN_HIGH_PRIORITY`, `FOREMAN_TOOL_QUARANTINE_AFTER`, `FOREMAN_TOOL_TIMEOUT_MS`,
-`FOREMAN_PREWARM_TIMEOUT_MS`, `FOREMAN_FAST_VERIFY_MAX_LINES`, `FOREMAN_IMPROVE_PRIORITY`,
+environment. Leave a variable unset rather than empty or wrong. A number read in `src/config.ts` keeps its default when
+empty, and a value that is not a number throws. The numbers read in `budget.ts` and the slot code check the parsed
+value and keep the default. A reader written as `value ?? default` uses an empty value as it is: an empty path or URL
+stays empty (for example `FOREMAN_TOOLS_DIR`, `FOREMAN_OLLAMA_URL`), an empty number reads as 0, and a value that is
+not a number reads as NaN (for example `FOREMAN_HIGH_PRIORITY`, `FOREMAN_TOOL_QUARANTINE_AFTER`,
+`FOREMAN_TOOL_TIMEOUT_MS`, `FOREMAN_PREWARM_TIMEOUT_MS`, `FOREMAN_FAST_VERIFY_MAX_LINES`, `FOREMAN_IMPROVE_PRIORITY`,
 `FOREMAN_IMPROVE_BUDGET_USD`, `FOREMAN_MODEL_TIMEOUT_MS`, `FOREMAN_API_MAX_TURNS`). `FOREMAN_RUN_ID` and
 `FOREMAN_WORKER_TEST_CMD` are set by Foreman for a worker's session, never by you, and a few more are read only by
 tests; none of those is in the table. Two families are read under names built at run time, so they are not rows:
@@ -18,7 +18,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 |---|---|---|---|
 | `FOREMAN_HOME` | `~/.foreman` | Foreman's data directory: ledger, work trees, artifacts, traces, backups. A relative value is resolved once and written back, so every child sees the same absolute path | `src/config.ts` |
 | `FOREMAN_DB` | `$FOREMAN_HOME/foreman.db` | Path of the SQLite ledger | `src/config.ts` |
-| `FOREMAN_TOOLBOX` | `<repo>/toolbox` | The forged-tool catalog (git-tracked source of the tools) | `src/config.ts` |
+| `FOREMAN_TOOLBOX` | `<repo>/toolbox` | The forged-tool catalog (git-tracked source of the tools) | `src/config.ts`, `src/tools/catalog.ts` |
 | `FOREMAN_TOOLS_DIR` | `$FOREMAN_TOOLBOX` | Overrides the catalog directory outright (used in tests) | `src/tools/catalog.ts` |
 | `FOREMAN_PORT` | `4100` | Port the daemon and board listen on; workers use it to reach the daemon for a test slot | `src/config.ts` |
 | `FOREMAN_HOST` | `127.0.0.1` | Address the daemon binds. A non-loopback address is refused unless `FOREMAN_ALLOW_REMOTE=1` | `src/config.ts` |
@@ -36,16 +36,16 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_TICK_MS` | `250` | Scheduler tick interval | `src/config.ts` |
 | `FOREMAN_LOG_LINES` | `2000` | Log lines kept per run in SQLite (the full log stays on disk) | `src/config.ts` |
 | `FOREMAN_TRACE_RETAIN_DAYS` | `14` | Days of daily trace files kept | `src/config.ts` |
-| `FOREMAN_JAIL_RETAIN_DAYS` | `3` | Days a merged or archived task's worktree is kept | `src/config.ts` |
-| `FOREMAN_FAILED_JAIL_RETAIN_DAYS` | `14` | Days a failed task's worktree is kept after it last moved; negative keeps it for ever | `src/config.ts` |
+| `FOREMAN_JAIL_RETAIN_DAYS` | `3` | Days a merged or archived task's worktree is kept (at least 1); negative keeps them | `src/config.ts` |
+| `FOREMAN_FAILED_JAIL_RETAIN_DAYS` | `14` | Days a failed task's worktree is kept after it last moved (at least 1); negative keeps it for ever | `src/config.ts` |
 | `FOREMAN_ARCHIVE_AFTER_DAYS` | `7` | Days after a task closes before it is archived; `0` archives at once, negative turns the sweep off | `src/scheduler.ts` |
 | `FOREMAN_RECHECK_MS` | `60000` | Interval of the re-check of verdicts made while a model had stepped down; negative turns it off | `src/scheduler.ts` |
-| `FOREMAN_REDCHECK_MS` | `15000` | How often a repo marked red is re-checked | `src/scheduler.ts` |
+| `FOREMAN_REDCHECK_MS` | `15000` | How often the repos marked red are looked at: a moved HEAD is re-checked then, the same HEAD only after a backoff (10, 30, 60 minutes, then hourly) and while a verify slot is free | `src/scheduler.ts` |
 | `FOREMAN_REVERIFY_WAIT_MS` | `900000` (15 min) | How long `foreman reverify` waits for one review | `src/cli.ts` |
 | `FOREMAN_DIFF_CAP_BYTES` | `24000` | Largest code diff shown to a reviewer | `src/config.ts` |
 | `FOREMAN_PROSE_DIFF_CAP_BYTES` | `160000` | The same cap for a prose review | `src/config.ts` |
 | `FOREMAN_CREW_CODE_DIFF_CAP_BYTES` | `96000` | The same cap for the crew chain's code review | `src/config.ts` |
-| `FOREMAN_LOG_TAIL_LINES` | `40` | Log lines of a failed run shown in a repair or review brief | `src/config.ts` |
+| `FOREMAN_LOG_TAIL_LINES` | `40` | Lines of the run's log tail shown to the review council | `src/config.ts` |
 | `FOREMAN_LOG_TAIL_BYTES` | `4000` | Byte budget for that log tail | `src/config.ts` |
 | `FOREMAN_MEMORY_BRIEF_BYTES` | `2000` | Byte budget for remembered facts in a brief | `src/config.ts` |
 | `FOREMAN_REPAIR_BRIEF_BYTES` | `16000` | Byte budget for the critique and operator demands a repair round acts on | `src/config.ts` |
@@ -54,12 +54,12 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_CITED_SOURCE_BYTES` | `64000` | Byte budget for the source a changed document cites, attached to a review | `src/config.ts` |
 | `FOREMAN_PRE_REVIEW_REPAIRS` | `2` | Automatic repair rounds for a gap found before review (acceptance map, scope), apart from the normal repair count | `src/config.ts` |
 | `FOREMAN_REVERT_TESTS` | off | `on` runs each test a code diff adds or changes with the diff's non-test files put back to base, and shows the per-test table to the reviewer and the owner gate. Anything but `on`/`off` throws. See [The revert check, per test](security.md#the-revert-check-per-test-foreman_revert_tests) | `src/config.ts` |
-| `FOREMAN_VERIFY` | on | `off` skips verification (tests, review) | `src/scheduler.ts` |
+| `FOREMAN_VERIFY` | on | `off` skips the review (the pre-review checks, the council and the crew chain). The tests still run and a failure still sends the work back; work that passes parks for approval unreviewed | `src/scheduler.ts` |
 | `FOREMAN_POSTMERGE_CHECK` | on | `off` skips the main check after a merge | `src/postMerge.ts` |
-| `FOREMAN_FAST_VERIFY` | off | `1` or `on` lets a small diff skip the full review | `src/verify/triage.ts` |
+| `FOREMAN_FAST_VERIFY` | off | `1` or `on` gives a whitespace-only diff, or a small one that touches only docs or config, one review instead of the full council (anything but a pass goes on to the full council); code and security-adjacent paths never qualify | `src/verify/triage.ts` |
 | `FOREMAN_FAST_VERIFY_MAX_LINES` | `20` | Largest changed-line count that still counts as small | `src/verify/triage.ts` |
 | `FOREMAN_CREW_REVIEW` | `escalate` | `always` runs the crew chain on every ticket and its verdict lands; anything else escalates to it only when needed | `src/verify/crewReview.ts` |
-| `FOREMAN_GATE` | `human` | `owner` lets the Owner model decide a ticket this process watched park at the gate | `src/gate.ts` |
+| `FOREMAN_GATE` | `human` | `owner` lets the Owner model decide a ticket this process watched park at the gate when neither the ticket (`--gate`), its playbook nor the board's switch says who decides; never under local-only mode or while the Claude CLI is down. See [Crew mode](crews.md#crew-mode) | `src/gate.ts` |
 | `FOREMAN_GATE_BATCH` | on | `off` gates tickets one by one instead of in batches | `src/gate.ts` |
 | `FOREMAN_ASSIGNEE` | `ai` | `ai` or `human`: who a ticket is assigned to when neither the ticket nor its playbook says. The board's toggle, once flipped, wins over this variable | `src/assign.ts` |
 | `FOREMAN_COUNCIL_DEADLINE_SHARE` | `0.4` | Share of the remaining run time the gate council may use (clamped to 0.1-0.9, at least 30 s) | `src/scheduler.ts` |
@@ -71,16 +71,16 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_DAILY_SUBSCRIPTION_USD_CAP` | `200` | Daily ceiling on notional subscription spend, at list price | `src/budget.ts` |
 | `FOREMAN_IMPROVE_PRIORITY` | `-10` | Priority of a self-improvement task (below real work) | `src/improve.ts` |
 | `FOREMAN_IMPROVE_BUDGET_USD` | `0.5` | Spend allowed to one self-improvement task | `src/improve.ts` |
-| `FOREMAN_MODEL_OWNER` | `opus` | Model alias for the owner tier; set, it wins even in local-only mode | `src/roles.ts` |
-| `FOREMAN_MODEL_SENIOR` | `opus` | Model alias for the senior tier | `src/roles.ts` |
-| `FOREMAN_MODEL_WORKER` | `sonnet` | Model alias for the worker tier | `src/roles.ts` |
+| `FOREMAN_MODEL_OWNER` | `opus` (a local model on the local plane) | Model alias for the owner tier; set, it wins even in local-only mode | `src/roles.ts` |
+| `FOREMAN_MODEL_SENIOR` | `opus` (a local model on the local plane) | Model alias for the senior tier | `src/roles.ts` |
+| `FOREMAN_MODEL_WORKER` | `sonnet` (a local model on the local plane) | Model alias for the worker tier | `src/roles.ts` |
 | `FOREMAN_MODEL_ROUTER` | `haiku` | Model that classifies an ambiguous request; only Claude aliases count, others fall back to `haiku` | `src/assistant/crewPlan.ts` |
 | `FOREMAN_MAX_TURNS_OWNER` | `40` (falls back to `FOREMAN_MAX_TURNS_SENIOR` when set) | Agent-loop turn cap for owner-tier tickets | `src/roles.ts` |
 | `FOREMAN_MAX_TURNS_SENIOR` | `40` | Agent-loop turn cap for senior-tier tickets | `src/roles.ts` |
 | `FOREMAN_MAX_TURNS_WORKER` | `30` | Agent-loop turn cap for worker-tier tickets | `src/roles.ts` |
 | `FOREMAN_MAX_PLAN_TICKETS` | `30` | Most tickets a plan an operator hands in over the wire (edited or written by hand) may hold. The owner's own plan stays capped at 12 | `src/assistant/crewPlan.ts` |
 | `FOREMAN_PLAN_TIMEOUT_MS` | `480000` | Time allowed to produce a plan | `src/assistant/crewPlan.ts` |
-| `FOREMAN_CLAUDE_BIN` | `claude` | The Claude CLI binary | `src/runners/cliRunners.ts`, `src/models.ts` |
+| `FOREMAN_CLAUDE_BIN` | `claude` | The Claude CLI binary | `src/runners/cliRunners.ts`, `src/models.ts`, `src/assistant/ownerCall.ts` |
 | `FOREMAN_CLAUDE_ARGS` | unset | Extra arguments for the Claude CLI, split on whitespace | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_PERMISSION_MODE` | `acceptEdits` | `--permission-mode` passed to the Claude CLI | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_CONFIG_DIR` | `$FOREMAN_HOME/claude-config` | Folder all worker config directories live under | `src/runners/claudeIsolation.ts` |
@@ -90,13 +90,13 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_CLAUDE_RESUME` | on | `off` stops a repair round resuming the worker's previous Claude session | `src/scheduler.ts` |
 | `FOREMAN_CODEX_BIN` | `codex` | The Codex CLI binary | `src/runners/cliRunners.ts` |
 | `FOREMAN_CODEX_ARGS` | unset | Extra arguments for the Codex CLI, split on whitespace | `src/runners/cliRunners.ts` |
-| `FOREMAN_API_MAX_TURNS` | `12` | Turn cap of the api runner | `src/runners/api.ts` |
+| `FOREMAN_API_MAX_TURNS` | `12` | Turn cap of the api runner; a crew ticket gets its tier's `FOREMAN_MAX_TURNS_*` instead when that is higher | `src/runners/api.ts` |
 | `FOREMAN_API_REPEAT_NUDGE` | `3` | The api runner tells a model it got the same result from the same call this many times in a row; below 2 turns it off | `src/runners/api.ts` |
 | `FOREMAN_API_REPEAT_STOP` | `5` | It ends the run at this many; below 2 turns it off | `src/runners/api.ts` |
 | `FOREMAN_API_ALLOW_SHELL` | on | `0` disables the api runner's `run_shell` tool | `src/runners/api.ts` |
 | `FOREMAN_TOOL_SURFACE` | full | `sparse`: the api runner lists only the role's own tools in full and the rest by name | `src/runners/api.ts` |
 | `FOREMAN_TOOL_TIMEOUT_MS` | `120000` | Default timeout of a catalog tool run | `src/tools/run.ts` |
-| `FOREMAN_TOOL_QUARANTINE_AFTER` | `3` | Failures before a tool is quarantined | `src/tools/catalog.ts` |
+| `FOREMAN_TOOL_QUARANTINE_AFTER` | `3` | Consecutive failures before a tool is quarantined | `src/tools/catalog.ts` |
 | `FOREMAN_LOCAL_ONLY` | `auto` | `1`/`true`/`yes`/`on`: nothing leaves the machine. `0`/`false`/`no`/`off`: cloud and local mixed. Otherwise `auto`: mixed while the Claude CLI works, local plane while it does not | `src/localOnly.ts` |
 | `FOREMAN_LOCAL_MAX_OUTPUT_TOKENS` | `8192` for drafting roles and writing tickets, else `2048` | Output-token ceiling of a local model call | `src/localOnly.ts` |
 | `FOREMAN_LOCAL_NUM_CTX` | `16384` for writing tickets and non-dev roles, else `8192` | Context window of a local model call | `src/localOnly.ts` |
@@ -129,10 +129,10 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_BACKUP_COPY_DIR` | unset | A second copy on another disk; unset, `serve` warns | `src/backup.ts` |
 | `FOREMAN_DEPS_MODE` | `clone` | How a worktree gets its dependencies: `clone`, `symlink` or `off` | `src/deps.ts` |
 | `FOREMAN_IGNORE_TRAINING_LOCK` | unset | `1` keeps the queue running while an adapter trains (otherwise it pauses) | `src/scheduler.ts` |
-| `FOREMAN_SANDBOX` | `tests` | `off`, `tests` or `all`: what runs inside the sandbox; anything else throws. `src/deps.ts` also reads it, only to name the mode when the value is unreadable (as written, `on` when unset). See [The sandbox](security.md#the-sandbox-foreman_sandbox) | `src/security/sandbox.ts`, `src/deps.ts` |
+| `FOREMAN_SANDBOX` | `tests` | `off`, `tests` or `all`: what runs inside the sandbox; anything else throws. `src/deps.ts` reads it only to warn that `FOREMAN_DEPS_MODE=symlink` leaves a sandboxed command without its dependencies. See [The sandbox](security.md#the-sandbox-foreman_sandbox) | `src/security/sandbox.ts`, `src/deps.ts` |
 | `FOREMAN_SANDBOX_RO` | unset | Colon-separated extra read-only paths for a sandboxed command | `src/security/sandbox.ts` |
-| `FOREMAN_SANDBOX_DENY_PORTS` | `8000,8001,8002,3010` | Loopback ports a sandboxed command may not connect to, besides the control port | `src/security/sandbox.ts` |
-| `FOREMAN_SANDBOX_ALLOW` | unset | Known allowances, such as `fsevents` | `src/security/sandbox.ts` |
+| `FOREMAN_SANDBOX_DENY_PORTS` | `8000,8001,8002,3010` | Loopback ports a sandboxed command may not connect to, besides the control port (at most 4; a bad list is refused) | `src/security/sandbox.ts` |
+| `FOREMAN_SANDBOX_ALLOW` | unset | Allowances a sandboxed command gets only when named (comma or space separated): `fsevents`, file watching, is the only one; an unknown name is refused | `src/security/sandbox.ts` |
 | `FOREMAN_FREEZE_SWEEP_GRACE_MS` | `2000` | Shortens the start-up freeze sweep's grace (digits only) | `src/runners/freezeSweep.ts` |
 | `FOREMAN_FREEZE_SWEEP_CAP_MS` | grace plus 5 s | Shortens the start-up freeze sweep's cap (digits only; never above grace plus 5 s) | `src/runners/freezeSweep.ts` |
 | `FOREMAN_LEFTOVER_SAMPLE_MS` | `3000` | Interval between samples of a command's process tree while it runs, used to find processes it leaves behind; `0` turns sampling off (an empty value also reads as 0) | `src/runners/proctree.ts` |

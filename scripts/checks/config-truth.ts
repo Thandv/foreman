@@ -7,7 +7,7 @@ import ts from 'typescript';
 
 // Exempt in both directions, each with its reason. Add only after checking the read site in src/.
 const ALLOW: Record<string, string> = {
-  FOREMAN_ECHO_STEP_MS: 'step delay of the echo runner (src/runners/echo.ts), the demo/self-test worker; only test/env.ts sets it',
+  FOREMAN_ECHO_STEP_MS: 'step delay of the echo runner (src/runners/echo.ts), the demo/self-test worker; set only by tests',
   FOREMAN_FREEZE_SWEEP_FAULT: 'fault injection for tests (src/runners/freezeSweep.ts): hang|throw',
   FOREMAN_WORKER_TEST_CMD: 'set by Foreman for a worker run (src/verify/testSlot.ts), never by an operator',
   FOREMAN_RUN_ID: 'set by Foreman for a worker run (src/cli.ts, src/verify/testSlot.ts), never by an operator',
