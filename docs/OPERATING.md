@@ -20,9 +20,10 @@ Every approve, reject, cancel, retry and reopen is one row in the ledger's `deci
 
 **What cancel does to the worktree.** Cancelling a running task ends its run, and a worktree that run created is removed
 with it, unless the run had already reached its review: reviewed work that is cancelled is kept on disk for you to
-inspect (`src/scheduler.ts`, the `keepJail` branch). A queued task has no worktree of its own yet. A worktree that a
-cancel leaves behind is removed later by `foreman prune` and by the retention sweep (`FOREMAN_JAIL_RETAIN_DAYS`,
-`FOREMAN_FAILED_JAIL_RETAIN_DAYS`). Cancelling a parent also cancels its descendants.
+inspect (`src/scheduler.ts`, the `keepJail` branch). Cancelling a queued task removes nothing: a worktree kept from an
+earlier attempt (after a stop or a timeout) stays. A worktree that a cancel leaves behind is removed later by
+`foreman prune` and by the retention sweep (`FOREMAN_JAIL_RETAIN_DAYS`, `FOREMAN_FAILED_JAIL_RETAIN_DAYS`). Cancelling
+a parent also cancels its descendants.
 
 ## Housekeeping
 
@@ -40,21 +41,26 @@ cancel leaves behind is removed later by `foreman prune` and by the retention sw
   Stop the daemon first (`foreman stop`), restore, then `foreman serve`.
 - **Doctor.** `foreman doctor` probes the models, runners, agents and budget, and runs a scratch-jail check that the
   suite wrapper a worker uses works from inside a jail. `--bench` scores each local model and re-points the roster;
-  `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20).
+  `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20). These two read the
+  database directly and need no daemon.
 - **Restart.** There is no `restart` command. Run `foreman stop` (it waits up to 90 seconds for in-flight work to wind
-  down, then reports the daemon still shutting down) and then `foreman serve`. A stop is not a verdict on work in
-  flight: running tasks go back in the queue, with their worktrees kept.
+  down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd (the plist
+  `foreman service` prints sets `KeepAlive`), launchd starts the daemon again by itself after the stop: do not also
+  run `foreman serve`, and unload the launchd job first when the daemon must stay stopped, as for a restore. A stop
+  is not a verdict on work in flight: running tasks go back in the queue, with their worktrees kept.
 
 ## Reading a failed run
 
 1. `foreman show <taskId>`: the status, the `error:` line, the council's verdicts and each reviewer's critique, the
    decisions recorded on the task, and the last 25 timeline events.
 2. `foreman trace <taskId>`: the full JSON reconstruction, for what `show` cuts.
-3. Read the **note** before the code. The task's note is the first failure, and a repair round's note names what
-   happened to the run before it (a deadline, a turn limit, a provider limit, a cancel). A run that reaches
-   `FOREMAN_TASK_TIMEOUT_MS` is a timeout, not a cancel, and its worktree is kept.
+3. Read the **note** before the code. The `error:` line is the note of the task's latest status change: for a
+   `failed` task, the critique or the error that ended it. A repair round's brief opens with what ended the run before
+   it (a time limit, a turn limit, a provider limit, a cancel). A run that reaches `FOREMAN_TASK_TIMEOUT_MS` is a
+   timeout, not a cancel, and its worktree is kept.
 4. Decide: `retry --note` when the work should run again with new instructions; `reopen` when the work is right and
-   you want to decide yourself; `reject` when it is wrong.
+   you want to decide yourself (then `approve` or `reject` it at the gate). When it is wrong and not worth another
+   attempt, leave it: a `failed` task is already closed, and `reject` does not apply to it.
 
 ## Load
 
@@ -65,8 +71,9 @@ cancel leaves behind is removed later by `foreman prune` and by the retention sw
   worker waits in line for a slot to run its own suite; that wait is not charged to its run, up to
   `FOREMAN_SLOT_WAIT_CREDIT_MS` (default 30 minutes), and a wrapper that waits longer than `FOREMAN_SLOT_WAIT_MS`
   (default 10 minutes) gives up without running the suite.
-- `FOREMAN_OLLAMA_CONCURRENCY` (default 2) caps simultaneous local model calls. Workers beyond it sit in `verifying`,
-  so raising `FOREMAN_MAX_WORKERS` without it moves the queue rather than shortening it.
+- `FOREMAN_OLLAMA_CONCURRENCY` (default 2) caps simultaneous local model calls; a call beyond it waits its turn,
+  whether a worker or a reviewer made it. With local models, raising `FOREMAN_MAX_WORKERS` without it lengthens that
+  wait rather than the work done at once.
 - `FOREMAN_DAILY_USD_CAP` (default 5) is the spend cap per day.
 
 Start low: four workers with two suite runners fits a laptop. Raise `FOREMAN_MAX_VERIFIES` only when suite runs are

@@ -2,30 +2,18 @@
 // Usage: node scripts/checks/ops-commands.ts [root-dir]
 //
 // The CLI is never run here: it is refused inside a worker run, and every command writes under FOREMAN_HOME.
-// The names are read from src/cli.ts as text, from three places that together are its command list:
-//   1. the `USAGE` help table: lines that start with two spaces and `foreman <cmd>`;
-//   2. the dispatch `switch (cmd)`: its `case '<cmd>':` labels (one indent level inside the switch);
-//   3. the `cmd === '<cmd>'` branches that run before the switch (serve, stop, ...), and `help`.
-// Only the top-level command is checked; a subcommand or flag after it (`approve --as-is`) is not.
-// test/ops-commands.test.ts pins this parse against the real `foreman help` output.
+// The names are what `foreman help` prints, read from src/cli.ts as text: the `USAGE` table's lines that start with
+// two spaces and `foreman <cmd>`, and `help` itself. Only the top-level command is checked; a subcommand or flag after
+// it (`approve --as-is`) is not. test/ops-commands.test.ts pins this parse to the real `foreman help` output.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DOCS = ['docs/OPERATING.md', 'docs/commands.md'];
 
-/** The command names in cli.ts source text. */
+/** The commands `foreman help` names, from the USAGE table in cli.ts source text, and `help`. */
 export function commandNames(cliSource: string): Set<string> {
-  const names = new Set<string>(['help']);
-  for (const m of cliSource.matchAll(/^ {2}foreman ([a-z][a-z-]*)/gm)) names.add(m[1]!);
-  for (const m of cliSource.matchAll(/^ {4}case '([a-z][a-z-]*)':/gm)) names.add(m[1]!);
-  for (const m of cliSource.matchAll(/\bcmd === '([a-z][a-z-]*)'/g)) names.add(m[1]!);
-  return names;
-}
-
-/** Just the help table's names (what `foreman help` prints), for the test that pins the parse. */
-export function helpTableNames(cliSource: string): Set<string> {
-  return new Set([...cliSource.matchAll(/^ {2}foreman ([a-z][a-z-]*)/gm)].map((m) => m[1]!));
+  return new Set(['help', ...[...cliSource.matchAll(/^ {2}foreman ([a-z][a-z-]*)/gm)].map((m) => m[1]!)]);
 }
 
 /** Each `foreman <cmd>` written as code in a markdown text: inside a fence, or inside an inline `code span`. */
@@ -33,7 +21,7 @@ export function documentedCommands(md: string): Array<{ line: number; cmd: strin
   const out: Array<{ line: number; cmd: string }> = [];
   let fenced = false;
   md.split('\n').forEach((text, i) => {
-    if (/^\s*```/.test(text)) {
+    if (/^\s*(```|~~~)/.test(text)) {
       fenced = !fenced;
       return;
     }
