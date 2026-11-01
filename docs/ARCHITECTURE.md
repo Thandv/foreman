@@ -12,10 +12,10 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 | --- | --- |
 | `src/scheduler.ts` | The tick loop: claims queued tasks, runs a worker per task, moves it through verify, parks it for approval. Owns the run's check and the retry rules. |
 | `src/queue.ts` | The store: every write to the ledger tables, the task status funnel (`setStatus`), dependencies, epics, repairs, schedules, memory, caches. |
-| `src/debrief.ts` | Builds the per-ticket debrief (`<id>.md` and `<id>.json`) from the ledger. |
+| `src/debrief.ts` | Builds the debrief of a finished epic or ticket (`<id>.md` and `<id>.json`) from the ledger, traces and run logs. |
 | `src/cli.ts` | The `foreman` command: argument parsing and every subcommand. |
 | `src/verify/crewReview.ts` | The reviewer chain that reads a run's diff and returns a verdict and follow-ups. |
-| `src/gate.ts` | The human gate: approve and reject, and landing the approved change. |
+| `src/gate.ts` | The approval gate, decided by a person or the owner model: approve and reject, and handing an approved change to `src/merge.ts` to land. |
 | `src/server.ts` | The HTTP API and the static board. |
 | `src/assistant/crewPlan.ts` | Turns an ask into a planned epic of tickets. |
 | `src/models.ts` | The model roster: aliases, specs, the model-plane config. |
@@ -29,7 +29,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 | `src/playbooks.ts` | Loads playbooks (roles and their modes) and checks their skill lists. |
 | `src/prose/metrics.ts` | Prose measurements (sentences, length) for non-code tickets. |
 | `src/prose/tics.ts` | Prose tic detection for non-code tickets. |
-| `src/verify/revertCheck.ts` | Decides whether a change is code or documentation for the revert check. |
+| `src/verify/revertCheck.ts` | The revert check's helpers (a scratch tree at the base, per-file test commands, which paths are docs); `src/verify/revertTests.ts` is built on them. |
 | `src/assistant/planCheck.ts` | Checks a plan before it is queued. |
 | `src/runners/cliRunners.ts` | Runs the external model CLIs as workers. |
 | `src/backup.ts` | Daily database backup and restore. |
@@ -38,7 +38,7 @@ Boundaries:
 
 - **One writer for the ledger.** Code outside `src/queue.ts` reads the tables through `store.db`; the few exceptions are listed under each table below.
 - **The jail is separate from the repo.** A run works in a worktree under `<FOREMAN_HOME>/work/`, never in the target repo. `src/isolate.ts` makes it and reports what changed; `src/merge.ts` lands an approved change.
-- **Runners are interchangeable.** `src/runners/` holds the API runner, the CLI runners and the shell runner behind one interface; the scheduler does not know which it has.
+- **Runners share one interface.** `src/runners/` holds the API runner, the CLI runners, the shell runner and the echo (demo) runner behind the `Runner` interface in `src/runners/index.ts`. The scheduler goes by each runner's declared traits (`takesBrief`, `verifiable`) and names a runner only for a few things: `claude-code`'s session resume, provider-limit hold, agent settings and shell allowlist, and the api runner's tool brief.
 - **Verification is its own lane.** `src/verify/` (tests, council, crew review, assertion and revert checks) runs after a worker finishes, in a lane with its own limit (`maxVerifying` in `src/config.ts`).
 - **The security code is guarded.** `src/security/` holds the sandbox, the admission scan and the core guard; see [Protected paths](#protected-paths).
 - **The board is static files.** `board/` is plain HTML, CSS and JS served by `src/server.ts`; it holds no state of its own.
@@ -70,49 +70,67 @@ The schema is in `src/db.ts`. Writers were found by searching `src/` for the SQL
 
 ## Task and run states
 
-The task states are the `TaskStatus` union in `src/types.ts`. Every change goes through `setStatus` in `src/queue.ts`, except a few raw updates in the same file (claiming a task, reopening an epic, a restart requeue). `done`, `failed`, `rejected` and `canceled` are terminal; a retry or a repair round can still move a task out of them.
+The task states are the `TaskStatus` union in `src/types.ts`; the diagram draws a name with a hyphen through a `state "name" as id` line, which arch-truth reads as the name. Every change goes through `setStatus` in `src/queue.ts`, except a few raw updates in the same file (claiming a task, queuing a repair round, a restart requeue). `done`, `failed`, `rejected` and `canceled` are the terminal set (`TERMINAL_STATUSES`), but not the end: a retry or a reopen moves a task out of one, and an epic container reopens when one of its tickets starts over.
 
 ```mermaid
 stateDiagram-v2
+  state "awaiting-approval" as awaiting_approval
+  state "awaiting-human" as awaiting_human
   [*] --> queued
   [*] --> blocked
-  [*] --> awaiting-human
+  [*] --> awaiting_human
   blocked --> queued
-  blocked --> awaiting-human
+  blocked --> awaiting_human
   blocked --> failed
+  blocked --> done : epic closes
   queued --> running
+  queued --> awaiting_human : assign
+  awaiting_human --> queued : assign
   running --> verifying
   running --> queued
-  running --> awaiting-human
-  running --> awaiting-approval
+  running --> awaiting_human : stops
+  running --> awaiting_approval
   running --> failed
-  verifying --> awaiting-approval
+  verifying --> awaiting_approval
   verifying --> queued
+  verifying --> awaiting_human : stops
   verifying --> failed
-  awaiting-approval --> done
-  awaiting-approval --> rejected
-  awaiting-approval --> queued
-  awaiting-human --> queued
-  awaiting-human --> done
-  failed --> queued
+  awaiting_approval --> done
+  awaiting_approval --> rejected
+  awaiting_approval --> queued : repair
+  awaiting_approval --> failed : re-check
+  awaiting_human --> done
+  awaiting_human --> rejected
+  failed --> queued : retry
   failed --> blocked
+  failed --> awaiting_human : retry
+  failed --> awaiting_approval : reopen
+  rejected --> queued : retry
+  rejected --> blocked : retry
+  rejected --> awaiting_human : retry
+  canceled --> queued : retry
+  canceled --> blocked
+  canceled --> awaiting_human : retry
+  done --> blocked : epic reopens
   queued --> canceled
   blocked --> canceled
   running --> canceled
-  awaiting-approval --> canceled
-  awaiting-human --> canceled
+  verifying --> canceled
+  awaiting_approval --> canceled
+  awaiting_human --> canceled
   done --> [*]
+  failed --> [*]
   rejected --> [*]
   canceled --> [*]
 ```
 
 Reading it:
 
-- A new task starts `blocked` while a dependency is open, `awaiting-human` when it is assigned to the operator, otherwise `queued`.
-- `blocked` becomes `queued` when every dependency is `done`, and `failed` when one ends badly.
-- `running` goes back to `queued` after a failed attempt with attempts left, and to `failed` when none are left.
+- A new task starts `blocked` when it has dependencies (an epic container always does), `awaiting-human` when it is assigned to the operator, otherwise `queued`. `foreman assign` moves a task that has not started between `queued` and `awaiting-human`.
+- `blocked` becomes `queued` when every dependency is `done`, and `failed` when one ends badly. An epic container leaves `blocked` only when its tickets close it (`done`, `failed`, or `canceled` when none is left), and goes back to `blocked` when one of them starts over.
+- `running` goes back to `queued` after a failed attempt with attempts left, and to `failed` when none are left. A daemon stop requeues a `running` or `verifying` task, or sends it to `awaiting-human` after repeated stops.
 - `awaiting-approval` is where a person decides. A change that cannot be landed also returns the task there. Core-guard holds and budget hard-stops park a task there too.
-- A repair round or a manual retry moves a task out of `awaiting-approval` or `failed` back to `queued` (or to `blocked` while it waits on dependencies).
+- A repair round moves a task from `verifying` or `awaiting-approval` back to `queued`; a council re-check that confirms a fail with no repair left ends it `failed`. `foreman retry` moves a `failed`, `rejected` or `canceled` task back to `queued` (`blocked` while a dependency is open, `awaiting-human` when it is assigned to the operator), and `foreman reopen` puts a `failed` task back at `awaiting-approval`.
 
 Runs have their own, smaller status: the `status` field of `Run` in `src/types.ts`. A run is created `running`. Its stage (`admit`, `isolate`, `plan`, `work`, `test`, `verify`, `gate`; the `STAGES` list in `src/types.ts`) is separate from its status. A daemon restart marks runs still `running` as `canceled`.
 
@@ -132,6 +150,7 @@ stateDiagram-v2
 ```text
 <FOREMAN_HOME>/foreman.db             the ledger (FOREMAN_DB moves it)
 <FOREMAN_HOME>/daemon.pid             the one-daemon lock, created exclusively (src/lock.ts)
+<FOREMAN_HOME>/daemon.log, daemon.err.log   the daemon's output when launchd runs it (the plist `foreman service` prints)
 <FOREMAN_HOME>/work/<runId>/          one jail (git worktree) per run
 <FOREMAN_HOME>/artifacts/<runId>.log  the run's full log
 <FOREMAN_HOME>/artifacts/<runId>.diff the run's diff
@@ -149,6 +168,7 @@ stateDiagram-v2
 <FOREMAN_HOME>/bench.json             benchmark results
 <FOREMAN_HOME>/tool-state.json        forged-tool usage and quarantine state
 <FOREMAN_HOME>/.sandbox-selftest      marker written by the sandbox self-test
+<FOREMAN_HOME>/frozen/                freeze records: process groups a process stopped, so a later `foreman serve` can end them (src/runners/freezeRecord.ts)
 ```
 
 The forged-tool catalog is not under the home: it is `toolbox/` in the repo (`FOREMAN_TOOLBOX` moves it), so it can be tracked in git.

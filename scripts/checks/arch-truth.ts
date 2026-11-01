@@ -39,15 +39,23 @@ function unionNames(source: string, start: RegExp): string[] | null {
   return [...body.matchAll(/'([^']+)'/g)].map((x) => x[1]!);
 }
 
-/** The state names a mermaid stateDiagram uses: both ends of every `A --> B`, and `state X` lines. [*] is not a state. */
+/**
+ * The state names a mermaid stateDiagram uses: both ends of every `A --> B`, and `state X` lines. [*] is not a state.
+ * A `state "name" as id` line stands `id` in for `name` (a state id cannot hold a hyphen), and counts as `name`.
+ */
 function diagramStates(block: string): Set<string> {
-  const names = new Set<string>();
-  for (const raw of block.split('\n')) {
-    const line = raw.replace(/%%.*$/, '').trim();
+  const lines = block.split('\n').map((raw) => raw.replace(/%%.*$/, '').trim());
+  const alias = new Map<string, string>();
+  for (const line of lines) {
+    const a = /^state\s+"([^"]+)"\s+as\s+(\S+)/.exec(line);
+    if (a) alias.set(a[2]!, a[1]!);
+  }
+  const names = new Set<string>(alias.values());
+  for (const line of lines) {
     const arrow = /^(\S+)\s*-->\s*([^\s:]+)/.exec(line);
-    if (arrow) for (const n of [arrow[1]!, arrow[2]!]) if (n !== '[*]') names.add(n);
-    const decl = /^state\s+(\S+)/.exec(line);
-    if (decl) names.add(decl[1]!);
+    if (arrow) for (const n of [arrow[1]!, arrow[2]!]) if (n !== '[*]') names.add(alias.get(n) ?? n);
+    const decl = /^state\s+([^\s"]+)/.exec(line);
+    if (decl) names.add(alias.get(decl[1]!) ?? decl[1]!);
   }
   return names;
 }
@@ -85,7 +93,8 @@ export function checkArchitecture(root: string): string[] {
   const typesFile = path.join(root, 'src/types.ts');
   const types = fs.existsSync(typesFile) ? fs.readFileSync(typesFile, 'utf8') : '';
   const taskUnion = unionNames(types, /export type TaskStatus\s*=/);
-  const runUnion = unionNames(types, /export interface Run \{[\s\S]*?\n {2}status:/);
+  // Run's own `status:` field: no `}` before it, so the match cannot run on into a later interface.
+  const runUnion = unionNames(types, /export interface Run \{[^}]*?\n {2}status:/);
 
   if (!taskUnion) problems.push('src/types.ts has no `export type TaskStatus` union to compare with');
   else if (!taskBlock) problems.push(`${DOC} has no task-status mermaid stateDiagram`);
@@ -102,6 +111,8 @@ export function checkArchitecture(root: string): string[] {
       if (d.missing.length) problems.push(`run-status diagram lacks: ${d.missing.join(', ')} (Run.status in src/types.ts)`);
       if (d.extra.length) problems.push(`run-status diagram has names not in Run.status: ${d.extra.join(', ')}`);
     }
+  } else if (runBlock) {
+    problems.push(`${DOC} has a run-status diagram, but no \`status\` union of \`export interface Run {\` was found in src/types.ts to compare it with`);
   }
   return problems;
 }

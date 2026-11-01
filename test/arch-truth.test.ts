@@ -83,10 +83,26 @@ test('arch-truth fails when a task state in the diagram is not in the TaskStatus
   assert.match(r.stderr, /lacks: done/);
 });
 
+test('arch-truth reads a `state "name" as id` line as the name, and an id without one as itself', () => {
+  const aliased = '  state "done" as done_state\n  [*] --> queued\n  queued --> running\n  running --> done_state';
+  assert.equal(check(tree(doc({ taskStates: aliased }))).status, 0);
+  const r = check(tree(doc({ taskStates: aliased.split('\n').slice(1).join('\n') })));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /names not in TaskStatus: done_state/);
+});
+
 test('arch-truth fails when a run state in the diagram is not in the Run status union', () => {
   const r = check(tree(doc({ runStates: '  [*] --> running\n  running --> succeded' })));
   assert.equal(r.status, 1);
   assert.match(r.stderr, /names not in Run\.status: succeded/);
+});
+
+test('arch-truth fails, instead of skipping, when the doc has a run diagram and the Run status union cannot be read', () => {
+  const dir = tree(doc());
+  fs.writeFileSync(path.join(dir, 'src/types.ts'), TYPES.replace('export interface Run {', 'export interface Run extends Base {'));
+  const r = check(dir);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /has a run-status diagram, but no `status` union of `export interface Run \{` was found/);
 });
 
 test('arch-truth fails for a src file over 500 lines that the doc does not name', () => {
