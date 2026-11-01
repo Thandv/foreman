@@ -4,11 +4,27 @@ Drop N tasks into a queue. Foreman runs them **simultaneously** in isolated work
 each result with a **multi-model council**, and parks everything at a human gate. Nothing merges,
 nothing lands, until you click.
 
-All eleven phases of the original build plan are implemented — v1 (0–5: the queue,
-isolation, council, routing, board, memory) and v2 (6–10: tool forge, assistant
-mode, self-improvement, alignment, model roster). Foreman is **dependency-free at runtime** —
-Node 24+ built-ins only (`node:sqlite`, `node:http`, native TypeScript execution). `typescript`
-and `@types/node` are dev-only.
+Foreman is **dependency-free at runtime**: Node built-ins only (`node:sqlite`, `node:http`, native
+TypeScript execution). `typescript` and `@types/node` are dev-only.
+
+## Requirements
+
+- macOS 14+ or Linux. On Linux the test sandbox is unavailable, so set `FOREMAN_SANDBOX=off` first (see
+  [Safety model](#safety-model)); the sandbox is macOS-only (`src/security/sandbox.ts:258`).
+- Node of the version in `.node-version` (24).
+- git.
+- The `claude` CLI, for the `claude-code` worker.
+- Ollama, optional: local models for the council and local-only mode.
+
+## Install
+
+```bash
+git clone https://github.com/Thandv/foreman.git && cd foreman
+npm ci          # dev-only dependencies
+npm link        # puts `foreman` on your PATH
+```
+
+Then follow Quick start.
 
 ## Quick start
 
@@ -58,9 +74,30 @@ against the lane's size (`FOREMAN_MAX_VERIFYING`, default twice `FOREMAN_MAX_WOR
 > stable `node:sqlite`, a test runner and TS type-stripping — so the same architecture is built
 > on built-ins.
 
-## The sandbox (`FOREMAN_SANDBOX`)
+## Daily operation
 
-Moved to [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox), including `FOREMAN_SANDBOX_ALLOW`.
+- `foreman add` queues a task; `foreman ls` and `foreman watch` show progress; the board shows everything.
+- Each finished task waits at the gate. Read the result and the council's verdict, then `foreman approve <id>` or
+  `foreman reject <id>` (or click on the board). `foreman retry`, `reopen`, `cancel` and `rm` cover the rest.
+- `foreman doctor` shows which models, runners and agents are available; `foreman stop` stops the daemon.
+- Every command is listed in [docs/commands.md](docs/commands.md); settings are in [docs/configuration.md](docs/configuration.md).
+
+## Safety model
+
+In brief; the full text is [docs/security.md](docs/security.md) and [SECURITY.md](SECURITY.md).
+
+- **Sandbox.** `FOREMAN_SANDBOX` is `off`, `tests` or `all`; unset means `tests` (`src/security/sandbox.ts:54`).
+  It runs test commands, playbook checks, `shell` tasks, the `api` runner's shell and tool calls and the post-merge
+  check under macOS `sandbox-exec`: they write only their jail and a private temp/home, read nothing a person owns, and
+  cannot open the control port.
+- **`all` behaves as `tests`.** It is accepted, but the claude-code worker is not sandboxed yet
+  (`src/security/sandbox.ts:7`). A claude-code worker runs as you, with your files and the daemon's API in reach.
+- **Linux.** There is no sandbox: `sandboxAvailable()` answers that it needs macOS `sandbox-exec`
+  (`src/security/sandbox.ts:258`), and with the sandbox on the command is not run (`:286`) and `foreman serve`
+  refuses to start. Set `FOREMAN_SANDBOX=off` to run without any sandbox.
+- **The API is unauthenticated.** It binds loopback only (`127.0.0.1`) unless `FOREMAN_ALLOW_REMOTE=1` is set
+  (`src/server.ts:1419`). Approve takes no proof of who is calling: anything that can reach the port can approve a
+  task, and the route records the caller as `human` (`src/server.ts:763`).
 
 ## Known limitations
 
@@ -68,5 +105,4 @@ Moved to [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox), inclu
 
 ## Documentation
 
-[The lifecycle](docs/lifecycle.md) · [The board](docs/board.md) · [Assistant mode](docs/assistant-mode.md) · [Crews, the model roster and personas](docs/crews.md) · [Tool forge](docs/tool-forge.md) · [Self-improvement](docs/self-improvement.md) · [Alignment](docs/alignment.md) · [Speed and consistency](docs/speed-and-consistency.md) · [Runners and local-only mode](docs/runners.md) · [Retiring the cloud reviewer](docs/retiring-the-cloud-reviewer-on-evidence.md) · [Who does the work](docs/who-does-the-work-and-where-closed-work-goes.md) · [Model plane, sensitivity and budget](docs/model-plane-sensitivity-and-budget.md) · [Agents](docs/agents.md) · [Skills](docs/skills.md) · [Commands](docs/commands.md) · [Configuration](docs/configuration.md) · [Security](docs/security.md) · [Known limitations](docs/limitations.md) · [Tests](docs/tests.md) · [License and contributing](docs/license-and-contributing.md)
-
+[Architecture](docs/ARCHITECTURE.md) · [Operating Foreman](docs/OPERATING.md) · [The lifecycle](docs/lifecycle.md) · [The board](docs/board.md) · [Assistant mode](docs/assistant-mode.md) · [Crews, the model roster and personas](docs/crews.md) · [Tool forge](docs/tool-forge.md) · [Self-improvement](docs/self-improvement.md) · [Alignment](docs/alignment.md) · [Speed and consistency](docs/speed-and-consistency.md) · [Runners and local-only mode](docs/runners.md) · [Retiring the cloud reviewer](docs/retiring-the-cloud-reviewer-on-evidence.md) · [Who does the work](docs/who-does-the-work-and-where-closed-work-goes.md) · [Model plane, sensitivity and budget](docs/model-plane-sensitivity-and-budget.md) · [Agents](docs/agents.md) · [Skills](docs/skills.md) · [Commands](docs/commands.md) · [Configuration](docs/configuration.md) · [Security](docs/security.md) · [Known limitations](docs/limitations.md) · [Tests](docs/tests.md) · [License and contributing](docs/license-and-contributing.md)
