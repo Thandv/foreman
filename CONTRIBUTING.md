@@ -3,7 +3,9 @@
 Foreman is parallel agent mission control: you queue tasks, it runs them concurrently in isolated
 workers (a git worktree or scratch directory per run), verifies each result with tests and a
 multi-model council, and parks everything at a human gate. Nothing merges until a person approves
-it. The [README](README.md) is the quick start and [docs/](docs/lifecycle.md) describes the whole system; read the parts you intend to change.
+it. The [README](README.md) is the quick start. For the design read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+for running it [docs/OPERATING.md](docs/OPERATING.md), and for every setting
+[docs/configuration.md](docs/configuration.md); read the parts you intend to change.
 
 ## Setup
 
@@ -22,8 +24,11 @@ npm run verify    # typecheck, then the whole suite, then scripts/checks/*.ts
 `npm test` runs the suite alone; `npm run typecheck:tsc` runs the reference compiler when the
 native one (`tsgo`) and `tsc` might disagree.
 
-Foreman is developed on macOS. The test sandbox (`FOREMAN_SANDBOX`) uses macOS `sandbox-exec`; see
-"The sandbox" in [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox) for what that means on other systems.
+The OS sandbox (`FOREMAN_SANDBOX`, default `tests`) exists only on macOS, where it uses `sandbox-exec`
+(`sandboxAvailable()` in `src/security/sandbox.ts`). On any other platform, including Linux, a sandboxed
+command is refused rather than run unsandboxed, so set `FOREMAN_SANDBOX=off` there. The test suites
+set it to `off` themselves, so `npm run verify` does not need a sandbox. See
+"The sandbox" in [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox).
 
 A version manager that puts a shim or symlink directory on `PATH` instead of a node install (volta, fnm)
 is not opened automatically: name that directory in `FOREMAN_SANDBOX_RO` before starting `foreman serve`
@@ -52,6 +57,19 @@ Every pull request is reviewed by the maintainer, and only the maintainer merges
   guard), merge-only-on-approval and the sandbox stay exactly as strict.
 - Errors are surfaced, never swallowed; a failed run leaves a trace in the ledger.
 - Documentation that describes behaviour (the README, `docs/`, command help) is updated in the same change.
+
+## Rules for specific changes
+
+- **Tests**: put a new test in a new file named by the behaviour it pins (`test/gate-env.test.ts`,
+  not `test/misc.test.ts`). Import `./env.ts` first (it gives the file a private `FOREMAN_HOME`, clears
+  inherited `FOREMAN_*` variables and turns the sandbox off). Use no `/tmp` literal: make a directory with
+  `fs.mkdtempSync(path.join(os.tmpdir(), ...))`, and register its removal (`t.after`, or an exit hook).
+- **New `FOREMAN_*` setting**: add its row to [docs/configuration.md](docs/configuration.md). The
+  `scripts/checks/config-truth.ts` check enforces this.
+- **New check**: add a `scripts/checks/*.ts` file; never edit `scripts/verify.sh`. Verify runs each one
+  as `node <file>` after the suite (see `scripts/checks/README.md`).
+- **`PROTECTED_PATHS`** (`src/security/coreGuard.ts`): a change to the list, or to any file on it, needs
+  a ticket with `allowCore`, and a maintainer lands it by hand.
 
 ## Licence of contributions
 
