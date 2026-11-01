@@ -12,9 +12,6 @@ const ALLOW: Record<string, string> = {
   FOREMAN_WORKER_TEST_CMD: 'set by Foreman for a worker run (src/verify/testSlot.ts), never by an operator',
   FOREMAN_RUN_ID: 'set by Foreman for a worker run (src/cli.ts, src/verify/testSlot.ts), never by an operator',
 };
-// Exempt until docs/configuration.md has its table: one name per line, '#' comments. The change that writes the
-// table deletes that file and these lines.
-const PENDING_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'config-truth-pending.txt');
 
 const NAME = /^FOREMAN_[A-Z0-9_]+$/;
 
@@ -56,8 +53,7 @@ export function documentedNames(root: string): Set<string> {
 }
 
 export function checkConfigTruth(root: string): { problems: string[]; summary: string } {
-  const pending = fs.readFileSync(PENDING_FILE, 'utf8').split('\n').filter((l) => /^FOREMAN_/.test(l));
-  const allowed = new Set([...Object.keys(ALLOW), ...pending]);
+  const allowed = new Set(Object.keys(ALLOW));
   const read = readNames(root);
   const doc = documentedNames(root);
   const problems = [
