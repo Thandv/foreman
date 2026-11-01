@@ -191,10 +191,10 @@ it does not take a test slot.
   that only contains a ticket's real repository is found when that ticket's command runs, not at
   start: `serve` comes up and each such run is refused) — if
   Foreman's home is inside the source checkout (`…/foreman/.foreman`), list `…/foreman/toolbox`,
-  not `…/foreman`. Foreman's and Kiln's
-  own gates need none (Kiln's needs `FOREMAN_SANDBOX_ALLOW=fsevents`, and its tests must not
+  not `…/foreman`. Foreman's own
+  gate needs none (a project whose tests use file-system events needs `FOREMAN_SANDBOX_ALLOW=fsevents`, and its tests must not
   depend on `ps`, on writing `/private/tmp`, or on an empty `TMPDIR` after a compile — see "What a
-  suite can trip over"). A gate script that calls the forged tools (the manuscript repos'
+  suite can trip over"). A gate script that calls the forged tools (a writing project's
   `scripts/gate.sh`) needs the toolbox named and readable — a test command's `HOME` is a
   throwaway, so `$HOME/Projects/foreman/toolbox` is not there:
   `FOREMAN_TOOLBOX=/Users/you/Projects/foreman/toolbox FOREMAN_SANDBOX_RO=/Users/you/Projects/foreman/toolbox`.
@@ -205,8 +205,8 @@ it does not take a test slot.
 - `FOREMAN_SANDBOX_ALLOW=fsevents` — allowances that are **off unless named**, because each lets
   a little of the outside in; an unknown name is an error. `fsevents` is file watching (node's
   `fs.watch` on a directory, anything built on FSEvents). Without it a watcher fails or never
-  fires, and a suite that waits on one hangs until its timeout — **Kiln's gate needs it** (the
-  preview live-reload test). What it costs, measured: a sandboxed command can then also learn the
+  fires, and a suite that waits on one hangs until its timeout — **a project whose tests use file watching needs it** (a
+  preview live-reload test, say). What it costs, measured: a sandboxed command can then also learn the
   *names* — never the contents — of files created and then deleted or renamed away *directly
   inside* a directory above its jail, `TMPDIR` or `HOME` (your home's top level, the shared temp
   dir). Files that stay, anything deeper and every other tree are not reported.

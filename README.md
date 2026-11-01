@@ -1,8 +1,8 @@
 # Foreman — parallel agent mission control
 
 Drop N tasks into a queue. Foreman runs them **simultaneously** in isolated workers, verifies
-each result with a **multi-model council**, and parks everything at a human gate. Nothing merges,
-nothing lands, until you click.
+each result with a **multi-model council**, and parks everything at a human gate. By default nothing merges,
+nothing lands, until you click (an opt-in owner gate can approve for you).
 
 Foreman is **dependency-free at runtime**: Node built-ins only (`node:sqlite`, `node:http`, native
 TypeScript execution). `typescript` and `@types/node` are dev-only.

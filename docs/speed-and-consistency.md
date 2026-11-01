@@ -25,7 +25,7 @@ tree when it matches its lockfile, else from a lockfile-keyed cache
 newest five cached installs (`--keep-deps N`). The default is a copy rather than a symlink, because a symlink is
 writable through — a runner could edit the operator's dependencies, which is the
 one thing the jail promises it cannot do. On macOS the copy is made with
-`/bin/cp -c -R`, which on APFS is a copy-on-write clone: measured on Kiln's
+`/bin/cp -c -R`, which on APFS is a copy-on-write clone: measured on a mid-sized TypeScript repo's
 install (290 entries, 26 MB) about 40 ms and 0.1 MB of disk per jail. Node's own
 copy does not clone there whatever it is asked (the same tree: about 75 ms and
 the full 27.6 MB, every jail), so it is only the fallback — Linux, a volume that
