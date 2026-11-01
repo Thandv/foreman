@@ -1,6 +1,6 @@
-// Proves the README -> docs/ move is verbatim.
-//   npm run check:docs-move -- [parent=HEAD] [tree=.] [--undo-links]
-// parent: the commit whose README.md is the source (read with `git show <parent>:README.md`).
+// Proves the README -> docs/ move is verbatim. A one-off proof for the commit that made the move, not a standing check.
+//   node scripts/check-docs-move.ts <parent> [tree=.] [--undo-links]
+// parent: the commit whose README.md is the source (read with `git show <parent>:README.md`): the move commit's parent.
 // tree:   a directory holding README.md and docs/*.md (the checkout at commit 1, or the working tree).
 // --undo-links: put back, in memory, the in-place link fixes that belong to commit 2 (UNDO below), so the
 //               current tree can be compared as if it were commit 1.
@@ -11,7 +11,8 @@ import { execFileSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
 const undo = args.includes('--undo-links');
-const [parent = 'HEAD', tree = '.'] = args.filter((a) => !a.startsWith('--'));
+const [parent, tree = '.'] = args.filter((a) => !a.startsWith('--'));
+if (!parent) throw new Error('usage: node scripts/check-docs-move.ts <parent> [tree=.] [--undo-links]');
 
 /** commit-2 link edits made inside moved blocks: [file, text in commit 2, text in commit 1]. */
 const UNDO: [string, string, string][] = [
