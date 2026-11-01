@@ -5,8 +5,8 @@
 | `echo` | walks the stage rail without a model; a prompt containing "fail" fails on purpose | yes — used throughout the suite |
 | `shell` | runs the prompt verbatim as a shell command in the jail | yes — end-to-end on a real repo |
 | `api` | tool loop (`list_dir`/`read_file`/`write_file`/`run_shell`/`done`) against the model plane | yes — including jail-escape and destructive-command refusal |
-| `claude-code` | drives `claude -p` headless, parsing `stream-json` into stages, logs and tokens | CLI present and preflights; parsing is fixture-tested against recorded transcripts, **not yet against a live run** |
-| `codex-cli` | same shape for `codex exec --json` | as above |
+| `claude-code` | drives `claude -p` headless, parsing `stream-json` into stages, logs and tokens | yes — runs live every day; parsing is also fixture-tested against recorded transcripts |
+| `codex-cli` | same shape for `codex exec --json` | CLI present and preflights; parsing is fixture-tested against recorded transcripts, **not yet against a live run** |
 
 ## Local-only mode
 

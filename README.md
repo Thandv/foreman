@@ -109,8 +109,9 @@ section as evidence; `test/readme-limitations-copy.test.ts` keeps the two equal.
   covering every branch (tool_use routing, chunk-split lines, malformed JSON, error results),
   and `claude-code` runs live every day. A CLI update could still drift the shapes.
 - Local 8–14B reviewers are noisy: expect confident misreadings. The disagreement gate exists
-  precisely for that — in the live run below, one advisor misread a diff and the chair caught it.
-  Wire a stronger chair through the gateway for higher-stakes review.
+  precisely for that — in the live run under "Verified live" in `docs/tests.md`, one advisor
+  misread a diff and the chair caught it. Wire a stronger chair through the gateway for
+  higher-stakes review.
 - Throughput with local models is council-bound: `maxWorkers` 4 against
   `FOREMAN_OLLAMA_CONCURRENCY` 2 means workers idle in `verifying`.
 - One daemon owns the queue, enforced by a pidfile lock in `$FOREMAN_HOME` (a stale lock from a
@@ -121,7 +122,8 @@ section as evidence; `test/readme-limitations-copy.test.ts` keeps the two equal.
 - Each runner child's pid (which is its process-group id, since it is detached) is recorded on its
   run row. On SIGINT, SIGTERM or SIGHUP `foreman serve` stops dispatching and aborts every post-merge
   check. It gives approvals already landing up to 60 s, then waits up to 60 s for the scheduler to
-  stop. If the scheduler has not stopped by then, or when it has stopped but runs never settled,
+  stop, which aborts every active run (SIGTERM to its process groups, SIGKILL to what is left 5 s
+  later). If the scheduler has not stopped by then, or when it has stopped but runs never settled,
   `killLiveRunGroups()` SIGKILLs every recorded run group and the process groups under it. Startup
   recovery does the same for any group still recorded as running before it requeues. That kill goes by
   pid alone, with no start-time check, so pid reuse after a very long outage could kill an innocent
@@ -130,11 +132,13 @@ section as evidence; `test/readme-limitations-copy.test.ts` keeps the two equal.
   children (the `claude-code` worker included), test commands and checks. When one exits, what it
   left running is found by pid and start time (on Linux from `/proc`, not `ps`) and ended. While
   Foreman has process groups stopped (SIGSTOP), it records them in `<home>/frozen/`, and on exit,
-  SIGHUP, SIGTERM or SIGINT it continues them. If the daemon is killed first, the next `foreman serve` sweeps
-  `frozen/` before its scheduler starts, and signals a group only when a fresh snapshot matches a
-  member's pid and start time. A process that called `setsid` and lost its parent before any sample
-  saw it escapes, and the `claude-code` worker is not sandboxed, so only those samples tie the
-  leftovers of its Bash commands to the run.
+  SIGHUP, SIGTERM or SIGINT it sends them SIGTERM and SIGCONT. If the daemon is killed first, the
+  next `foreman serve` sweeps `frozen/` before its scheduler starts, and signals a group only when a
+  fresh snapshot matches a member's pid and start time. A process that called `setsid` and lost its
+  parent before any of the reaper's samples (every 3 s by default, while the command runs) saw it is
+  tied to nothing and escapes. Claude Code's Bash tool starts every command in its own session, so
+  for the `claude-code` worker, which is not sandboxed, only those samples tie its Bash commands'
+  leftovers to the run.
 - The sandbox exists only on macOS. On Linux the default `FOREMAN_SANDBOX=tests` makes `foreman serve`
   refuse to start (its start-up self-test fails); set `FOREMAN_SANDBOX=off` and test commands run
   unconfined. `FOREMAN_SANDBOX=all` is accepted but behaves as `tests`.

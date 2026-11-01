@@ -5,13 +5,16 @@
   The approve endpoint takes no proof of who is calling and records the caller as `human`.
   The `x-foreman-run` header on `POST /api/verify-slot` is unauthenticated:
   any client that can reach the port can send any run id.
-- Runners never touch your checkout: worktree or scratch dir, always. Approval is the only path
-  by which anything reaches your repo.
+- Runners work in a worktree or scratch dir, never in your checkout, and only an approval makes
+  Foreman land anything in your repo. That keeps a worker's mistake out of your repo, not a hostile
+  worker: the `claude-code` and `codex-cli` workers are not sandboxed (see "What it does NOT
+  cover" below), a worktree jail shares the real repository's `.git`, and the approve endpoint
+  takes no proof of who is calling.
 - The `api` runner's file tools are contained to the jail (symlinks included) and its
   model-authored shell commands are screened by the same block rules as task admission. That
   screening is a guardrail, **not a sandbox** — the sandbox is `FOREMAN_SANDBOX` (below), which
   confines the command to the jail unless it is `off`.
-  Set `FOREMAN_API_ALLOW_SHELL=0` to remove the tool.
+  With `FOREMAN_API_ALLOW_SHELL=0` every `run_shell` call is refused.
 - A test command Foreman runs (the gate, playbook checks, the post-merge check) runs code a worker
   wrote, so it gets the same environment as a model-authored shell command: credential-shaped
   variables (`*KEY*`, `*TOKEN*`, `*SECRET*`, …) are dropped, and `HOME`/`TMPDIR` are throwaway
