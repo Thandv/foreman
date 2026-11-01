@@ -2,7 +2,7 @@
 
 - `claude-code` / `codex-cli` stream parsing is fixture-tested against recorded transcripts
   covering every branch (tool_use routing, chunk-split lines, malformed JSON, error results),
-  but has still not been exercised against a live run — a CLI update could drift the shapes.
+  and `claude-code` runs live every day. A CLI update could still drift the shapes.
 - Local 8–14B reviewers are noisy: expect confident misreadings. The disagreement gate exists
   precisely for that — in the live run below, one advisor misread a diff and the chair caught it.
   Wire a stronger chair through the gateway for higher-stakes review.
@@ -13,10 +13,29 @@
   pointed at different homes but the same `FOREMAN_DB` are not caught.
 - Slow SSE readers get a bounded buffer (1000 events past socket saturation), then are dropped;
   a dropped board reconnects with `?since=` and catches up from SQLite.
-- Each runner child's pgid is recorded on its run row: a clean SIGINT/SIGTERM kills the groups
-  on the way down, and startup recovery kills any recorded group that survived a killed daemon
-  before requeueing. Children of a SIGKILLed daemon therefore live until the next
-  `foreman serve`, and pid reuse after a very long outage could kill an innocent group.
+- Each runner child's pid (which is its process-group id, since it is detached) is recorded on its
+  run row. On SIGINT, SIGTERM or SIGHUP `foreman serve` stops dispatching and aborts every post-merge
+  check. It gives approvals already landing up to 60 s, then waits up to 60 s for the scheduler to
+  stop. If the scheduler has not stopped by then, or when it has stopped but runs never settled,
+  `killLiveRunGroups()` SIGKILLs every recorded run group and the process groups under it. Startup
+  recovery does the same for any group still recorded as running before it requeues. That kill goes by
+  pid alone, with no start-time check, so pid reuse after a very long outage could kill an innocent
+  group. Children of a SIGKILLed daemon live until the next `foreman serve`.
+- Leftover reaping is separate, and covers every command started through `spawnStreaming`: runner
+  children (the `claude-code` worker included), test commands and checks. When one exits, what it
+  left running is found by pid and start time (on Linux from `/proc`, not `ps`) and ended. While
+  Foreman has process groups stopped (SIGSTOP), it records them in `<home>/frozen/`, and on exit,
+  SIGHUP, SIGTERM or SIGINT it continues them. If the daemon is killed first, the next `foreman serve` sweeps
+  `frozen/` before its scheduler starts, and signals a group only when a fresh snapshot matches a
+  member's pid and start time. A process that called `setsid` and lost its parent before any sample
+  saw it escapes, and the `claude-code` worker is not sandboxed, so only those samples tie the
+  leftovers of its Bash commands to the run.
+- The sandbox exists only on macOS. On Linux the default `FOREMAN_SANDBOX=tests` makes `foreman serve`
+  refuse to start (its start-up self-test fails); set `FOREMAN_SANDBOX=off` and test commands run
+  unconfined. `FOREMAN_SANDBOX=all` is accepted but behaves as `tests`.
+- The approve endpoint takes no proof of who is calling, and the route records the caller as `human`.
+  The `x-foreman-run` header on `POST /api/verify-slot` is not authenticated: anything that can
+  reach the port may send any run id. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
 - The recurrence language is not cron (see `schedule`); missed windows fire once, not once per
   window elapsed.
 

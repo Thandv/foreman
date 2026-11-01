@@ -2,6 +2,9 @@
 
 - The API can queue shell commands. It binds loopback only; anything else needs
   `FOREMAN_ALLOW_REMOTE=1`, and there is still **no authentication** — this is a local tool.
+  The approve endpoint takes no proof of who is calling and records the caller as `human`.
+  The `x-foreman-run` header on `POST /api/verify-slot` is unauthenticated:
+  any client that can reach the port can send any run id.
 - Runners never touch your checkout: worktree or scratch dir, always. Approval is the only path
   by which anything reaches your repo.
 - The `api` runner's file tools are contained to the jail (symlinks included) and its
@@ -62,7 +65,7 @@ commands under macOS `sandbox-exec`.
 | Value | What happens |
 |---|---|
 | `tests` (default) | The repo's test command, playbook checks, `shell` tickets, the `api` runner's `run_shell` and `use_tool` (a catalog tool), the post-merge check and a worker's own suite run (`src/verify/testSlot.ts`) run sandboxed. |
-| `all` | Reserved for sandboxing the worker too. **In this build it behaves exactly as `tests`**; `serve` says so at start. |
+| `all` | Accepted, and reserved for sandboxing the worker too. **In this build it behaves exactly as `tests`**; `serve` says so at start. |
 | `off` | No sandbox: everything runs as it did before. This is the rollback — set it and restart. |
 
 Any other value is an error: `serve` refuses to start and a run fails with the reason.
@@ -117,8 +120,11 @@ stat-ed (a program can see that they are directories); nothing in them can. Two 
   deny-list of at most four ports besides the daemon's.
 - Everything in the jail, and in a worktree jail the real repository's whole `.git` (all history,
   every unmerged branch, its config), is readable. No CPU, memory or disk limits.
-- macOS only: on another system the default refuses to run test commands until you set
-  `FOREMAN_SANDBOX=off`. `sandbox-exec` is deprecated by Apple and still what the platform's own
+- macOS only: on Linux or any other system `sandboxAvailable()` answers that it needs macOS
+  `sandbox-exec`. With the default (`tests`) the command is not run
+  and `foreman serve` refuses to start (its start-up self-test fails) until you set `FOREMAN_SANDBOX=off`,
+  which runs test commands with no sandbox at all. No Linux profile exists (`src/security/sandbox/`
+  holds only `.sb` files). `sandbox-exec` is deprecated by Apple and still what the platform's own
   tools use.
 
 **Known limits of the test sandbox.** Things a sandboxed command can still do, stated plainly:
