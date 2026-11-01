@@ -42,7 +42,7 @@ const missing = (help: string, readme: string): string[] => {
 test('every command in `foreman help` is in the README Commands list', () => {
   const help = execFileSync(process.execPath, [path.join(root, 'src', 'cli.ts'), 'help'], { encoding: 'utf8' });
   assert.ok(helpCommands(help).length > 30, 'help output parsed');
-  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(root, 'docs', 'commands.md'), 'utf8'); // the list moved out of README.md
   assert.deepEqual(missing(help, readme), []);
 });
 

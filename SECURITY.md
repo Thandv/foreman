@@ -18,7 +18,7 @@ unapproved:
 - **Worker isolation**: the per-run worktree or scratch-directory jail, the environment a worker or
   test command is given, and the `api` runner's file and shell tools.
 - **The sandbox** (`FOREMAN_SANDBOX`, `src/security/sandbox.ts` and its profiles): a sandboxed
-  command doing something the README says it cannot.
+  command doing something [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox) says it cannot.
 - **The core guard** (`PROTECTED_PATHS`, `src/security/coreGuard.ts`): a change to a protected path getting through without the
   checks it should meet.
 - **Merge and landing**: anything reaching your repository without an approval, or something other
@@ -26,7 +26,7 @@ unapproved:
 
 ## Current limits (not vulnerabilities)
 
-These are documented in the README and are known; a report that only restates them is out of scope,
+These are documented in [docs/security.md](docs/security.md) and [docs/limitations.md](docs/limitations.md) and are known; a report that only restates them is out of scope,
 but a way to make them worse than described is in scope.
 
 - **The `claude-code` and `codex-cli` workers themselves are not sandboxed yet.** A worker session
@@ -37,8 +37,8 @@ but a way to make them worse than described is in scope.
   `FOREMAN_ALLOW_REMOTE=1` is set; it is a local tool.
 - The sandbox is macOS-only (`sandbox-exec`), does not limit CPU, memory or disk, and leaves the
   jail (including a worktree's whole `.git`) readable. Loopback services not on the closed-port
-  list are reachable. See "What it does NOT cover" and "Known limits of the test sandbox" in the
-  README.
+  list are reachable. See "What it does NOT cover" and "Known limits of the test sandbox" in
+  [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox).
 - Foreman's own git calls in a jail and dependency provisioning (`npm ci`) are not sandboxed.
 
 ## Response
