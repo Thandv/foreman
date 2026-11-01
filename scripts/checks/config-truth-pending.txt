@@ -1,5 +1,6 @@
-# Read in src/, documented only as prose in docs/configuration.md (no table row yet). The ticket that writes the
-# table must delete every line below; config-truth treats these as allow-listed until then. Not for new names.
+# Read in src/, with no row in docs/configuration.md: it has no table yet. config-truth treats these as allow-listed
+# until the change that writes the table deletes this file and the PENDING_FILE lines in config-truth.ts. Not for
+# new names: a new name gets its table row.
 FOREMAN_AGENTS_DIR
 FOREMAN_SHADOW_LOCAL
 FOREMAN_ALIGN_DIR

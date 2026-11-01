@@ -15,43 +15,64 @@ const row = (n: string) => `| \`${n}\` | 1 | what it does |\n`;
 const DOC = `## Configuration\n\n| Name | Default | Effect |\n|---|---|---|\n${row('FOREMAN_FIX_A')}${row('FOREMAN_FIX_B')}`;
 const SRC = `const a = process.env.FOREMAN_FIX_A;\nconst b = envNum('FOREMAN_FIX_B', 1);\n`;
 
-function tree(files: Record<string, string>): string {
+/** Runs the check on a temp tree holding `files`, then removes the tree. */
+function check(files: Record<string, string>): ReturnType<typeof run> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-configtruth-'));
-  for (const [rel, text] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-    fs.writeFileSync(path.join(dir, rel), text);
+  try {
+    for (const [rel, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), text);
+    }
+    return run(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  return dir;
 }
 
 test('config-truth passes when every name read in src/ has a table row and prints read N = documented D + allow-listed A', () => {
-  const r = run(tree({ 'src/a.ts': SRC, 'docs/configuration.md': DOC }));
+  const r = check({ 'src/a.ts': SRC, 'docs/configuration.md': DOC });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /read 2 = documented 2 \+ allow-listed 0/);
 });
 
 test('config-truth fails naming a name whose table row was removed', () => {
-  const r = run(tree({ 'src/a.ts': SRC, 'docs/configuration.md': DOC.replace(row('FOREMAN_FIX_B'), '') }));
+  const r = check({ 'src/a.ts': SRC, 'docs/configuration.md': DOC.replace(row('FOREMAN_FIX_B'), '') });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /undocumented: FOREMAN_FIX_B \(read in src\/a\.ts\)/);
 });
 
 test('config-truth fails naming a new read that no table row documents', () => {
-  const r = run(tree({ 'src/a.ts': SRC + "const c = process.env['FOREMAN_FIX_NEW'];\n", 'docs/configuration.md': DOC }));
+  const r = check({ 'src/a.ts': SRC + "const c = process.env['FOREMAN_FIX_NEW'];\n", 'docs/configuration.md': DOC });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /undocumented: FOREMAN_FIX_NEW/);
 });
 
 test('config-truth fails as stale for a documented name that src/ never reads', () => {
-  const r = run(tree({ 'src/a.ts': SRC, 'docs/configuration.md': DOC + row('FOREMAN_FIX_GONE') }));
+  const r = check({ 'src/a.ts': SRC, 'docs/configuration.md': DOC + row('FOREMAN_FIX_GONE') });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /stale: FOREMAN_FIX_GONE/);
 });
 
 test('config-truth ignores a name that only appears in a comment', () => {
   const src = SRC + "// process.env.FOREMAN_FIX_LINE and 'FOREMAN_FIX_LINE2'\n/* `FOREMAN_FIX_BLOCK`\n spans lines */\n";
-  const r = run(tree({ 'src/a.ts': src, 'docs/configuration.md': DOC }));
+  const r = check({ 'src/a.ts': src, 'docs/configuration.md': DOC });
   assert.equal(r.status, 0, r.stderr);
+});
+
+test('config-truth counts a read that follows a string holding // or /*', () => {
+  const src = SRC + "const u = 'http://x'; const k = process.env['FOREMAN_FIX_URL'];\n" +
+    "const g = 'test/*.test.ts'; const k2 = envNum('FOREMAN_FIX_GLOB', 1);\n/* a later comment */\n";
+  const r = check({ 'src/a.ts': src, 'docs/configuration.md': DOC });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /undocumented: FOREMAN_FIX_URL/);
+  assert.match(r.stderr, /undocumented: FOREMAN_FIX_GLOB/);
+});
+
+test('config-truth does not count a name in prose or outside the first column as documented', () => {
+  const doc = `${DOC}\nSet \`FOREMAN_FIX_C\` in your shell.\n\n| Effect | Name |\n|---|---|\n| x | \`FOREMAN_FIX_C\` |\n`;
+  const r = check({ 'src/a.ts': SRC + "const c = process.env.FOREMAN_FIX_C;\n", 'docs/configuration.md': doc });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /undocumented: FOREMAN_FIX_C/);
 });
 
 test('config-truth passes on this repository', () => {

@@ -17,7 +17,6 @@
     "typecheck:tsc": "tsc --noEmit",
     "drill": "node src/cli.ts drill",
     "export:scope-corpus": "node scripts/export-scope-corpus.ts",
-    "check:config-truth": "node scripts/checks/config-truth.ts",
     "verify": "bash scripts/verify.sh"
   },
   "license": "Apache-2.0",

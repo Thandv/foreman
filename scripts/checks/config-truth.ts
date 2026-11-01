@@ -3,20 +3,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 // Exempt in both directions, each with its reason. Add only after checking the read site in src/.
 const ALLOW: Record<string, string> = {
-  FOREMAN_ECHO_STEP_MS: 'echo runner (src/runners/echo.ts) is a test stub; the step delay is only set by tests',
+  FOREMAN_ECHO_STEP_MS: 'step delay of the echo runner (src/runners/echo.ts), the demo/self-test worker; only test/env.ts sets it',
   FOREMAN_FREEZE_SWEEP_FAULT: 'fault injection for tests (src/runners/freezeSweep.ts): hang|throw',
   FOREMAN_WORKER_TEST_CMD: 'set by Foreman for a worker run (src/verify/testSlot.ts), never by an operator',
   FOREMAN_RUN_ID: 'set by Foreman for a worker run (src/cli.ts, src/verify/testSlot.ts), never by an operator',
 };
-// Exempt while docs/configuration.md is still the moved prose section: one name per line, '#' comments. The ticket
-// that writes the table deletes the lines.
+// Exempt until docs/configuration.md has its table: one name per line, '#' comments. The change that writes the
+// table deletes that file and these lines.
 const PENDING_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'config-truth-pending.txt');
 
-const QUOTED = /["'`](FOREMAN_[A-Z0-9_]+)["'`]/g;
-const ENV = /process\.env\.(FOREMAN_[A-Z0-9_]+)/g;
+const NAME = /^FOREMAN_[A-Z0-9_]+$/;
 
 function tsFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -24,17 +24,26 @@ function tsFiles(dir: string): string[] {
     e.isDirectory() ? tsFiles(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []);
 }
 
-/** name -> files reading it. Comments are blanked first, so a name only in a comment is not a read. */
+/**
+ * name -> files reading it: a quoted literal that is exactly the name (envNum('X'), process.env['X'], a table entry)
+ * or `process.env.X`. The TypeScript parser finds them, not a regex: a name in a comment is not a read, and a `//` or
+ * `/*` inside a string or a regex literal ('http://…', 'test/*.ts') does not hide the reads after it.
+ */
 export function readNames(root: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const file of tsFiles(path.join(root, 'src'))) {
-    const code = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     const rel = path.relative(root, file);
-    for (const m of [...code.matchAll(QUOTED), ...code.matchAll(ENV)]) {
-      const files = out.get(m[1]) ?? [];
+    const add = (name: string): void => {
+      const files = out.get(name) ?? [];
       if (!files.includes(rel)) files.push(rel);
-      out.set(m[1], files);
-    }
+      out.set(name, files);
+    };
+    const visit = (node: ts.Node): void => {
+      if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && NAME.test(node.text)) add(node.text);
+      else if (ts.isPropertyAccessExpression(node) && NAME.test(node.name.text) && node.expression.getText() === 'process.env') add(node.name.text);
+      ts.forEachChild(node, visit);
+    };
+    visit(ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true));
   }
   return out;
 }
