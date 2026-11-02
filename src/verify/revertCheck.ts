@@ -238,8 +238,8 @@ function unreadableReport(flags: string[]): string | null {
   const reporters = value('--test-reporter');
   const destinations = value('--test-reporter-destination');
   // Several reporters, each with its own destination (node pairs them in order): the report is readable when the
-  // only one that prints is spec or tap, whatever the others write to files. Kiln's test script is this shape — spec
-  // to stdout beside a skip list written to a file — and read as a whole it made every Kiln result "unreadable".
+  // only one that prints is spec or tap, whatever the others write to files. One project's test script is this shape — spec
+  // to stdout beside a skip list written to a file — and read as a whole it made every such result "unreadable".
   if (reporters.length > 1 && destinations.length === reporters.length) {
     const printed = reporters.filter((_name, i) => destinations[i] === 'stdout' || destinations[i] === 'stderr');
     if (printed.length === 0) return 'the test report is written to a file';

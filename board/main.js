@@ -73,7 +73,7 @@ function buildSidebar() {
   text.appendChild(el('div', 'name', 'Foreman'));
   text.appendChild(el('div', 'tag', 'mission control'));
   brand.appendChild(text);
-  tip(brand, 'Foreman', 'Parallel agent mission control: queue work, run it isolated, gate every result on a human click.');
+  tip(brand, 'Foreman', 'Parallel agent mission control: queue work, run it isolated, park every result at a human gate (by default nothing merges until you click; an opt-in owner gate can approve for you).');
   side.appendChild(brand);
 
   const nav = el('div', 'nav');

@@ -8,8 +8,8 @@ import { detectTestCmd, runTests, type SandboxRunOpts } from './verify/tests.ts'
 
 /**
  * Two approved tickets can each pass their own tests and still break main
- * together: a clean textual merge is not a working program. On the Kiln
- * Desktop epic, project search and workspaces each bumped the same
+ * together: a clean textual merge is not a working program. On a desktop
+ * app's epic, project search and workspaces each bumped the same
  * hard-coded route count from 20 to 22; both merged cleanly and main was red
  * at 24 — and the next tickets would have been cut from it. So after a merge
  * lands, the repo's own test command runs on the merged HEAD, in a scratch

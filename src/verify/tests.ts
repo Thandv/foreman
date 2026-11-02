@@ -15,7 +15,7 @@ export function detectTestCmd(dir: string): string | null {
       const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as {
         scripts?: Record<string, string>;
       };
-      // verify first: where a project has one it is the whole gate (Kiln's runs
+      // verify first: where a project has one it is the whole gate (one project's runs
       // tsc, then the tests), and `test` alone let a ticket with no test_cmd
       // pass with a type error that failed the operator's gate.
       if (pkg.scripts?.['verify']) return 'npm run verify --silent';
@@ -262,14 +262,14 @@ export async function runTestsSlotted(
 /**
  * A throwaway HOME (and XDG dirs) for one test run. A jail is a worktree, not a
  * sandbox: a ticket's tests could write anywhere under the operator's home, and
- * on the Kiln Easy epic one did — a test created ~/Kiln Projects/guard-made in
+ * on an earlier epic one did — a test created ~/Sample Projects/guard-made in
  * the real home folder through a default path nothing guarded. Node's
  * os.homedir(), Python's expanduser and most tools follow HOME, so a default
  * like '~/Something' now lands in the throwaway dir. ~/.gitconfig is copied in
  * so suites that commit still have an identity. TMPDIR/TMP/TEMP point at a
  * second throwaway dir, removed with the home, so the suite's temp files go too.
  * It is a short sibling, not a tmp/ inside the home: a unix socket path is
- * capped at 104 bytes on macOS, and Kiln's race test (81 bytes under the real
+ * capped at 104 bytes on macOS, and a project's race test (81 bytes under the real
  * TMPDIR) went over it, failing every gate run with listen EINVAL.
  * FOREMAN_TEST_REAL_HOME=1 opts out for a suite that genuinely needs the real home.
  */

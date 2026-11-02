@@ -10,12 +10,12 @@ import { revertCheck } from '../src/verify/revertCheck.ts';
 
 /**
  * A test script with more than one reporter. The report is read when the only reporter that prints is spec or tap
- * (Kiln: spec to stdout, a skip list to a file); every other arrangement stays "cannot tell". The runner is a
+ * (one project: spec to stdout, a skip list to a file); every other arrangement stays "cannot tell". The runner is a
  * stand-in that returns a canned report, so what is tested is which reports are read, not node's output.
  */
 
 const sh = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-const KILN = '--test-timeout=180000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/skip-reporter.mjs --test-reporter-destination=test-skips.log';
+const SKIP_REPORTER_SCRIPT = '--test-timeout=180000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/skip-reporter.mjs --test-reporter-destination=test-skips.log';
 const CHANGED: ChangedFile[] = [
   { path: 'src/x.js', from: null, status: 'modified' },
   { path: 'test/x.test.js', from: null, status: 'added' },
@@ -50,15 +50,15 @@ async function check(t: TestContext, flags: string, output: string): Promise<{ r
   return { res, cmd };
 }
 
-test('spec to stdout beside a second reporter written to a file (Kiln\'s test script): the report is read', async (t) => {
-  const ran = await check(t, KILN, RAN);
+test('spec to stdout beside a second reporter written to a file (a project\'s test script): the report is read', async (t) => {
+  const ran = await check(t, SKIP_REPORTER_SCRIPT, RAN);
   assert.equal(ran.res.status, 'pass');
   assert.equal('loadUnknown' in ran.res, false, 'a test ran and failed: nothing is unknown');
   assert.equal('loadErrors' in ran.res, false);
   assert.equal(ran.res.reason, '1 changed test file fails without the change');
-  assert.equal(ran.cmd, `node ${KILN} --test test/x.test.js`, 'the file is run with the script\'s own flags');
+  assert.equal(ran.cmd, `node ${SKIP_REPORTER_SCRIPT} --test test/x.test.js`, 'the file is run with the script\'s own flags');
 
-  const unloaded = await check(t, KILN, DID_NOT_LOAD);
+  const unloaded = await check(t, SKIP_REPORTER_SCRIPT, DID_NOT_LOAD);
   assert.equal(unloaded.res.status, 'pass');
   assert.deepEqual(unloaded.res.loadErrors, ['test/x.test.js'], 'and a file that did not load is still told apart');
   assert.equal('loadUnknown' in unloaded.res, false);

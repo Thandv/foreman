@@ -19,7 +19,7 @@ import type { Run, Task } from '../src/types.ts';
 
 /**
  * The independent review of fix/review-inputs (round 1), as tests: the acceptance-map check kept as strict as it was
- * wherever the Kiln trial's false flags did not need it relaxed; a status field that reads the way reviewers write;
+ * wherever an earlier trial's false flags did not need it relaxed; a status field that reads the way reviewers write;
  * a worker's report that cannot pass for Foreman; the owner gate's copy of the report; what the daemon reads from a
  * worker's tree; which changed test lines hold the gate; and the `split` a crew review now records, driven through
  * the scheduler and the gate. Every reviewer here is a stand-in script; no model is called.
@@ -40,7 +40,7 @@ function tree(t: { after: (fn: () => void) => void }, files: Record<string, stri
   return dir;
 }
 
-// t_d41d3280e6, as the ledger holds it.
+// A trial ticket, as the ledger holds it.
 const LOCK =
   "1. The refusal message contains the lock file's absolute path, the pid and the port. 2. A test pins all three and fails without the change. " +
   '3. The README Serve section quotes the new message exactly. 4. Lock acquisition and replacement logic is unchanged. 5. `npm run verify` passes.';
@@ -49,10 +49,10 @@ const T_OLD = 'a lock whose pid is gone is replaced even when something else ans
 const LOCK_FILES = {
   'test/server-lock.test.ts': `test('${T_NEW}', { timeout: 60000 }, async (t) => {\n  assert.match(msg, /Lock file/);\n});\ntest('${T_OLD}', async (t) => {\n});\n`,
   'test/unrelated.test.ts': "test('adds two numbers', () => {\n  assert.equal(1 + 1, 2);\n});\n",
-  'package.json': '{\n  "name": "kiln"\n}\n',
+  'package.json': '{\n  "name": "app"\n}\n',
   'src/server.ts': 'export function acquire() {}\n',
 };
-const CODE_ONLY = hunk('README.md', 'kiln: already running') + hunk('src/server.ts', 'const lockedError = 1;');
+const CODE_ONLY = hunk('README.md', 'app: already running') + hunk('src/server.ts', 'const lockedError = 1;');
 const LOCK_DIFF = CODE_ONLY + hunk('test/server-lock.test.ts', `test('${T_NEW}', { timeout: 60000 }, async (t) => {`) + hunk('package.json', '"x": 1,');
 const NEW_TEST = `test/server-lock.test.ts :: ${T_NEW}`;
 const lockMap = (l1: string, l2: string, l4: string): string => `DONE\n\nACCEPTANCE MAP\n1. ${l1}\n2. ${l2}\n3. (diff) README.md\n4. ${l4}\n5. (diff) package.json\n`;
@@ -62,9 +62,9 @@ test('acceptance map: the trial\'s correct lines pass — a no-change item on `(
   const dir = tree(t, LOCK_FILES);
   assert.deepEqual(checkAcceptanceMap({ acceptance: LOCK, report: lockMap(NEW_TEST, NEW_TEST, '(diff) src/server.ts'), diff: LOCK_DIFF, treeDir: dir }), []);
   assert.deepEqual(checkAcceptanceMap({ acceptance: LOCK, report: lockMap(NEW_TEST, NEW_TEST, `test/server-lock.test.ts :: ${T_OLD}`), diff: LOCK_DIFF, treeDir: dir }), []);
-  // t_b36bf5a477: five items, all `(diff) README.md`, and the diff changes nothing but the README.
+  // A README-only trial ticket: five items, all `(diff) README.md`, and the diff changes nothing but the README.
   const readme =
-    '1. README has exactly one Security model section. 2. It states what Kiln does not defend. 3. The session cookie is documented where the token is documented. ' +
+    '1. README has exactly one Security model section. 2. It states what the app does not defend. 3. The session cookie is documented where the token is documented. ' +
     '4. The report maps every claim to a source file and function. 5. No source file changed; `npm run verify` passes.';
   const all = 'ACCEPTANCE MAP\n1. (diff) README.md\n2. (diff) README.md\n3. (diff) README.md\n4. (diff) README.md\n5. (diff) README.md\n';
   assert.deepEqual(checkAcceptanceMap({ acceptance: readme, report: all, diff: hunk('README.md', '## Security model'), treeDir: dir }), []);
@@ -117,7 +117,7 @@ test('acceptance map: what counts as asking for a test, and the limit of the che
 
 test('a status may carry its evidence; a hedge is not "met"; the field may come keyed by item', () => {
   const read = (status: unknown): string => readAcceptance([{ item: 1, status }], [1])[0]!.status;
-  // The per-item lines the trial's reviewer wrote (v_2ced10df0b, v_4c7827a606, v_bb285d6148, v_10db4e5a9c, v_5202fcedb3).
+  // The per-item lines the trial's reviewer wrote.
   assert.equal(read("met (new test 'the refusal for a live lock names the lock file full path' asserts all three)"), 'met');
   assert.equal(read('Met. One new file under docs/decisions/'), 'met');
   assert.equal(read('met'), 'met');
@@ -274,10 +274,10 @@ function gitDiff(t: { after: (fn: () => void) => void }, before: Record<string, 
 }
 
 test('a redefined fixture is listed for the reviewer and is not a hold; a redefined value an assertion checks directly still is', (t) => {
-  // Kiln t_702b98d62f (run r_bfa73eeb6d), test/helper-fixes.test.ts: the fixture gained a file, the assertion did not change.
-  const fixtureBefore = "import test from 'node:test';\ntest('an include is not followed', () => {\n  const root = project({ ...PIP, 'requirements.txt': '-r other.txt\\nkilnlocalpkg==1.0\\n' });\n  assert.deepEqual(declaredPackages(root, 'pypi'), []);\n});\n";
-  const fixtureAfter = fixtureBefore.replace("'-r other.txt\\nkilnlocalpkg==1.0\\n' });", "'-r other.txt\\nkilnlocalpkg==1.0\\n', 'other.txt': 'six\\n' });");
-  // Kiln t_694071e43e, test/preview.test.ts: the value the assertion checks was narrowed.
+  // An earlier ticket, test/helper-fixes.test.ts: the fixture gained a file, the assertion did not change.
+  const fixtureBefore = "import test from 'node:test';\ntest('an include is not followed', () => {\n  const root = project({ ...PIP, 'requirements.txt': '-r other.txt\\napplocalpkg==1.0\\n' });\n  assert.deepEqual(declaredPackages(root, 'pypi'), []);\n});\n";
+  const fixtureAfter = fixtureBefore.replace("'-r other.txt\\napplocalpkg==1.0\\n' });", "'-r other.txt\\napplocalpkg==1.0\\n', 'other.txt': 'six\\n' });");
+  // An earlier ticket, test/preview.test.ts: the value the assertion checks was narrowed.
   const savedBefore = "import test from 'node:test';\ntest('a record without pid', () => {\n  const saved = fs.readFileSync(recordFile('web', id), 'utf8');\n  assert.doesNotMatch(saved, /pid|cpuMs/i);\n});\n";
   const savedAfter = savedBefore.replace("fs.readFileSync(recordFile('web', id), 'utf8');", "JSON.stringify(JSON.parse(fs.readFileSync(recordFile('web', id), 'utf8')).steps);");
 

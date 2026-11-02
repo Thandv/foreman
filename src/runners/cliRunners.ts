@@ -265,7 +265,7 @@ function makeCliRunner(spec: CliSpec): Runner {
  *
  * `acceptEdits` alone lets the worker write files but refuses every Bash call
  * as "requires approval" — and nobody can approve in a headless session. On
- * the first Kiln epic every worker wrote its code without once running its own
+ * an earlier epic every worker wrote its code without once running its own
  * tests, and one hand-wrote "NOT CAPTURED" fixtures because it could not run
  * tsc at all. The test stage already executes the code the worker wrote, so
  * letting the worker run that same suite (and typecheck, and read git) grants

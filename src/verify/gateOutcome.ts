@@ -2,7 +2,7 @@
  * What a ticket's test stage can say besides "passed" and "a test failed", worked out from the test command's
  * result and from the repo. Nothing here decides a run: the scheduler asks, and holds or annotates.
  *
- *  - A gate TIMEOUT. Kiln's gate ended `verify: TIMEOUT after 1200s` on a loaded machine with no failing test
+ *  - A gate TIMEOUT. A project's gate ended `verify: TIMEOUT after 1200s` on a loaded machine with no failing test
  *    named; Foreman recorded "TESTS FAILED", wrote a fail verdict whose critique was a log of passing tests, and
  *    spent a repair round on a worker that had broken nothing.
  *  - A jail that is behind main where main has since changed the tests. A ticket's jail was cut before a test-only

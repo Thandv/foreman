@@ -23,10 +23,10 @@ function withFakeHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
 test('a test stage writing to ~ lands in a throwaway home, never the operator\'s, and keeps the git identity', async () => {
   await withFakeHome(async (real) => {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-th-work-'));
-    const cmd = `mkdir -p "$HOME/Kiln Projects/guard-made" && echo "home=$HOME" && node -e "console.log('homedir='+require('os').homedir())" && git config --global user.name && echo "xdg=$XDG_CONFIG_HOME"`;
+    const cmd = `mkdir -p "$HOME/Sample Projects/guard-made" && echo "home=$HOME" && node -e "console.log('homedir='+require('os').homedir())" && git config --global user.name && echo "xdg=$XDG_CONFIG_HOME"`;
     const r = await runTests(work, cmd, new AbortController().signal);
     assert.equal(r.passed, true, r.output);
-    assert.equal(fs.existsSync(path.join(real, 'Kiln Projects')), false, 'nothing was written to the real home');
+    assert.equal(fs.existsSync(path.join(real, 'Sample Projects')), false, 'nothing was written to the real home');
     const home = /home=(.+)/.exec(r.output)![1]!.trim();
     assert.notEqual(home, real);
     assert.match(r.output, new RegExp(`homedir=${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'os.homedir() follows it');
@@ -169,10 +169,10 @@ test('a spawn error still removes the isolated home', async () => {
 test('the per-run TMPDIR stays short: a unix socket a few levels under it can still listen', async () => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-th-work-'));
   try {
-    // Kiln's test/security-race.test.ts shape: <TMPDIR>/kiln-race-XXXXXX/proj/sub/s.sock. macOS caps the path at 104 bytes.
+    // A project's race-test shape: <TMPDIR>/app-race-XXXXXX/proj/sub/s.sock. macOS caps the path at 104 bytes.
     const script =
       "const p=require('path'),fs=require('fs'),os=require('os'),net=require('net');" +
-      "const d=fs.mkdtempSync(p.join(os.tmpdir(),'kiln-race-'));fs.mkdirSync(p.join(d,'proj','sub'),{recursive:true});" +
+      "const d=fs.mkdtempSync(p.join(os.tmpdir(),'app-race-'));fs.mkdirSync(p.join(d,'proj','sub'),{recursive:true});" +
       "const s=net.createServer();s.on('error',e=>{console.log('listen-error '+e.code);process.exit(1)});" +
       "s.listen(p.join(d,'proj','sub','s.sock'),()=>{console.log('listening');s.close()})";
     const r = await runTests(work, `echo "tmpdir=$TMPDIR" && node -e "${script}"`, new AbortController().signal);

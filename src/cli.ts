@@ -186,7 +186,7 @@ Env: FOREMAN_HOME, FOREMAN_PORT, FOREMAN_MAX_WORKERS, FOREMAN_DB, FOREMAN_CLAUDE
      FOREMAN_SANDBOX_RO (up to 4 extra read-only trees for sandboxed commands, colon-separated; one that is or contains
      /Users, your home, a temp dir, Foreman's home or the real repository is refused — name the subtree),
      FOREMAN_SANDBOX_DENY_PORTS (up to 4 loopback ports closed besides the daemon's; default 8000,8001,8002,3010),
-     FOREMAN_SANDBOX_ALLOW=fsevents (file watching inside the sandbox; off by default — Kiln's gate needs it; see README)
+     FOREMAN_SANDBOX_ALLOW=fsevents (file watching inside the sandbox; off by default — a project whose tests watch files needs it; see README)
 `;
 
 interface Args {
@@ -1106,7 +1106,7 @@ async function main(): Promise<number> {
       }
       if (reviewSource !== undefined && reviewSource.length > 200) throw new Error(`--review-source is ${reviewSource.length} characters; at most 200 are kept`);
       // An approve merges and then runs the repo's whole suite on the merged
-      // HEAD (postMerge.ts) before it answers; on Kiln that took longer than
+      // HEAD (postMerge.ts) before it answers; on a large repo that took longer than
       // fetch's 300s header timeout, and the CLI reported a timeout for a
       // merge that had landed. node:http has no such ceiling.
       const t = cmd === 'approve'
@@ -1127,7 +1127,7 @@ async function main(): Promise<number> {
       process.stdout.write(recordedLine(cmd, t.decision));
       // A cancel is never refused over its note; when the note could not be read the daemon says so here.
       if (cmd === 'cancel' && typeof t.warning === 'string') process.stdout.write(`${t.warning}\n`);
-      // An approval that lands nothing read exactly like one that did, bar one quiet line: on the Kiln trial an
+      // An approval that lands nothing read exactly like one that did, bar one quiet line: on an earlier trial an
       // approved ADR (kind writing) was taken for landed. Said last and loudly, from what the daemon already answers
       // (merge.ts's reason for a ticket with merge-on-approve off, and the run that holds the branch).
       if (cmd === 'approve' && t.merge?.merged === false && t.merge.branch && /merge-on-approve disabled/.test(String(t.merge.reason))) {

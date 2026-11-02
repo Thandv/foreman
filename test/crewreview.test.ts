@@ -607,7 +607,7 @@ test('a blocker-severity issue cannot ride a pass', async () => {
     assert.match(notes.join('\n'), /downgraded to fail/);
     // The blocker is fixed by this ticket's own repair round, so it is in the
     // repair critique and NOT filed: a duplicate child found nothing to do once
-    // the repair landed and failed for it (first Kiln epic, t_5d3566ede7).
+    // the repair landed and failed for it (an earlier epic).
     assert.match(out.critique, /BLOCKERS TO FIX IN THIS REPAIR/);
     assert.equal(store.childrenOf(task.id).length, 0);
   } finally {
@@ -2808,7 +2808,7 @@ test('an editorial reviewer receives a whole chapter, not the first two-thirds o
 });
 
 test('a hosted code reviewer reads a mid-sized diff whole, not the local council\'s 12 KB excerpt', () => {
-  // The first Kiln epic: a 14 KB security module + tests reached Opus cut.
+  // An earlier epic: a 14 KB security module + tests reached Opus cut.
   const diff = chapterDiff(2_600);
   assert.ok(diff.length > 14_000 && diff.length < 96_000);
   const code = boundBody(diff, 'code-review');
@@ -3101,7 +3101,7 @@ test('a long acceptance list reaches the plan, the worker, the gate council and 
   const { parseCrewPlan } = await import('../src/assistant/crewPlan.ts');
   const { buildGatePrompt } = await import('../src/gate.ts');
   const { acceptanceBrief } = await import('../src/scheduler.ts');
-  // Kiln phase 4b: ten tickets' acceptance was cut at 2,000 chars at parse and again by every reader.
+  // an earlier phase: ten tickets' acceptance was cut at 2,000 chars at parse and again by every reader.
   const items = Array.from({ length: 50 }, (_, i) => `${i + 1}. item ${i + 1} must hold for the registry and each of its six group stubs.`);
   items.push('51. LAST-ITEM-SENTINEL npm run verify passes.');
   const acceptance = items.join('\n');

@@ -7,7 +7,7 @@ import { isDocPath } from './revertCheck.ts';
  * The source a changed document cites, for a reviewer that sees only the diff.
  *
  * A design note or a README section makes claims about code that is not in
- * its diff. On the Kiln trial the reviewer passed an ADR "checked for internal
+ * its diff. On an earlier trial the reviewer passed an ADR "checked for internal
  * consistency only" ("I could not open src/server.ts") and a README security
  * section with "no README claim was spot-checked against code". So when a diff
  * adds or changes prose, the repo files its ADDED lines cite are read from the
@@ -258,7 +258,7 @@ export function citedSourceBlock(diff: string, treeDir: string, report: string |
   const whole = new Array<boolean>(files.length).fill(false);
   // The files the DOCUMENT cites are given their room first, shared among themselves; the files only the worker's
   // report names share what is left. The report is free text, and forty names in it must not shrink the one file the
-  // document's claims are about to a sliver (Kiln's lock ADR: src/server.ts lines 858-1125 became 858-901).
+  // document's claims are about to a sliver (an earlier lock ADR: src/server.ts lines 858-1125 became 858-901).
   const fromReport = (k: number): boolean => !byDocument.has(files[k]!.c.path);
   /** Files of the document whose lines the report cited too, shown by the document's citations only. */
   const narrowed: string[] = [];

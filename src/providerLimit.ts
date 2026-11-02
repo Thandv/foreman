@@ -1,7 +1,7 @@
 /**
  * A provider usage limit is not a defect in the ticket.
  *
- * On Kiln phase 4a the account hit its session limit mid-epic: two workers
+ * On an earlier phase the account hit its session limit mid-epic: two workers
  * died with "You've hit your session limit", were recorded as failed review
  * verdicts, and their failure cascaded through eleven dependents — every one
  * of which then had to be retried by hand. The CLI said exactly what was wrong;

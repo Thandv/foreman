@@ -95,7 +95,7 @@ test('a test name found only in the file path, the header or a removed line is n
 });
 
 test('a modified test is found by its hunk heading or context; an escaped quote in the title still matches', () => {
-  // Kiln's raw-stdin ticket: the bodies of two existing tests changed (titles only in the @@ headings), and a new
+  // an earlier raw-stdin ticket: the bodies of two existing tests changed (titles only in the @@ headings), and a new
   // title was written 'program\\'s' in source but mapped as "program's".
   const diff =
     'diff --git a/test/raw.test.ts b/test/raw.test.ts\nindex 111..222 100644\n--- a/test/raw.test.ts\n+++ b/test/raw.test.ts\n' +
@@ -143,7 +143,7 @@ test('a missing map leaves every non-exempt item unmapped; no numbered items mea
 });
 
 test('a short item that only says the gate passes is exempt: the gate run proves it, no test in the diff can', () => {
-  // Kiln epic B's clang-tidy-profile ticket failed both pre-review rounds on "4. npm run verify passes."
+  // an earlier epic's clang-tidy-profile ticket failed both pre-review rounds on "4. npm run verify passes."
   const acceptance =
     '1. All five checks are in "disable". 2. clang-analyzer-* is still enabled. 3. The pinned tests fail against the old profile. 4. npm run verify passes.';
   const items = numberedItems(acceptance);
@@ -164,10 +164,10 @@ test('a short item that only says the gate passes is exempt: the gate run proves
 });
 
 test('a docs item naming a file by its stem ("README\'s", "SPEC-CPP §1") is covered by a (diff) line for that file', () => {
-  // Kiln's docs ticket t_43f38a70cd failed both pre-review rounds on exactly these items while its map was right.
+  // an earlier docs ticket failed both pre-review rounds on exactly these items while its map was right.
   const diff = fileDiff('README.md', 'cpp recursive') + fileDiff('SPEC-CPP.md', 'parseable fixits') + fileDiff('src/server.ts', 'x');
   const acceptance =
-    "1. README's .kiln.json section documents \"cpp\": {\"recursive\": true}.\n" +
+    "1. README's .app.json section documents \"cpp\": {\"recursive\": true}.\n" +
     '2. SPEC-CPP §1 describes text diagnostics with -fdiagnostics-parseable-fixits.\n' +
     '3. The server answers 403 for an unreadable project.';
   const report = 'ACCEPTANCE MAP\n1. (diff) README.md\n2. (diff) SPEC-CPP.md\n3. (diff) src/server.ts\n';
@@ -198,7 +198,7 @@ test('namesFile: a code file is named only by its base name or path, never by it
   assert.equal(namesFile('CHANGELOG lists it', 'CHANGELOG.rst'), true);
 });
 
-// ------------------------------------------------- the three line forms, replayed from the Kiln trial (F7)
+// ------------------------------------------------- the three line forms, replayed from an earlier trial (F7)
 
 /** A work tree holding `files`; removed when the test ends. */
 function tree(t: { after: (fn: () => void) => void }, files: Record<string, string>): string {
@@ -215,12 +215,12 @@ function tree(t: { after: (fn: () => void) => void }, files: Record<string, stri
 const hunk = (file: string, added: string, heading = ''): string =>
   `diff --git a/${file} b/${file}\nindex 111..222 100644\n--- a/${file}\n+++ b/${file}\n@@ -10,2 +10,3 @@ ${heading}\n context\n+${added}\n context\n`;
 
-// t_d41d3280e6 (lock-file path in the already-running message): acceptance and map lines as the ledger holds them.
+// A trial ticket (lock-file path in the already-running message): acceptance and map lines as the ledger holds them.
 const LOCK_ACCEPTANCE =
   "1. The refusal message contains the lock file's absolute path, the pid and the port. 2. A test pins all three and fails without the change. " +
   '3. The README Serve section quotes the new message exactly. 4. Lock acquisition and replacement logic is unchanged. 5. `npm run verify` passes.';
 const LOCK_DIFF =
-  hunk('README.md', 'kiln: already running (pid N, port P). Lock file: <path>.') +
+  hunk('README.md', 'app: already running (pid N, port P). Lock file: <path>.') +
   hunk('src/server.ts', 'const lockedError = (held: Lock, file: string): Error => new Error(`Lock file: ${file}.`);') +
   hunk('test/server-lock.test.ts', "test('the refusal for a live lock names the lock file full path, the pid and the port', { timeout: 60000 }, async (t) => {");
 const LOCK_TEST_FILE =
@@ -232,7 +232,7 @@ const lockMap = (item4: string): string =>
   '2. test/server-lock.test.ts :: the refusal for a live lock names the lock file full path, the pid and the port\n' +
   `3. (diff) README.md\n4. ${item4}\n5. (diff) package.json\n`;
 
-test('trial t_d41d3280e6 item 4, a no-change claim: `(diff) src/server.ts` passes, and so does a test that was already in the file', (t) => {
+test('trial ticket, item 4, a no-change claim: `(diff) src/server.ts` passes, and so does a test that was already in the file', (t) => {
   const dir = tree(t, { 'test/server-lock.test.ts': LOCK_TEST_FILE });
   // Round 1 mapped the item to the file whose diff shows the logic untouched; it was flagged "item does not name file".
   assert.deepEqual(checkAcceptanceMap({ acceptance: LOCK_ACCEPTANCE, report: lockMap('(diff) src/server.ts'), diff: LOCK_DIFF, treeDir: dir }), []);
@@ -252,13 +252,13 @@ test('trial t_d41d3280e6 item 4, a no-change claim: `(diff) src/server.ts` passe
   );
 });
 
-test('trial t_e17a601f04 item 3 and t_694071e43e item 4: a `(diff)` line for a file in the diff is not flagged', () => {
+test('trial tickets, item 3 and item 4: a `(diff)` line for a file in the diff is not flagged', () => {
   const clangd =
-    '1. `.kiln-build` and a `.clangd` carrying Kiln\'s mark are absent from the file list. 2. A `.clangd` without the mark is listed (test). ' +
+    '1. `.app-build` and a `.clangd` carrying a project\'s mark are absent from the file list. 2. A `.clangd` without the mark is listed (test). ' +
     '3. The mark is recognised through the existing helper, not a copied string. 4. All listing routes agree; direct reads of these paths are unchanged. 5. `npm run verify` passes.';
-  const listing = 'test/listing-kiln-files.test.ts';
+  const listing = 'test/listing-app-files.test.ts';
   const titles = [
-    'a project with .kiln-build and a marked .clangd lists neither in the tree or the files list',
+    'a project with .app-build and a marked .clangd lists neither in the tree or the files list',
     "an unmarked .clangd is the user's and is listed in the tree and the files list",
     'hiding is for the listing only: the marked .clangd and the build files still read by name',
   ];
@@ -286,16 +286,16 @@ test('trial t_e17a601f04 item 3 and t_694071e43e item 4: a `(diff)` line for a f
   }
 });
 
-test('trial t_b36bf5a477, a README-only ticket: `(diff) README.md` on every line is a complete map; a file outside the diff is not', () => {
+test('trial ticket, a README-only ticket: `(diff) README.md` on every line is a complete map; a file outside the diff is not', () => {
   const acceptance =
     '1. README has exactly one Security model section, covering project confinement, the trust prompt, the session token and cookie, output caps, fixed-argv fixes and install offers. ' +
-    "2. It states what Kiln does not defend, including that a program the user runs has the user's own access. " +
+    "2. It states what the app does not defend, including that a program the user runs has the user's own access. " +
     '3. The session cookie is documented where the token is documented (Serve section), with attributes matching the code. ' +
     '4. The report maps every claim to a source file and function, and reviewer spot-checks find no claim the code does not keep. 5. No source file changed; `npm run verify` passes.';
   const diff = hunk('README.md', '## Security model');
   const report = 'ACCEPTANCE MAP\n1. (diff) README.md\n2. (diff) README.md\n3. (diff) README.md\n4. (diff) README.md\n5. (diff) README.md\n';
   assert.deepEqual(checkAcceptanceMap({ acceptance, report, diff }), []);
-  // t_92036a5aae item 4 named a reused fixture the diff does not hold: that one was a real gap and still is.
+  // Another trial ticket's item 4 named a reused fixture the diff does not hold: that one was a real gap and still is.
   assert.deepEqual(
     checkAcceptanceMap({ acceptance, report: report.replace('4. (diff) README.md', '4. (diff) test/fixtures/helper/cpp/cpp-expected-semicolon.txt'), diff }),
     [{ n: 4, reason: 'file not in diff' }],

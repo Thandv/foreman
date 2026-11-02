@@ -12,7 +12,7 @@ import { config } from '../src/config.ts';
 import { probeTask } from '../src/types.ts';
 
 // The skills repo is never read: a fixture mirrors the FM-E0 loadouts for software.architect and software.senior
-// (read by the operator from foreman-skills at main 7a1fd9d).
+// (read by the operator from their own skills checkout).
 
 const LOADOUTS = {
   roles: {

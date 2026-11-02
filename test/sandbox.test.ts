@@ -481,7 +481,7 @@ test('attack: launchctl is refused, sandbox-exec cannot be nested to get out, an
 test('what the README says a sandboxed command loses: a setuid program (ps) does not start, and the compiler\'s lookup cache lands in the private TMPDIR', T, async (t) => {
   const f = fixture(t);
   // Not rules of ours: macOS starts no setuid program inside any sandbox, and xcrun keeps its cache in the user's
-  // temp dir, which here is the run's own. Both surprised a real gate (Kiln's), so both are pinned and documented.
+  // temp dir, which here is the run's own. Both surprised a real gate, so both are pinned and documented.
   const ps = `ps -o pid= -p $$ > ps.out 2>&1; echo OUT ps rc=$?`;
   const on = await withEnv(ON, () => runTests(f.jail, ps, guard()));
   assert.deepEqual(outLines(on.output), ['OUT ps rc=126'], on.output);
