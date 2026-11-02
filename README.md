@@ -10,7 +10,7 @@ TypeScript execution). `typescript` and `@types/node` are dev-only.
 ## Requirements
 
 - macOS 14+ or Linux. On Linux the test sandbox is unavailable, so set `FOREMAN_SANDBOX=off` first (see
-  [Safety model](#safety-model)); the sandbox is macOS-only (`src/security/sandbox.ts:258`).
+  [Safety model](#safety-model)); the sandbox is macOS-only (`sandboxAvailable()` in `src/security/sandbox.ts`).
 - Node of the version in `.node-version` (24).
 - git.
 - The `claude` CLI, for the `claude-code` worker.
@@ -86,19 +86,19 @@ against the lane's size (`FOREMAN_MAX_VERIFYING`, default twice `FOREMAN_MAX_WOR
 
 In brief; the full text is [docs/security.md](docs/security.md) and [SECURITY.md](SECURITY.md).
 
-- **Sandbox.** `FOREMAN_SANDBOX` is `off`, `tests` or `all`; unset means `tests` (`src/security/sandbox.ts:54`).
+- **Sandbox.** `FOREMAN_SANDBOX` is `off`, `tests` or `all`; unset means `tests` (`sandboxMode()` in `src/security/sandbox.ts`).
   It runs test commands, playbook checks, `shell` tasks, the `api` runner's shell and tool calls and the post-merge
   check under macOS `sandbox-exec`: they write only their jail and a private temp/home, read nothing a person owns, and
   cannot open the control port. `FOREMAN_SANDBOX_ALLOW=fsevents` lets file watching work inside it (off by default);
   see [The sandbox](docs/security.md#the-sandbox-foreman_sandbox).
 - **`all` behaves as `tests`.** It is accepted, but the claude-code worker is not sandboxed yet
-  (`src/security/sandbox.ts:7`). A claude-code worker runs as you, with your files and the daemon's API in reach.
+  (header comment of `src/security/sandbox.ts`). A claude-code worker runs as you, with your files and the daemon's API in reach.
 - **Linux.** There is no sandbox: `sandboxAvailable()` answers that it needs macOS `sandbox-exec`
-  (`src/security/sandbox.ts:258`), and with the sandbox on the command is not run (`:286`) and `foreman serve`
+  (`src/security/sandbox.ts`), and with the sandbox on the command is not run (`sandboxState()`) and `foreman serve`
   refuses to start. Set `FOREMAN_SANDBOX=off` to run without any sandbox.
 - **The API is unauthenticated.** It binds loopback only (`127.0.0.1`) unless `FOREMAN_ALLOW_REMOTE=1` is set
-  (`src/server.ts:1419`). Approve takes no proof of who is calling: anything that can reach the port can approve a
-  task, and the route records the caller as `human` (`src/server.ts:765`).
+  (the `LOOPBACK` check in `src/server.ts`). Approve takes no proof of who is calling: anything that can reach the port can approve a
+  task, and the route records the caller as `human` (the approve route in `src/server.ts`).
 
 ## Known limitations
 
