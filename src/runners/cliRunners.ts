@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import type { Runner, RunnerContext, RunnerResult } from './index.ts';
 import type { Stage, Task } from '../types.ts';
 import { spawnStreaming } from './proc.ts';
+import { debug, swallowed } from '../debug.ts';
 import { getPlaybook } from '../playbooks.ts';
 import { modelForTask, tierForTask, tierMaxTurns } from '../roles.ts';
 import { cloudDown, cloudFallback, localOnly, localOnlyLabel } from '../localOnly.ts';
@@ -151,7 +152,8 @@ export function handleCliLine(
   let ev: unknown;
   try {
     ev = JSON.parse(line);
-  } catch {
+  } catch (e) {
+    swallowed('cli', 'stream line', e);
     ev = undefined;
   }
   if (ev === null || typeof ev !== 'object' || Array.isArray(ev)) {
@@ -199,7 +201,8 @@ function makeCliRunner(spec: CliSpec): Runner {
         await exec(binPath, ['--version'], { timeout: 20_000, env: spec.env?.(task) ?? process.env });
         preflightOk.set(binPath, Date.now());
         return null;
-      } catch {
+      } catch (e) {
+        swallowed('cli', 'preflight', e);
         // A failure is never cached, and it drops any stale success for this
         // path too, so the memo can only ever shorten the happy case.
         preflightOk.delete(binPath);
@@ -218,6 +221,7 @@ function makeCliRunner(spec: CliSpec): Runner {
       const tripwire = new AbortController();
 
       const args = spec.buildArgs(ctx.task.prompt, extra, ctx.task, opts);
+      const startedAt = Date.now();
       const code = await spawnStreaming(bin(), args, {
         cwd: ctx.dir,
         signal: AbortSignal.any([ctx.signal, tripwire.signal]),
@@ -232,6 +236,7 @@ function makeCliRunner(spec: CliSpec): Runner {
 
       ctx.child(null);
       ctx.progress(1);
+      debug('cli', 'run end', { runner: spec.id, exit: code, ms: Date.now() - startedAt, bytes_out: state.lastText.length, turns: state.responses.size });
       const ok = code === 0 && state.resultOk !== false && state.jailBreach === null;
       const tier = tierForTask(ctx.task);
       const reason = state.jailBreach !== null

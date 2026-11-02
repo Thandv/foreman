@@ -1,6 +1,7 @@
 import { councilAliases } from './verify/council.ts';
 import { resolveSpec, specs } from './models.ts';
 import type { Sensitivity } from './types.ts';
+import { debug, errType, swallowed } from './debug.ts';
 
 export interface WarmResult {
   alias: string;
@@ -37,6 +38,7 @@ async function warmOne(alias: string, keepAlive: string, timeoutMs: number): Pro
     // Resolution belongs inside the guard: one bad alias in models.json must
     // skip that model, not abandon warming for every other one.
     spec = resolveSpec(alias);
+    debug('warm', 'ollama chat start', { alias, model: spec.model });
     const res = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -51,9 +53,11 @@ async function warmOne(alias: string, keepAlive: string, timeoutMs: number): Pro
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 120)}`);
-    await res.arrayBuffer();
+    const bytes = (await res.arrayBuffer()).byteLength;
+    debug('warm', 'ollama chat end', { alias, status: res.status, ms: Date.now() - started, bytes_out: bytes });
     return { alias, model: spec.model, ok: true, ms: Date.now() - started, error: null };
   } catch (err) {
+    debug('warm', 'ollama chat end', { alias, status: 'error', error: errType(err), ms: Date.now() - started });
     return {
       alias, model: spec?.model ?? alias, ok: false, ms: Date.now() - started,
       error: (err as Error).message.slice(0, 200),
@@ -99,7 +103,10 @@ export async function prewarmRoster(opts: PrewarmOptions = {}): Promise<WarmResu
     }
     warmed.push(result.model);
 
-    const resident = await readResident().catch(() => null);
+    const resident = await readResident().catch((e: unknown) => {
+      swallowed('warm', 'resident', e);
+      return null;
+    });
     if (!resident) {
       opts.onLine?.(`warmed ${result.alias} (${result.model}) in ${result.ms}ms`);
       continue;
@@ -137,10 +144,10 @@ export async function residentSummary(
 ): Promise<string> {
   let resident: Set<string> | null = null;
   let reason = '';
-  try { resident = await readResident(); } catch (err) { reason = (err as Error).message.slice(0, 200); }
+  try { resident = await readResident(); } catch (err) { swallowed('warm', 'resident', err); reason = (err as Error).message.slice(0, 200); }
   return warmSummary(aliases.map((alias) => {
     let model = alias;
-    try { model = resolveSpec(alias).model; } catch { /* unknown alias: reported as not resident */ }
+    try { model = resolveSpec(alias).model; } catch (e) { swallowed('warm', 'alias', e); /* unknown alias: reported as not resident */ }
     const ok = resident?.has(model) ?? false;
     return { alias, model, ok, ms: 0, error: ok ? null : (resident ? 'not loaded' : reason) };
   }));
@@ -149,7 +156,13 @@ export async function residentSummary(
 /** Which models Ollama currently has resident. */
 async function loadedModels(): Promise<Set<string>> {
   const base = process.env['FOREMAN_OLLAMA_URL'] ?? 'http://127.0.0.1:11434';
-  const res = await fetch(`${base}/api/ps`, { signal: AbortSignal.timeout(3000) });
+  const t0 = Date.now();
+  debug('warm', 'ollama ps start');
+  const res = await fetch(`${base}/api/ps`, { signal: AbortSignal.timeout(3000) }).catch((e: unknown) => {
+    debug('warm', 'ollama ps end', { status: 'error', error: errType(e), ms: Date.now() - t0 });
+    throw e;
+  });
+  debug('warm', 'ollama ps end', { status: res.status, ms: Date.now() - t0 });
   if (!res.ok) throw new Error(`ollama ps: ${res.status}`);
   const body = (await res.json()) as { models?: Array<{ name?: string; model?: string }> };
   return new Set((body.models ?? []).flatMap((m) => [m.name, m.model].filter((n): n is string => Boolean(n))));
@@ -177,11 +190,16 @@ export async function checkOllamaParallelism(): Promise<ParallelismCheck> {
       advice: n >= 2 ? 'the server can serve both advisors at once' : 'set OLLAMA_NUM_PARALLEL=2 or more so both advisors share one load',
     };
   }
+  const t0 = Date.now();
   try {
+    debug('warm', 'ollama version start');
     const res = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(3000) });
+    debug('warm', 'ollama version end', { status: res.status, ms: Date.now() - t0 });
     if (!res.ok) throw new Error(String(res.status));
     await res.arrayBuffer();
-  } catch {
+  } catch (e) {
+    debug('warm', 'ollama version end', { status: 'error', error: errType(e), ms: Date.now() - t0 });
+    swallowed('warm', 'version', e);
     return { numParallel: null, ok: false, advice: 'ollama is not reachable; council calls will fail' };
   }
   // The server does not report its own concurrency, so an unset variable is

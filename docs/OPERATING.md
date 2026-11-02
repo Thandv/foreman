@@ -49,6 +49,10 @@ a parent also cancels its descendants.
   run `foreman serve`, and unload the launchd job first when the daemon must stay stopped, as for a restore. A stop
   is not a verdict on work in flight: running tasks go back in the queue, with their worktrees kept.
 
+## Debug logging
+
+Set `FOREMAN_DEBUG=1` in the daemon's environment (in the launchd plist's `EnvironmentVariables`, then reload the job) and read the lines tagged debug in `<home>/daemon.err.log`. Unset it to turn them off.
+
 ## Reading a failed run
 
 1. `foreman show <taskId>`: the status, the `error:` line, the council's verdicts and each reviewer's critique, the

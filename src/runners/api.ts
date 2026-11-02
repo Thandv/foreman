@@ -15,6 +15,7 @@ import type { Task } from '../types.ts';
 import { toolBrief, toolSurface } from '../tools/forge.ts';
 import { runTool as runCatalogTool } from '../tools/run.ts';
 import { scrubbedEnv, spawnStreaming } from './proc.ts';
+import { debug, swallowed } from '../debug.ts';
 import { SandboxError } from '../security/sandbox.ts';
 import { sandboxedShell } from '../verify/tests.ts';
 
@@ -454,6 +455,7 @@ export const apiRunner: Runner = {
       try {
         observation = await runTool(call, ctx);
       } catch (err) {
+        swallowed('api', 'tool', err, { tool: String(call['tool']) });
         observation = `error: ${(err as Error).message}`;
       }
       ctx.log(`→ ${String(call['tool'])} ${String(call['path'] ?? call['command'] ?? '')} :: ${observation.slice(0, 300)}`);
@@ -467,6 +469,7 @@ export const apiRunner: Runner = {
       lastResult = result;
       if (repeats >= REPEAT_STOP) {
         ctx.log(`stopping a loop: ${label} returned the same result ${repeats} times in a row`);
+        debug('api', 'loop stopped', { tool: String(call['tool']), repeats });
         ctx.progress(1);
         return {
           ok: false,
