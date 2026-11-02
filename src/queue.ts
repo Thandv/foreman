@@ -1204,8 +1204,8 @@ export class Store extends EventEmitter {
       // status note, and nothing else would carry it to the next attempt.
       const prior = task.repairNotes?.trim();
       // The reason also joins the ticket's standing operator demands. Repair
-      // notes are overwritten by every later review round, so on the Kiln
-      // phase-3 UI ticket the operator's six findings reached the next round
+      // notes are overwritten by every later review round, so on an earlier
+      // UI ticket the operator's six findings reached the next round
       // only as the reviewer's restatement of them — and the chair, which
       // judges against acceptance, overruled three as "not in the acceptance
       // criteria". A human's rejection IS acceptance; it must outlive the round.
@@ -1224,7 +1224,7 @@ export class Store extends EventEmitter {
     // An operator's note on the retry is theirs to give: it leads the repair
     // notes, so the worker reads it before the critique it qualifies, and joins
     // the standing operator demands, so every reviewer and the chair hold it.
-    // On the Kiln polish epic a ticket failed only because the review demanded
+    // On an earlier polish epic a ticket failed only because the review demanded
     // a report of live browser checks a headless worker cannot run; the
     // operator ran them, and needed a way to say so on the retry.
     const operatorNote = note?.trim();
@@ -1330,7 +1330,7 @@ export class Store extends EventEmitter {
    * A dead dependency fails its dependents (reconcileBlocked) so nothing hangs
    * on it — but a retry brings the dependency back, and its dependents must
    * come back with it. Without this, one leaf ticket that ran out of repairs
-   * failed six downstream tickets of the first Kiln epic, and retrying the leaf
+   * failed six downstream tickets of an earlier crew run, and retrying the leaf
    * left all six dead. Only tasks that failed BECAUSE of this dependency are
    * revived (their error names it), transitively; they wait in `blocked`, and
    * reconcileBlocked re-fails any whose other dependencies are still dead.

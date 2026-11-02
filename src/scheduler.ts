@@ -333,8 +333,8 @@ export const SUITE_ONCE_BRIEF =
 
 /**
  * What the headless worker may run, said up front. A worker that is not told
- * spends its turns discovering the allowlist one refusal at a time: on the
- * first Kiln epic the diagnostics worker tried tsc, node, python3 and bash in
+ * spends its turns discovering the allowlist one refusal at a time: on an
+ * earlier crew run the diagnostics worker tried tsc, node, python3 and bash in
  * turn, was refused each time, and delivered nothing.
  */
 export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
@@ -385,9 +385,9 @@ export function repairBrief(task: Task, previous?: PreviousRound | null): string
 
 /**
  * The ticket's acceptance criteria, which the reviewer judges the work
- * against. They were never in the worker's brief: on Kiln phase 4b a worker
+ * against. They were never in the worker's brief: on an earlier crew run a worker
  * reported that "the acceptance list never reached" it, and the review failed
- * it on the exact ids and groupings that list named. Across the Kiln epics this
+ * it on the exact ids and groupings that list named. Across earlier crew runs this
  * is the likely root of many repair rounds — workers built to the prompt and
  * were judged against a list they had not seen.
  */
@@ -1197,7 +1197,7 @@ export class Scheduler {
     const runTimeoutMs = this.taskTimeoutMs;
     // Time queued behind other runs (for a test slot or the verify lane, or the slot its own worker asked the wrapper
     // for: slotQueued) is not this run's own time: the clock stops while queued and the deadline moves on by the
-    // wait. Finished Kiln tickets were cancelled ('aborted while waiting for a verify slot') when their 30 minutes
+    // wait. Finished tickets were cancelled ('aborted while waiting for a verify slot') when their 30 minutes
     // ran out in these queues on a busy machine.
     /** The stage the deadline came in, for the message the run ends with. */
     let expiredIn: string | null = null;
@@ -2810,7 +2810,7 @@ export class Scheduler {
         this.store.getTask(taskId)?.status === 'awaiting-approval' && this.store.latestRun(taskId)?.id === run.id;
       // A crew ticket is reviewed by its crew chain, not the local council —
       // a re-review must ask the same reviewer the run did. Before, every
-      // re-review went to the council: on Kiln phase 4a two tickets parked
+      // re-review went to the council: on an earlier crew run two tickets parked
       // UNREVIEWED by a usage limit could only ever come back `split`, because
       // the local council times out on this machine and the chain never ran.
       if (crewLeadsVerify(task)) {

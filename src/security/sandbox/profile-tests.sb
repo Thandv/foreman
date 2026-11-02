@@ -32,7 +32,7 @@
   (remote ip (lo (if (param "DENY_PORT_3") (param "DENY_PORT_3") "1")))
   (remote ip (lo (if (param "DENY_PORT_4") (param "DENY_PORT_4") "1"))))
 
-;; pseudo-terminals: a suite may allocate a pty and use it (Kiln's launch tests, `script`, python's pty). Only ptys
+;; pseudo-terminals: a suite may allocate a pty and use it (an app's launch tests, `script`, python's pty). Only ptys
 ;; this sandbox was granted: another terminal of the same user (/dev/ttysNNN it did not allocate) stays closed.
 (allow pseudo-tty)
 (allow file-read* file-write* file-ioctl (literal "/dev/ptmx"))

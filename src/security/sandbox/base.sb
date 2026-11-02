@@ -72,7 +72,7 @@
   (subpath "/Library/Keychains"))
 ;; 3. Read-only things given back.
 ;; The two roots themselves can be stat-ed, never listed or read into: a program that refuses to work on "/Users" or
-;; "/Volumes" has to be able to see that they are directories. Probe: Kiln's gate (test/workspaces.test.ts) opens
+;; "/Volumes" has to be able to see that they are directories. Probe: a project's gate (test/workspaces.test.ts) opens
 ;; both and expects "refused: a system directory" (403); with stat denied it got "no such folder" (400) and failed.
 (allow file-read-metadata (literal "/Users") (literal "/Volumes"))
 (read-only (opt "RO_1"))
