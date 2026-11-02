@@ -111,7 +111,7 @@ function safetyBlock(playbook) {
     `Gate default: ${playbook.gate.default}`,
     playbook.gate.default === 'owner'
       ? 'The owner model may sign finished work off without you — but only work that came back green.'
-      : 'Every finished ticket waits for a human click. Nothing merges on its own.',
+      : 'By default nothing merges until you click (an opt-in owner gate can approve for you).',
   ));
   for (const h of playbook.gate.hardHuman) {
     gateRow.appendChild(chip(h, 'gate', `Always human: ${h}`, 'A condition the owner gate is never allowed to sign: this always comes back to you, whatever the gate default says.'));
@@ -208,7 +208,7 @@ function pendingCard(draft, models, refresh) {
         `Gate default: ${draft.gate.default}`,
         draft.gate.default === 'owner'
           ? 'This draft asks for a machine gate: the owner model could sign finished work off without a human. The forge is not allowed to draft this — see the warnings.'
-          : 'Every finished ticket waits for a human click.',
+          : 'By default nothing merges until you click (an opt-in owner gate can approve for you).',
       ),
       'Who signs a finished ticket off by default under this playbook.',
     ],

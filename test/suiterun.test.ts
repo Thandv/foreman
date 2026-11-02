@@ -522,7 +522,7 @@ test('the path a refused invocation is told is only ever one the wrapper could h
     assert.equal(claimRunLease({ 'x-foreman-run': run }).busy, 'busy 0 -', `not repeated: ${output}`);
     held.release();
   });
-  const real = '/private/var/folders/1x/abc/T/foreman-suite-output/r_3584622c73-1791763453222-92249.log';
+  const real = '/private/var/folders/1x/abc/T/foreman-suite-output/r_0000000000-1791763453222-92249.log';
   const held = claimRunLease({ 'x-foreman-run': 'r_real', 'x-foreman-wrapper-pid': '7', 'x-foreman-output': real });
   assert.equal(claimRunLease({ 'x-foreman-run': 'r_real' }).busy, `busy 0 7 ${real}`);
   held.release();
