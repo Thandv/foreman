@@ -423,20 +423,28 @@ async function postStream(
         if (!line) continue;
         const payload = opts.sse ? (line.startsWith('data:') ? line.slice(5).trim() : '') : line;
         if (!payload || payload === '[DONE]') continue;
+        // Only the PARSE sits in the try: an error `onChunk` raises on purpose
+        // (a mid-stream `{"error": ...}`) must propagate, not be dropped.
+        let obj: unknown;
         try {
-          onChunk(JSON.parse(payload));
+          obj = JSON.parse(payload);
         } catch (e) {
           swallowed('models', 'stream line', e);
           // A malformed line is dropped rather than failing the call: a
           // truncated keep-alive comment must not lose 4,000 good tokens.
+          continue;
         }
+        onChunk(obj);
       }
     }
     const rest = buffered.trim();
     if (rest) {
       const payload = opts.sse ? (rest.startsWith('data:') ? rest.slice(5).trim() : '') : rest;
       if (payload && payload !== '[DONE]') {
-        try { onChunk(JSON.parse(payload)); } catch (e) { swallowed('models', 'stream line', e); /* same argument as above */ }
+        let obj: unknown;
+        let parsed = false;
+        try { obj = JSON.parse(payload); parsed = true; } catch (e) { swallowed('models', 'stream line', e); /* same argument as above */ }
+        if (parsed) onChunk(obj);
       }
     }
   } catch (err) {
