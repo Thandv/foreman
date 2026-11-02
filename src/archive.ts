@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { terms } from './assistant/memory.ts';
 import { config } from './config.ts';
+import { swallowed } from './debug.ts';
 import { sweepOrphanStaging } from './deps.ts';
 import { jailChanges, pinnedGit, type Jail } from './isolate.ts';
 // Type-only: the Store is always the caller's, so archive.ts keeps no runtime
@@ -265,7 +266,10 @@ export async function sweepJails(
           // filter the repo's config — which the jail can write — names.
           const pending = await pinnedGit(dir, ['status', '--porcelain'])
             .then((r) => r.stdout.trim())
-            .catch(() => null);
+            .catch((e: unknown) => {
+              swallowed('archive', 'status', e);
+              return null;
+            });
           if (pending === null) {
             result.keptUnreadable.push(dir);
             continue;
@@ -275,7 +279,7 @@ export async function sweepJails(
             continue;
           }
         }
-        await pinnedGit(repo, ['worktree', 'remove', '--force', dir]).catch(() => {});
+        await pinnedGit(repo, ['worktree', 'remove', '--force', dir]).catch((e: unknown) => swallowed('archive', 'worktree remove', e));
       }
       fs.rmSync(dir, { recursive: true, force: true });
       result.removed.push(dir);
@@ -287,10 +291,13 @@ export async function sweepJails(
     changeCheckMs: opts.changeCheckMs ?? CHANGE_CHECK_MS,
   }, result, repos, seen);
   // Staging directories whose jail is gone — by this sweep or any other way — under the rule deps.ts already has.
-  result.staging = await sweepOrphanStaging(workRoot).catch(() => []);
+  result.staging = await sweepOrphanStaging(workRoot).catch((e: unknown) => {
+    swallowed('archive', 'orphan staging', e);
+    return [];
+  });
   for (const repo of repos) {
     if (!fs.existsSync(repo)) continue;
-    await pinnedGit(repo, ['worktree', 'prune']).catch(() => {});
+    await pinnedGit(repo, ['worktree', 'prune']).catch((e: unknown) => swallowed('archive', 'worktree prune', e));
     result.repos.push(repo);
   }
   return result;
@@ -317,7 +324,8 @@ function isOwnTree(dir: string, workRoot: string): boolean {
     if (fs.realpathSync(dir) !== path.join(fs.realpathSync(workRoot), path.relative(workRoot, dir))) return false;
     fs.lstatSync(path.join(dir, '.git'));
     return true;
-  } catch {
+  } catch (e) {
+    swallowed('archive', 'own tree', e);
     return false;
   }
 }
@@ -327,7 +335,8 @@ function diffOnDisk(file: string): boolean {
   try {
     const st = fs.lstatSync(file);
     return st.isFile() && st.size > 0;
-  } catch {
+  } catch (e) {
+    swallowed('archive', 'diff on disk', e);
     return false;
   }
 }
@@ -415,7 +424,7 @@ async function sweepFailed(
       }
       // The check above awaited: a retry or a reopen in the meantime owns the tree again.
       if (store.getTask(taskId)?.status !== 'failed') continue;
-      await pinnedGit(repo, ['worktree', 'remove', '--force', dir]).catch(() => {});
+      await pinnedGit(repo, ['worktree', 'remove', '--force', dir]).catch((e: unknown) => swallowed('archive', 'worktree remove', e));
       fs.rmSync(dir, { recursive: true, force: true });
       result.removed.push(dir);
     }

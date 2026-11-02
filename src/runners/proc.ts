@@ -1,4 +1,7 @@
+import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { debug, errType, swallowed } from '../debug.ts';
+
 import { describeReap, escalationFor, LeftoverReaper, signalGroups, snapshotPs, snapshotTreeGroups } from './proctree.ts';
 
 /** Names that look like credentials, whatever the process happens to hold. */
@@ -73,6 +76,10 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true, // own process group, so we can kill descendants too
     });
+    // FOREMAN_DEBUG: argv0 and the argument count only — prompts and tokens travel in argv.
+    const started = Date.now();
+    const who = { argv0: path.basename(cmd), argc: args.length + 1, cwd: opts.cwd };
+    debug('spawn', 'start', { ...who, pid: child.pid });
     if (child.pid !== undefined) opts.onSpawn?.(child.pid);
     const reaper = child.pid !== undefined ? new LeftoverReaper(child.pid) : null;
     reaper?.start();
@@ -83,7 +90,7 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
         ? reaper.reap().then((report) => {
             const line = describeReap(`'${cmd}'`, report);
             if (line) process.stderr.write(`${line}\n`);
-          }).catch(() => {})
+          }).catch((e: unknown) => swallowed('spawn', 'reap', e))
         : Promise.resolve();
       return reaped;
     };
@@ -102,7 +109,8 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
       } catch {
         try {
           child.kill(sig);
-        } catch {
+        } catch (e) {
+          swallowed('spawn', 'kill', e);
           /* already gone */
         }
       }
@@ -182,6 +190,7 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
       if (settled) return;
       settled = true;
       cleanup();
+      debug('spawn', 'end', { ...who, status: 'error', error: errType(err), ms: Date.now() - started });
       reaper?.childExited(); // no reap: the child may never have run, or may still be running
       reject(err);
     });
@@ -190,6 +199,7 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
       if (settled) return;
       settled = true;
       cleanup();
+      debug('spawn', 'end', { ...who, exit: code ?? (sig ? 128 : 1), signal: sig, ms: Date.now() - started });
       void reapLeftovers().then(() => {
         if (lineFault) reject(new Error(`onLine threw: ${lineFault.message}`, { cause: lineFault }));
         else resolve(code ?? (sig ? 128 : 1));

@@ -4,11 +4,32 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config } from './config.ts';
+import { debug, errType, swallowed } from './debug.ts';
 import { memoryWarning, modelSizeGb, readMemory } from './memory.ts';
 import { loadPersonas, personaServerUrl } from './align/personas.ts';
 import { cloudDown, cloudFallback, localOnly, localOnlyMode, setCloudDown } from './localOnly.ts';
 
-const execFileAsync = promisify(execFile);
+const rawExecFile = promisify(execFile);
+
+/** execFile with FOREMAN_DEBUG spawn lines: argv0 and the argument count only (the prompt travels in argv). */
+async function execFileAsync(
+  bin: string,
+  args: string[],
+  opts: { cwd: string; timeout?: number; signal?: AbortSignal; maxBuffer?: number },
+): Promise<{ stdout: string; stderr: string }> {
+  const t0 = Date.now();
+  const who = { argv0: path.basename(bin), argc: args.length + 1, cwd: opts.cwd };
+  debug('spawn', 'start', who);
+  try {
+    const r = await rawExecFile(bin, args, opts);
+    debug('spawn', 'end', { ...who, exit: 0, ms: Date.now() - t0, bytes_out: r.stdout.length });
+    return r;
+  } catch (err) {
+    const code = (err as { code?: unknown }).code;
+    debug('spawn', 'end', { ...who, exit: typeof code === 'number' ? code : errType(err), ms: Date.now() - t0 });
+    throw err;
+  }
+}
 import type { Sensitivity } from './types.ts';
 
 export interface ChatMessage {
@@ -207,7 +228,8 @@ function adoptedPersonaSpecs(): ModelSpec[] {
         usdPerMTokOut: 0,
       });
     }
-  } catch {
+  } catch (err) {
+    swallowed('models', 'personas', err);
     // A broken personas directory must not take down model resolution.
   }
   return out;
@@ -380,7 +402,10 @@ async function postStream(
       signal: ac.signal,
     });
     if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => '');
+      const text = await res.text().catch((e: unknown) => {
+        swallowed('models', 'error body', e);
+        return '';
+      });
       throw new ModelUnavailable(`${url} \u2192 ${res.status}: ${text.slice(0, 300)}`);
     }
     const decoder = new TextDecoder();
@@ -400,7 +425,8 @@ async function postStream(
         if (!payload || payload === '[DONE]') continue;
         try {
           onChunk(JSON.parse(payload));
-        } catch {
+        } catch (e) {
+          swallowed('models', 'stream line', e);
           // A malformed line is dropped rather than failing the call: a
           // truncated keep-alive comment must not lose 4,000 good tokens.
         }
@@ -410,7 +436,7 @@ async function postStream(
     if (rest) {
       const payload = opts.sse ? (rest.startsWith('data:') ? rest.slice(5).trim() : '') : rest;
       if (payload && payload !== '[DONE]') {
-        try { onChunk(JSON.parse(payload)); } catch { /* same argument as above */ }
+        try { onChunk(JSON.parse(payload)); } catch (e) { swallowed('models', 'stream line', e); /* same argument as above */ }
       }
     }
   } catch (err) {
@@ -440,7 +466,8 @@ function cliFailureCause(stdout: unknown): string | null {
     const parsed = JSON.parse(text) as { result?: unknown };
     const result = String(parsed.result ?? '').trim();
     return result ? result.slice(0, 300) : null;
-  } catch {
+  } catch (e) {
+    swallowed('models', 'cli failure json', e);
     return null;
   }
 }
@@ -490,7 +517,10 @@ let probeInFlight: Promise<string | null> | null = null;
 export function probeCloud(): Promise<string | null> {
   // Overlapping callers (the boot timer, doctor, drill) share one probe, so a
   // down state costs one confirmation call, not one per caller.
-  probeInFlight ??= probeCloudOnce().finally(() => {
+  probeInFlight ??= probeCloudOnce().then((v) => {
+    debug('model', 'probeCloud', { down: v !== null });
+    return v;
+  }).finally(() => {
     probeInFlight = null;
   });
   return probeInFlight;
@@ -517,7 +547,8 @@ async function probeCloudOnce(): Promise<string | null> {
     try {
       const parsed = JSON.parse(stdout) as { loggedIn?: unknown };
       if (parsed.loggedIn === false) verdict = 'claude cli is not signed in — run `claude` and /login';
-    } catch {
+    } catch (e) {
+      swallowed('models', 'auth status json', e);
       /* unreadable: unknown */
     }
   }
@@ -634,7 +665,24 @@ async function runClaudeCli(
   }
 }
 
+/** `chatCall` with FOREMAN_DEBUG start/end lines: provider, model, sizes and timing — never the messages. */
 export async function chat(opts: ChatOptions): Promise<ChatResult> {
+  if (!config.debug) return chatCall(opts);
+  const t0 = Date.now();
+  const bytesIn = opts.messages.reduce((n, m) => n + m.content.length, 0);
+  try {
+    const known = specs().get(opts.alias);
+    debug('model', 'chat start', { alias: opts.alias, provider: known?.provider, model: known?.model, bytes_in: bytesIn });
+    const r = await chatCall(opts);
+    debug('model', 'chat end', { status: 'ok', ms: Date.now() - t0, alias: opts.alias, bytes_in: bytesIn, bytes_out: r.text.length, tok_in: r.tokensIn, tok_out: r.tokensOut });
+    return r;
+  } catch (err) {
+    debug('model', 'chat end', { status: 'error', error: errType(err), ms: Date.now() - t0, alias: opts.alias });
+    throw err;
+  }
+}
+
+async function chatCall(opts: ChatOptions): Promise<ChatResult> {
   const spec = resolveSpec(opts.alias);
   assertAllowed(opts.sensitivity, spec);
   const started = Date.now();

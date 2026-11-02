@@ -108,6 +108,10 @@ export const config = {
    * passed a 14 KB security module having read only an excerpt of its tests.
    */
   crewCodeDiffCapBytes: int('FOREMAN_CREW_CODE_DIFF_CAP_BYTES', 96_000),
+  /** FOREMAN_DEBUG=1: one `[foreman debug]` line per event on stderr (src/debug.ts). Read on each call, like taskTimeoutMs. */
+  get debug(): boolean {
+    return process.env['FOREMAN_DEBUG'] === '1';
+  },
   logTailLines: int('FOREMAN_LOG_TAIL_LINES', 40),
   logTailBytes: int('FOREMAN_LOG_TAIL_BYTES', 4_000),
   memoryBriefBytes: int('FOREMAN_MEMORY_BRIEF_BYTES', 2_000),
