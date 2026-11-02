@@ -29,7 +29,9 @@ export function errType(err: unknown): string {
 export function debug(scope: string, msg: string, fields: Record<string, string | number | boolean | null | undefined> = {}): void {
   if (!config.debug) return;
   try {
-    const flat = (v: unknown): string => String(v).replace(/\s+/g, ' ').slice(0, 200);
+    // One line of plain text: whitespace and control characters become one space, so a value (a model-chosen tool
+    // name) can neither start a forged line nor send a terminal escape to whoever tails daemon.err.log.
+    const flat = (v: unknown): string => String(v).replace(/[\s\p{Cc}]+/gu, ' ').slice(0, 200);
     const kv = Object.entries(fields)
       .filter(([, v]) => v !== undefined)
       .map(([k, v]) => `${k}=${flat(v)}`);

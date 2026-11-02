@@ -7,7 +7,7 @@ import path from 'node:path';
 import { chat } from '../src/models.ts';
 import { spawnStreaming } from '../src/runners/proc.ts';
 import { checkOllamaParallelism } from '../src/warm.ts';
-import { debug } from '../src/debug.ts';
+import { debug, errType } from '../src/debug.ts';
 
 const SENTINEL = 'SENTINEL-prompt-7f3a91';
 
@@ -116,6 +116,51 @@ test('a swallowed error is logged by its type and never its message', async (t) 
   assert.match(out, /ollama version end status=error error=ECONNREFUSED/);
   assert.match(out, /swallowed .*error=ECONNREFUSED/);
   assert.ok(!out.includes(SENTINEL));
+  // A timed-out fetch rejects with a DOMException, whose numeric code (23) is a legacy number.
+  assert.equal(errType(new DOMException(SENTINEL, 'TimeoutError')), 'TimeoutError');
+});
+
+test('a spawn that cannot start logs an end line with status=error and the code', async (t) => {
+  setEnv(t, 'FOREMAN_DEBUG', '1');
+  const lines = captureStderr(t);
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debug-'));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  await assert.rejects(spawnStreaming(path.join(cwd, 'no-such-program'), [SENTINEL], { cwd, signal: new AbortController().signal, onLine() {} }), { code: 'ENOENT' });
+  assert.match(lines.join(''), /spawn end argv0=no-such-program argc=2 .*status=error error=ENOENT ms=\d+/);
+  assert.ok(!lines.join('').includes(SENTINEL));
+});
+
+test('the claude -p path logs its spawn start and end (exit 0 and 1), never the prompt, the reply or the CLI output', async (t) => {
+  setEnv(t, 'FOREMAN_DEBUG', '1');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debug-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // A stand-in CLI: the prompt rides in argv after -p. It echoes every argument to stderr and the prompt back as
+  // the reply; with FAKE_CLAUDE_FAIL set it exits 1, and execFile's error message then quotes the whole command line.
+  const bin = path.join(dir, 'claude');
+  fs.writeFileSync(bin, [
+    '#!/bin/sh',
+    'printf "%s " "$@" >&2',
+    '[ -n "$FAKE_CLAUDE_FAIL" ] && exit 1',
+    'while [ $# -gt 0 ]; do [ "$1" = "-p" ] && p="$2"; shift; done',
+    'printf \'{"result":"%s","usage":{"input_tokens":5,"output_tokens":3}}\' "$p"',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  setEnv(t, 'FOREMAN_CLAUDE_BIN', bin);
+  setEnv(t, 'FAKE_CLAUDE_FAIL', undefined);
+  const lines = captureStderr(t);
+  const ask = () => chat({ alias: 'haiku', sensitivity: 'S1', messages: [{ role: 'user', content: SENTINEL }] });
+  const r = await ask();
+  assert.equal(r.text, SENTINEL, 'the stand-in echoed the prompt back');
+  process.env['FAKE_CLAUDE_FAIL'] = '1';
+  await assert.rejects(ask(), (err: Error) => err.message.includes(SENTINEL));
+  const out = lines.join('');
+  assert.match(out, /model chat start alias=haiku provider=claude-cli /);
+  assert.match(out, /spawn start argv0=claude argc=\d+ cwd=/);
+  assert.match(out, /spawn end argv0=claude argc=\d+ cwd=.* exit=0 ms=\d+ bytes_out=\d+/);
+  assert.match(out, /model chat end status=ok .*alias=haiku .*tok_in=5 tok_out=3/);
+  assert.match(out, /spawn end argv0=claude argc=\d+ cwd=.* exit=1 ms=\d+/);
+  assert.match(out, /model chat end status=error error=ModelUnavailable /);
+  assert.ok(!out.includes(SENTINEL));
 });
 
 test('secrets are redacted in every shape', (t) => {
@@ -128,10 +173,11 @@ test('secrets are redacted in every shape', (t) => {
     'sk-hunter5hunter5',
     'ghp_hunter6hunter6',
     'https://user:hunter7hunter7@example.com/path',
+    'a bare Bearer hunter8hunter8',
   ];
   for (const s of shapes) debug('test', 'shape', { v: s });
   const out = lines.join('');
-  for (let i = 2; i <= 7; i++) assert.ok(!out.includes(`hunter${i}`), `shape ${i} leaked: ${out}`);
+  for (let i = 2; i <= 8; i++) assert.ok(!out.includes(`hunter${i}`), `shape ${i} leaked: ${out}`);
   assert.ok(out.includes('[REDACTED]'));
   assert.ok(out.includes('@example.com'));
 });
@@ -142,6 +188,16 @@ test('a message with a newline cannot forge a second debug line', (t) => {
   debug('test', 'x\n[foreman debug] model chat end status=ok', { a: 1 });
   assert.equal(lines.length, 1);
   assert.equal(lines[0]!.trimEnd().split('\n').length, 1);
+});
+
+test('a value cannot carry a terminal escape and is capped at 200 characters', (t) => {
+  setEnv(t, 'FOREMAN_DEBUG', '1');
+  const lines = captureStderr(t);
+  // A model-chosen tool name: set the window title, erase the line, move up, then a long tail.
+  debug('test', 'x', { tool: `\u001b]0;title\u0007\u001b[2K\u001b[1A\u009b${'y'.repeat(500)}` });
+  const line = lines[0]!.replace(/\n$/, '');
+  assert.doesNotMatch(line, /\p{Cc}/u);
+  assert.ok(line.length < 260, `not capped: ${line.length}`);
 });
 
 test('a closed stderr does not throw', (t) => {
