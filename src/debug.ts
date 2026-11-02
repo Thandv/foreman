@@ -13,6 +13,10 @@ const ASSIGNED = /((?:key|token|secret|password|authorization|cookie)\w*["']?\s*
 const TOKENS = /\b(?:sk|gh[pousr]|github_pat)[-_][A-Za-z0-9_-]+|\bbearer\s+\S+/gi;
 const USERINFO = /(?<=:\/\/)[^\s/@]+(?=@)/g;
 
+// A field whose key names a secret has its value replaced whole; token counts (tokens_in, tok_out) are numbers.
+const SECRET_KEY = /key|token|secret|password|authorization|cookie/i;
+const COUNT_KEY = /^tok(?:ens?)?_(?:in|out)$/i;
+
 export function scrub(text: string): string {
   return text.replace(ASSIGNED, '$1[REDACTED]').replace(TOKENS, '[REDACTED]').replace(USERINFO, '[REDACTED]');
 }
@@ -31,11 +35,12 @@ export function debug(scope: string, msg: string, fields: Record<string, string 
   try {
     // One line of plain text: whitespace and control characters become one space, so a value (a model-chosen tool
     // name) can neither start a forged line nor send a terminal escape to whoever tails daemon.err.log.
-    const flat = (v: unknown): string => String(v).replace(/[\s\p{Cc}]+/gu, ' ').slice(0, 200);
+    // Scrub each text part on its own, so a key name like tokens_in is not mistaken for a secret assignment.
+    const flat = (v: unknown): string => scrub(String(v).replace(/[\s\p{Cc}]+/gu, ' ').slice(0, 200));
     const kv = Object.entries(fields)
       .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${k}=${flat(v)}`);
-    fs.writeSync(2, `${scrub(`[foreman debug] ${flat(scope)} ${flat(msg)} ${kv.join(' ')}`.trimEnd())}\n`);
+      .map(([k, v]) => `${k}=${SECRET_KEY.test(k) && !COUNT_KEY.test(k) ? '[REDACTED]' : flat(v)}`);
+    fs.writeSync(2, `${`[foreman debug] ${flat(scope)} ${flat(msg)} ${kv.join(' ')}`.trimEnd()}\n`);
   } catch {
     // A closed stderr (EPIPE, EBADF) must never take the daemon down.
   }

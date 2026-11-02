@@ -200,6 +200,25 @@ test('a value cannot carry a terminal escape and is capped at 200 characters', (
   assert.ok(line.length < 260, `not capped: ${line.length}`);
 });
 
+test('a field named tokens_in keeps its numeric value; only values are scrubbed', (t) => {
+  setEnv(t, 'FOREMAN_DEBUG', '1');
+  const lines = captureStderr(t);
+  debug('test', 'end', { tokens_in: 3, tokens_out: 2, note: 'token=hunter9' });
+  assert.match(lines[0]!, /tokens_in=3 tokens_out=2 /);
+  assert.ok(!lines[0]!.includes('hunter9'));
+});
+
+test('a value under a secret-named key is redacted whatever it looks like', (t) => {
+  setEnv(t, 'FOREMAN_DEBUG', '1');
+  const lines = captureStderr(t);
+  debug('test', 'auth', { token: 'hunter9', api_key: 'sk-test123456789', password: 'hunter10', tokens_in: 3, tokens_out: 2, tok_in: 4, tok_out: 5 });
+  const line = lines[0]!;
+  assert.ok(!line.includes('hunter9'));
+  assert.ok(!line.includes('hunter10'));
+  assert.ok(!line.includes('test123456789'));
+  assert.match(line, /token=\[REDACTED\] api_key=\[REDACTED\] password=\[REDACTED\] tokens_in=3 tokens_out=2 tok_in=4 tok_out=5\n$/);
+});
+
 test('a closed stderr does not throw', (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
   captureStderr(t, Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
