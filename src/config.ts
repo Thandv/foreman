@@ -104,7 +104,7 @@ export const config = {
   /**
    * The crew chain's code-review ceiling. The chain is always the hosted
    * Claude CLI (see crewReview), never an 8k-context local model, yet it was
-   * held to the 12 KB local-sized cap: on the first Kiln epic an Opus senior
+   * held to the 12 KB local-sized cap: on an earlier epic an Opus senior
    * passed a 14 KB security module having read only an excerpt of its tests.
    */
   crewCodeDiffCapBytes: int('FOREMAN_CREW_CODE_DIFF_CAP_BYTES', 96_000),
@@ -117,8 +117,8 @@ export const config = {
   memoryBriefBytes: int('FOREMAN_MEMORY_BRIEF_BYTES', 2_000),
   /**
    * Budget for what a repair round must act on: the critique and the
-   * operator's demands. These shared the 2 KB memory-fact budget until a
-   * Kiln phase-4 worker was cut off mid-critique and said it "could not see"
+   * operator's demands. These shared the 2 KB memory-fact budget until
+   * an earlier phase-4 worker was cut off mid-critique and said it "could not see"
    * demand 7 — repair notes are stored up to 8 KB, so the worker's brief must
    * hold all of them. Larger than any stored note on purpose.
    */
@@ -135,14 +135,14 @@ export const config = {
    * Budget for a ticket's acceptance criteria wherever it is read: the
    * worker's brief, the gate council and the crew review. Plans once cut
    * acceptance to 2 KB at parse time and every reader sliced it again, so on
-   * Kiln phase 4b ten tickets lost their last items silently — the worker,
+   * an earlier phase ten tickets lost their last items silently — the worker,
    * every reviewer and the chair judged against a list that ended mid-word.
    * A cut here is marked, never silent.
    */
   acceptanceBytes: int('FOREMAN_ACCEPTANCE_BYTES', 8_000),
   /**
    * Budget for the worker's final report in a review prompt (verify/report.ts).
-   * The Kiln trial's reports were 3 to 9 KB and a technical writer's claims
+   * An earlier trial's reports were 3 to 9 KB and a technical writer's claims
    * table 13.4 KB; the reviewer was shown the last 3000 characters of a 4000
    * character copy. Over the budget the middle is cut, on line breaks, with
    * the number of characters dropped and the path of the whole report.
@@ -150,7 +150,7 @@ export const config = {
   reviewReportBytes: int('FOREMAN_REVIEW_REPORT_BYTES', 24_000),
   /**
    * Budget for the source a changed document cites, attached to a review
-   * prompt (verify/citedSource.ts). Kiln's lock ADR cites three files and
+   * prompt (verify/citedSource.ts). An earlier lock ADR cites three files and
    * needs about 40 KB of them; what does not fit is named, never dropped
    * silently.
    */

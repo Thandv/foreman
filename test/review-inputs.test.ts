@@ -160,7 +160,7 @@ const reportBlock = (prompt: string): string => {
 // ------------------------------------------------------------------ the worker's report (F39)
 
 /**
- * A report shaped like the trial's technical-writer one (t_b36bf5a477, 13.4 KB): DONE and CHANGED first, a claims
+ * A report shaped like the trial's technical-writer one (13.4 KB): DONE and CHANGED first, a claims
  * table one row per line through the middle, the acceptance map last.
  */
 function claimsReport(rows: number): string {
@@ -337,7 +337,7 @@ function gitTree(t: { after: (fn: () => void) => void }, files: Record<string, s
 test('a design note reaches the reviewer with the source it cites: the cited line and 40 lines each side, or the head of the file', async () => {
   const r = rig({ 'src/server.ts': numbered('server', 300), 'test/server-lock.test.ts': numbered('lock test', 200), 'src/unrelated.ts': numbered('unrelated', 50), 'src/reported.ts': numbered('reported', 9) });
   try {
-    // Shaped like the trial's ADR (t_ba3cf9733a): claims about code that is not in the diff, by file and line.
+    // Shaped like the trial's ADR: claims about code that is not in the diff, by file and line.
     const adr = [
       '# 0001: close the server-lock start race',
       'acquireLock re-reads the record at `src/server.ts:120` before it unlinks it.',
@@ -454,7 +454,7 @@ test('the cited-source block stays inside its budget and names every file it lef
 });
 
 test('a README-only ticket: the files and names the worker\'s report maps its claims to are shown, and a base name finds its file', (t) => {
-  // Shaped like t_b36bf5a477: the README states behaviour, and the report's claims table names the file and function.
+  // Shaped like a README-only trial ticket: the README states behaviour, and the report's claims table names the file and function.
   const server = Array.from({ length: 400 }, (_, i) => (i === 249 ? 'function serveStatic(req) {' : i === 251 ? '  const fresh = tokenEquals(supplied, token);' : `// server line ${i + 1}`)).join('\n') + '\n';
   const trust = Array.from({ length: 300 }, (_, i) => (i === 149 ? 'export const INCLUDE_DEPTH = 5;' : `// trust line ${i + 1}`)).join('\n') + '\n';
   const dir = gitTree(t, { 'src/server.ts': server, 'src/trust.ts': trust, 'src/paths.ts': numbered('paths', 20), 'src/fileops.ts': numbered('fileops', 10) });
@@ -505,16 +505,16 @@ test('a review cached before the prompt gained these blocks is not replayed', as
 
 const CODE_DIFF = 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1,2 @@\n a\n+b\n';
 
-// The README security ticket's acceptance and its passing verdict, as the trial's ledger holds them (t_b36bf5a477,
-// v_10db4e5a9c). The reviewer passed it while writing, item by item, what it had not been able to check.
+// The README security ticket's acceptance and its passing verdict, as the trial's ledger holds them.
+// The reviewer passed it while writing, item by item, what it had not been able to check.
 const README_ACCEPTANCE =
   '1. README has exactly one Security model section, covering project confinement, the trust prompt, the session token and cookie, output caps, fixed-argv fixes and install offers. ' +
-  "2. It states what Kiln does not defend, including that a program the user runs has the user's own access. " +
+  "2. It states what the app does not defend, including that a program the user runs has the user's own access. " +
   '3. The session cookie is documented where the token is documented (Serve section), with attributes matching the code. ' +
   '4. The report maps every claim to a source file and function, and reviewer spot-checks find no claim the code does not keep. 5. No source file changed; `npm run verify` passes.';
 const README_PASS_CRITIQUE =
   "REVIEWED: README.md (the only file in the diff); truncated: diff no, worker's report yes. The report as shown to me starts mid-row and has a 9434-character cut in the middle. " +
-  'I had no access to the kiln source, so no README claim was spot-checked against code.\n\n' +
+  'I had no access to the app source, so no README claim was spot-checked against code.\n\n' +
   'ACCEPTANCE: 1 met | 2 met | 3 met on its face, attributes not checked against source | 4 met as far as shown, spot-checks not run | 5 met (diff touches only README.md; Foreman\'s gate passed)';
 /** That verdict's ACCEPTANCE line as the status field the reviewer is now asked for. */
 const README_STATUS = [
@@ -575,7 +575,7 @@ test('readAcceptance: one entry per judged item; a missing entry or an unknown w
 test('a pass whose own status list has a partial or missing item is recorded as FAIL, with a FOREMAN CHECK line naming the item', async () => {
   const r = rig();
   try {
-    // t_92036a5aae's first review wrote "3 partial (see finding 1)" — and failed it. The same list under a PASS:
+    // A trial ticket's first review wrote "3 partial (see finding 1)" — and failed it. The same list under a PASS:
     r.reviewer({
       verdict: 'pass', critique: 'ACCEPTANCE: 1 met | 2 met | 3 partial (see finding 1) | 4 met', issues: [],
       acceptance: [
@@ -597,7 +597,7 @@ test('a pass whose own status list has a partial or missing item is recorded as 
   }
 });
 
-test('trial t_b36bf5a477: "met as far as shown, spot-checks not run" under a PASS is not a pass and not a repair round — it parks for a person, and the owner gate holds it', async () => {
+test('trial README ticket: "met as far as shown, spot-checks not run" under a PASS is not a pass and not a repair round — it parks for a person, and the owner gate holds it', async () => {
   const r = rig();
   try {
     r.reviewer({ verdict: 'pass', critique: README_PASS_CRITIQUE, issues: [], acceptance: README_STATUS });
@@ -734,9 +734,9 @@ test('review paths with no status list are untouched: an unnumbered ticket, a ve
 // ------------------------------------------------------------------ pre-existing assertions a diff removed or changed (F35)
 
 /**
- * Kiln's test/preview.test.ts before t_694071e43e touched it (lines 215-239 at 5216217^, read from Kiln's history),
+ * a project's test/preview.test.ts before an earlier ticket touched it,
  * and the one line the worker changed to get its suite unstuck: the saved record was checked whole, then only its
- * `steps` (the line as the reviewer quoted it in v_bb285d6148, finding 1).
+ * `steps` (the line as the reviewer quoted it, finding 1).
  */
 const PREVIEW_BEFORE = [
   "import test from 'node:test';",

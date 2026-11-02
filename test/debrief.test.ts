@@ -220,7 +220,7 @@ const t5r2 = run(t5, { status: 'failed' });
 councilFail(t5, t5r2, "the project's own tests failed (npm run verify):\n⚠ test/a.test.ts (test/a.test.ts:1:1)\n⚠ test/b.test.ts (test/b.test.ts:1:1)\nverify: TIMEOUT after 1200s\nnpm notice");
 store.scheduleRepair(t5.id, 'the suite timed out');
 const t5r3 = run(t5, { status: 'failed' });
-councilFail(t5, t5r3, "the project's own tests failed (npm run verify):\n> kiln@0.2.0 verify\n> bash scripts/verify.sh\ntypecheck…\nsh: tsc: command not found\nverify: FAIL (typecheck exit 127)\nforeman: this ran sandboxed (FOREMAN_SANDBOX=tests): no network beyond loopback.");
+councilFail(t5, t5r3, "the project's own tests failed (npm run verify):\n> app@0.2.0 verify\n> bash scripts/verify.sh\ntypecheck…\nsh: tsc: command not found\nverify: FAIL (typecheck exit 127)\nforeman: this ran sandboxed (FOREMAN_SANDBOX=tests): no network beyond loopback.");
 store.scheduleRepair(t5.id, 'tsc was not found');
 const t5r4 = run(t5);
 const t5wt = path.join(testHome, 'wt-t5');
@@ -237,7 +237,7 @@ landed(t5, t5r4);
 
 // T6: a writing ticket whose first run tripped the out-of-jail wire; approved, and not merged.
 const t6 = ticket(epic, 'ADR: close the lock race', { kind: 'writing', role: 'architect', mergeOnApprove: false });
-const breach = jailBreachReason('/tmp/kiln-lock-probe/probe.test.mjs');
+const breach = jailBreachReason('/tmp/app-lock-probe/probe.test.mjs');
 const t6r1 = run(t6, { status: 'failed', summary: breach, skills: null });
 councilFail(t6, t6r1, `the worker itself failed: ${breach}`);
 store.scheduleRepair(t6.id, 'stay in the jail');
@@ -502,7 +502,7 @@ test('collect: a provider-limit hold, a suite TIMEOUT and a failing suite under 
 test('collect: the tripwire names the path, and a writing ticket approved without a merge is flagged', () => {
   const t = byId(doc, t6.id);
   assert.deepEqual(causes(t), ['tripwire']);
-  assert.equal(t.failures[0]!.detail, '/tmp/kiln-lock-probe/probe.test.mjs');
+  assert.equal(t.failures[0]!.detail, '/tmp/app-lock-probe/probe.test.mjs');
   assert.equal(t.landing.notMergedOnApprove, true);
   assert.equal(t.landing.merged, false);
   assert.equal(t.kind, 'writing');
@@ -873,7 +873,7 @@ test('diagnose: a proposal to weaken a check, gate, scan or permission is droppe
     'Relax the sandbox so tests can read the home directory.',
     'Widen the worker permissions to include /tmp.',
     'Auto-approve tickets whose crew review passed.',
-    'Set FOREMAN_SANDBOX=off for the kiln repo.',
+    'Set FOREMAN_SANDBOX=off for the app repo.',
   ];
   const findings = [
     ...weak.map((change, i) => ({ id: `w${i}`, bin: 'foreman-defect', title: `Weakening ${i}`, evidence: two, proposal: prop(change, { kind: 'setting', target: 'gate' }) })),

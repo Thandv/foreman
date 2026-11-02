@@ -676,7 +676,7 @@ test('a restore killed between its renames: restore and the next start say how t
   assert.equal(counts(dbPath).first.startsWith('backedup-'), true);
 });
 
-// ---- reviewer additions (t_e07a2892a6 r1): the copy dir is the operator's folder ----
+// ---- reviewer additions (reviewer round 1): the copy dir is the operator's folder ----
 
 /** Nine dailies 02..10 Oct: with today's (11 Oct) the retention deletes 02 and 03 and keeps 04 as week 40's. */
 function nineDailies(dir: string): void {

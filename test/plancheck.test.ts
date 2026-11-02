@@ -618,7 +618,7 @@ test('an owner plan over 12 tickets carries a blocking too-many-tickets finding'
 // ------------------------------------------------------------ lintPlan: ask items
 
 test('lintPlan: ask items are matched to tickets by content, not by number (epic B)', () => {
-  // Real data: the epic B ask and the 12 tickets the planner returned for it.
+  // A 16-item ask and the 12 tickets a planner returned for it (an invented plan: test/fixtures/epicB-plan.json).
   const real = JSON.parse(
     fs.readFileSync(new URL('./fixtures/epicB-plan.json', import.meta.url), 'utf8'),
   ) as { ask: string; tickets: { title: string; acceptance: string }[] };

@@ -34,7 +34,7 @@ function gitDiff(t: { after: (fn: () => void) => void }, before: Record<string, 
   return git('diff', 'HEAD');
 }
 
-// Kiln t_694071e43e, test/preview.test.ts: the value the assertion checks was narrowed from the record to its steps.
+// An earlier ticket, test/preview.test.ts: the value the assertion checks was narrowed from the record to its steps.
 const BEFORE = "import test from 'node:test';\ntest('a record without pid', () => {\n  const saved = fs.readFileSync(recordFile('web', id), 'utf8');\n  assert.doesNotMatch(saved, /pid|cpuMs/i);\n});\n";
 const NARROWED = BEFORE.replace("fs.readFileSync(recordFile('web', id), 'utf8');", "JSON.stringify(JSON.parse(fs.readFileSync(recordFile('web', id), 'utf8')).steps);");
 const FILE = 'test/preview.test.ts';
@@ -265,7 +265,7 @@ test('held: the ticket names the file only where it says to leave it alone, or t
     { prompt: `Smaller records. Don’t loosen ${FILE}.` },
     { prompt: 'Smaller records.', acceptance: `1. Every case in ${FILE} passes unmodified. 2. npm run verify passes.` },
     { prompt: 'Smaller records.', acceptance: `1. ${FILE} must pass. 2. npm run verify passes.` },
-    // Kiln t_96e23dc2f3, as written: the file is one of two things after the colon, past a semicolon.
+    // An earlier ticket, as written: the file is one of two things after the colon, past a semicolon.
     { prompt: `Change:\n- \`scripts/build-sea.ts\`: exits 1.\n\nDo not change: \`--check\` modes; \`${FILE}:263\` (it calls \`buildSea()\`).\n\nAcceptance:\n1. New case in \`test/macos.test.ts\`.` },
     // A list under such a line, to the next blank line.
     { prompt: `Smaller records.\n\nThese must not change:\n- src/record.ts\n- ${FILE}\n\nGate: npm run verify.` },
@@ -337,9 +337,9 @@ test('the hold is decided when the findings are recorded and kept: a retry note 
 });
 
 test('a redefined fixture alone is never a hold, whatever the ticket names, and its note does not change', (t) => {
-  // Kiln t_702b98d62f (run r_bfa73eeb6d), test/helper-fixes.test.ts: the fixture gained a file, the assertion did not change.
-  const before = "import test from 'node:test';\ntest('an include is not followed', () => {\n  const root = project({ ...PIP, 'requirements.txt': '-r other.txt\\nkilnlocalpkg==1.0\\n' });\n  assert.deepEqual(declaredPackages(root, 'pypi'), []);\n});\n";
-  const after = before.replace("'-r other.txt\\nkilnlocalpkg==1.0\\n' });", "'-r other.txt\\nkilnlocalpkg==1.0\\n', 'other.txt': 'six\\n' });");
+  // An earlier ticket, test/helper-fixes.test.ts: the fixture gained a file, the assertion did not change.
+  const before = "import test from 'node:test';\ntest('an include is not followed', () => {\n  const root = project({ ...PIP, 'requirements.txt': '-r other.txt\\napplocalpkg==1.0\\n' });\n  assert.deepEqual(declaredPackages(root, 'pypi'), []);\n});\n";
+  const after = before.replace("'-r other.txt\\napplocalpkg==1.0\\n' });", "'-r other.txt\\napplocalpkg==1.0\\n', 'other.txt': 'six\\n' });");
   const diff = gitDiff(t, { 'test/helper-fixes.test.ts': before }, { 'test/helper-fixes.test.ts': after });
   for (const prompt of ['Follow includes.', 'Follow includes; see test/helper-fixes.test.ts.']) {
     const r = record(t, { prompt }, diff);
@@ -395,26 +395,26 @@ test('in doubt, held: no task to read, a list cut at the cap, a deleted or renam
 
 // ------------------------------------------------------------------ the two weakenings the wave-3 review found in its sample of 25
 
-test('Kiln r_0b8ae33f90 (CHECK_IDS narrowed to the plain ids): held on a ticket that does not name the file; the real ticket named it', (t) => {
+test('CHECK_IDS narrowed to the plain ids: held on a ticket that does not name the file; the real ticket named it', (t) => {
   const before = "import test from 'node:test';\ntest('every check id has a check and a rule', () => {\n  assert.deepEqual(Object.keys(CHECKS).sort(), [...CHECK_IDS].sort());\n  const used = new Set(['a.py', 'a.js', 'a.html', 'a.css'].flatMap(checksFor));\n  assert.deepEqual([...used].sort(), [...CHECK_IDS].sort());\n});\n";
   const after = "import test from 'node:test';\nimport { CPP_CHECK_IDS } from '../src/cpp/checks/ids.ts';\ntest('every check id has a check and a rule', () => {\n  const plain = CHECK_IDS.filter((id) => !(CPP_CHECK_IDS as readonly string[]).includes(id));\n  assert.deepEqual(Object.keys(CHECKS).sort(), [...plain].sort());\n  const used = new Set(['a.py', 'a.js', 'a.html', 'a.css', 'a.cpp', 'a.hpp'].flatMap(checksFor));\n  assert.deepEqual([...used].sort(), [...CHECK_IDS].sort());\n});\n";
   const diff = gitDiff(t, { 'test/helper-checks.test.ts': before }, { 'test/helper-checks.test.ts': after });
-  const unnamed = record(t, { title: 'C++ check registry, 24 ids, hint/warning severity, test seams, capture runners', prompt: 'Kiln repo. SPEC-CPP.md §4. Plumbing; checks are stubs. In src/cpp/checks/: ids.ts (imports nothing) CPP_CHECK_IDS.' }, diff);
+  const unnamed = record(t, { title: 'C++ check registry, 24 ids, hint/warning severity, test seams, capture runners', prompt: 'Sample repo. SPEC-CPP.md §4. Plumbing; checks are stubs. In src/cpp/checks/: ids.ts (imports nothing) CPP_CHECK_IDS.' }, diff);
   assert.match(unnamed.hold ?? '', /^the diff changes pre-existing assertions: \d+ in test\/helper-checks\.test\.ts$/);
   assert.ok(unnamed.stored.some((f) => f.kind === 'assertion' && f.old === 'assert.deepEqual(Object.keys(CHECKS).sort(), [...CHECK_IDS].sort());' && f.hold === 'held'));
-  // t_ae914dd147's acceptance, item 7, as the ledger holds it: the ticket asked for exactly this change.
-  const real = record(t, { prompt: 'Kiln repo. SPEC-CPP.md §4.', acceptance: '7. test/helper-checks.test.ts: CHECKS keys equal the non-C++ ids; checksFor coverage over a.py/a.js/a.html/a.css/a.cpp/a.hpp.' }, diff);
+  // A trial ticket's acceptance, item 7, as the ledger holds it: the ticket asked for exactly this change.
+  const real = record(t, { prompt: 'Sample repo. SPEC-CPP.md §4.', acceptance: '7. test/helper-checks.test.ts: CHECKS keys equal the non-C++ ids; checksFor coverage over a.py/a.js/a.html/a.css/a.cpp/a.hpp.' }, diff);
   assert.equal(real.hold, null);
 });
 
-test('Kiln r_798fb7beb9 (samples.filter(!APPLE_ONLY)): held, alone and as the run made it, with new tests beside it in the same file', (t) => {
+test('samples.filter(!APPLE_ONLY): held, alone and as the run made it, with new tests beside it in the same file', (t) => {
   const file = 'test/cpp-link-runtime-cards.test.ts';
   const before = "import test from 'node:test';\nconst LINK_IDS = ['cpp-missing-main', 'cpp-undefined-symbol', 'cpp-multiple-definition'];\ntest('every sample has a GNU ld twin', () => {\n  assert.deepEqual(fixtures.filter((f) => f.endsWith('--gnu-ld.txt')).map((f) => f.replace(/--gnu-ld\\.txt$/, '')).sort(), samples);\n});\n";
   const narrowed = before
     .replace("'cpp-missing-main', 'cpp-undefined-symbol'", "'cpp-missing-main', 'cpp-missing-extern-c', 'cpp-virtual-no-body', 'cpp-undefined-symbol'")
     .replace('const LINK_IDS', "// GNU ld prints no NOTE about extern \"C\", so there is no GNU ld output this card could match.\nconst APPLE_ONLY = ['cpp-missing-extern-c'];\nconst LINK_IDS")
     .replace('.sort(), samples);', '.sort(), samples.filter((s) => !APPLE_ONLY.includes(s)));');
-  // t_4c52fbe0c1, as the ledger holds it: no test file is named.
+  // Another trial ticket, as the ledger holds it: no test file is named.
   const ticket = { title: 'Undefined-symbol linker errors in plain words (Helper + CLI)', prompt: 'Repo ~/work/app. When sub() is declared in math.h but never defined, the user sees `Undefined symbols for architecture arm64`. Recognise both macOS ld output and GNU ld output. For each undefined symbol: - add a Helper card, as a new rule under helper/', acceptance: '1. The macOS ld and GNU ld fixtures each give exactly `sub(int, int) is declared but never defined - add its body to a .cpp file`. 4. The tests fail without the change. 5. npm run verify passes.' };
   const flag = `the diff changes pre-existing assertions: 1 in ${file}`;
   assert.equal(record(t, ticket, gitDiff(t, { [file]: before }, { [file]: narrowed })).hold, flag);

@@ -73,7 +73,7 @@ export interface CrewReviewOptions {
   tests?: { ran: boolean; passed: boolean; cmd: string | null } | null;
   /**
    * The jail the work was done in. The reviewer is shown what that tree
-   * already tracks: on the Kiln UI ticket it failed the work for not adding a
+   * already tracks: on an earlier UI ticket it failed the work for not adding a
    * vendored file the diff referenced, when the file was already committed on
    * the base the jail was cut from.
    */
@@ -194,8 +194,8 @@ export function crewAdvisories(rows: CrewReportRow[]): string[] {
 
 /**
  * Checks only a person can run belong to the human gate, not the worker. The
- * worker is a headless session with no browser, app window or eyes; on the
- * Kiln polish epic a ticket whose code the reviewer called correct failed
+ * worker is a headless session with no browser, app window or eyes; on
+ * an earlier polish epic a ticket whose code the reviewer called correct failed
  * twice because the review demanded a report of live browser checks — which
  * the operator then ran, and which passed.
  */
@@ -277,7 +277,7 @@ export function judgedItems(task: Pick<Task, 'acceptance'>, tests: CrewReviewOpt
 /**
  * The reply field that carries the reviewer's status per acceptance item.
  *
- * In all five early tickets of the Kiln trial the reviewer wrote its own miss
+ * In all five early tickets of an earlier trial the reviewer wrote its own miss
  * down under "Not checked" or UNVERIFIED and passed anyway ("met as far as
  * shown, spot-checks not run"). Prose cannot be held to anything, so the
  * status is a field, and the parser decides what a pass may carry.
@@ -314,7 +314,7 @@ const HEDGE =
 
 /**
  * One status as a reviewer wrote it. The four words (and their plain synonyms) alone, or the word and then its
- * evidence: every per-item line the Kiln trial's reviewer wrote was "met (the new test asserts…)", and a status
+ * evidence: every per-item line an earlier trial's reviewer wrote was "met (the new test asserts…)", and a status
  * field filled that way must not read as "no status" and park every ticket. The word has to stand alone before a
  * bracket or a mark — "met for the two listings", "met as far as shown", "met on its face" are not a status — and a
  * "met" whose own evidence says what was not checked is not-verifiable.
@@ -579,7 +579,7 @@ export function buildReviewPrompt(
 /**
  * A repair round is judged against what it was sent back to fix. Without this
  * the reviewer sees only the original brief, and a repair that fixed one of
- * two demanded defects passes: on the first Kiln epic the pty helper got its
+ * two demanded defects passes: on an earlier epic the pty helper got its
  * deadlock fixed, skipped the SIGPIPE reset and the regression test it was
  * told to add, and the next review passed it without knowing either was owed.
  */
@@ -718,8 +718,8 @@ export function reportLine(report: string | null, extra: Pick<ReviewPromptExtras
 /**
  * What a human demanded when rejecting an earlier attempt, stated as acceptance.
  * Repair notes carry only the latest round's critique, so without this the
- * operator's findings reach a later round as a reviewer's opinion — and on the
- * Kiln phase-3 UI ticket the chair overruled three of them as out of scope.
+ * operator's findings reach a later round as a reviewer's opinion — and on
+ * an earlier phase-3 UI ticket the chair overruled three of them as out of scope.
  */
 export function operatorLine(task: Pick<Task, 'operatorDemands'>): string {
   const demands = task.operatorDemands?.trim();
@@ -736,7 +736,7 @@ export function operatorLine(task: Pick<Task, 'operatorDemands'>): string {
 /**
  * The test stage's outcome, stated as fact. Without it a reviewer that sees
  * only the diff spends its letter asking for a gate run Foreman already did:
- * on the first Kiln epic Opus passed a ticket while writing "I cannot confirm
+ * on an earlier epic Opus passed a ticket while writing "I cannot confirm
  * npm run verify passes" about a suite that had run green minutes earlier.
  */
 function testGateLine(tests: CrewReviewOptions['tests']): string {
@@ -911,7 +911,7 @@ export function titlesSimilar(a: string, b: string): boolean {
   return both / (x.words.size + y.words.size - both) >= DUPLICATE_TITLE_SIMILARITY;
 }
 
-/** One repo, however its path was written ("./kiln" and "/abs/kiln" are the same checkout). */
+/** One repo, however its path was written ("./app" and "/abs/app" are the same checkout). */
 function sameRepo(a: string | null, b: string | null): boolean {
   return (a ? path.resolve(a) : null) === (b ? path.resolve(b) : null);
 }
@@ -1226,7 +1226,7 @@ function fileIssues(
         repo: task.repo,
         // The issue is ABOUT the reviewed work, which has not merged yet, so
         // the follow-up waits for that work to LAND and is then cut from main,
-        // where it now is. Two earlier answers both failed on Kiln phase 4a:
+        // where it now is. Two earlier answers both failed on an earlier phase:
         // cutting from the reviewed run's branch found it empty (the work is
         // uncommitted in the jail until approval), and once the follow-up
         // waited, that branch could name a run the ticket later replaced (a
@@ -1658,8 +1658,8 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // On a FAIL, a blocker is exactly what the repair round is about to fix:
   // filing it as a child ticket as well duplicates that work, and once the
   // repair lands the child finds nothing to do and fails for delivering
-  // nothing (first Kiln epic: t0's missing helper tests were both repaired in
-  // place and filed as t_5d3566ede7, which then failed). So blockers on a fail
+  // nothing (an earlier epic: t0's missing helper tests were both repaired in
+  // place and also filed as a follow-up ticket, which then failed). So blockers on a fail
   // go into the critique — which becomes the repair notes — and only
   // normal-severity follow-ups are filed.
   const replayed = new Set(usable.filter((r) => r.cached).flatMap((r) => r.issues));

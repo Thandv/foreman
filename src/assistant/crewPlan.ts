@@ -89,7 +89,7 @@ export function maxWirePlanTickets(): number {
 
 /**
  * Tickets past the cap used to be dropped in silence — with every dependency
- * edge pointing at them — so an operator's 16-ticket plan for Kiln Easy would
+ * edge pointing at them — so an operator's 16-ticket plan for a desktop app would
  * have queued as 12, losing the wiring, both UI tickets and the installer, and
  * the epic would have closed "complete" without them. Over the cap is now a
  * blocking finding that names what would be lost.
@@ -250,7 +250,7 @@ export async function classifyAsk(
 /**
  * How long one planning call may take. Not ownerCall's 180s default: with a
  * repo snapshot in the prompt the owner writes a self-contained brief per
- * ticket, and the first Kiln epic measured 87s without the snapshot and over
+ * ticket, and an earlier epic measured 87s without the snapshot and over
  * 180s with it — a timeout there silently degrades a ten-ticket plan to one.
  */
 export function planTimeoutMs(): number {
@@ -512,7 +512,7 @@ function namesRepoFile(ticket: { title: string; prompt: string; acceptance: stri
 /**
  * The kind a ticket runs as. In a repo with a suite of its own, a `writing` ticket whose deliverable is a file in
  * that repo is `code`: a writing ticket never merges on approval and its change is not what the suite gates, so on
- * the Kiln trial an approved ADR was silently not landed and a README ticket would have skipped the gate. `gated`
+ * an earlier trial an approved ADR was silently not landed and a README ticket would have skipped the gate. `gated`
  * is whether the REPO has a test command — not the ticket: a manuscript chapter with a check of its own is still
  * writing, as is anything in a repo-less plan.
  */
@@ -786,7 +786,7 @@ export async function crewPlan(opts: CrewPlanOptions): Promise<CrewPlan> {
   // extractJson repairs a reply that was cut off mid-object, which keeps a
   // usable plan from a trailing glitch — and also turns an owner reply that
   // ran out of output into a plan missing every ticket after the cut, presented
-  // as complete. (Kiln Desktop: ~22k output tokens, six tickets for a spec
+  // as complete. (a desktop app: ~22k output tokens, six tickets for a spec
   // that needed a dozen, the last with no acceptance.) A plan that only parses
   // after repair must not be queued without a human reading it.
   if (!parsesWithoutRepair(text)) {

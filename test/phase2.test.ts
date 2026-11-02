@@ -335,7 +335,7 @@ test('test command detection recognises common projects', () => {
   assert.equal(detectTestCmd(dir), null);
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest' } }));
   assert.match(detectTestCmd(dir)!, /npm test/);
-  // Kiln: `test` is node --test alone, `verify` is tsc then the tests — the whole gate.
+  // A project: `test` is node --test alone, `verify` is tsc then the tests — the whole gate.
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'node --test', verify: 'tsc --noEmit && npm test' } }));
   assert.equal(detectTestCmd(dir), 'npm run verify --silent');
   fs.writeFileSync(path.join(dir, 'package.json'), '{ broken');

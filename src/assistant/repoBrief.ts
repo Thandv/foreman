@@ -9,7 +9,7 @@ import { PINNED, pinnedEnv } from '../isolate.ts';
  *
  * Both reach Claude through `ownerCall`, which disables every tool on purpose
  * (see DISALLOWED_TOOLS there), so before this existed they planned against a
- * bare path. Observed on the first Kiln epic: the ask said "SPEC.md is binding,
+ * bare path. Observed on an earlier epic: the ask said "SPEC.md is binding,
  * read it first", the planner could not, and it ticketed a scaffold that was
  * already committed while the critic flagged vendored libraries as missing.
  *

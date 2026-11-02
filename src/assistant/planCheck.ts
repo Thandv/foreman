@@ -322,7 +322,7 @@ export function lintPlan(plan: CrewPlan, playbook: Playbook | null, selfRoot: st
   }
 
   if (tickets.length > 9) {
-    // A size the ask itself set is not a planning fault: the Kiln trial's ask said "Plan ONE ticket per numbered
+    // A size the ask itself set is not a planning fault: an earlier trial's ask said "Plan ONE ticket per numbered
     // item", listed ten, got ten, and was told its decomposition was too fine. Said as a fact instead.
     const asked = items.length >= 2 && tickets.length === items.length
       ? `the ask's ${items.length} numbered items`

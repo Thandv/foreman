@@ -240,7 +240,7 @@ test('a DB created without runs.verify_wait_ms migrates, opens and reads 0', () 
 test('time queued for a test slot does not count against the run deadline', () =>
   withCap('1', async () => {
     // The only slot is held for 6 s and the run deadline is 4 s (enough to set up the worktree on a busy machine). Counting the queue, the run would be aborted while
-    // waiting ('aborted while waiting for a verify slot') with its work done, as finished Kiln tickets were.
+    // waiting ('aborted while waiting for a verify slot') with its work done, as finished tickets were.
     const store = new Store(':memory:');
     const repo = fixtureRepo();
     try {

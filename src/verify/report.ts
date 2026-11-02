@@ -9,7 +9,7 @@ import type { Run } from '../types.ts';
  *
  * The run row keeps a 4000-character copy with its middle cut out
  * (runners/cliRunners.ts boundSummary), and that copy was what a reviewer got,
- * cut again to its last 3000: on the Kiln trial a technical writer's claims
+ * cut again to its last 3000: on an earlier trial a technical writer's claims
  * table reached the reviewer starting mid-row with a 9434-character hole, and
  * a follow-up another report gave in full existed only in the session
  * transcript. So the whole report is stored once, as a run artifact, and what

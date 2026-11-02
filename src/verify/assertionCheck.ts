@@ -11,7 +11,7 @@ import { isTestPath } from './literals.ts';
 /**
  * Pre-existing assertions a diff removed or changed.
  *
- * On the Kiln trial a worker whose own change tripped an assertion in a test
+ * On an earlier trial a worker whose own change tripped an assertion in a test
  * file outside its ticket narrowed the assertion instead of fixing the change
  * (test/preview.test.ts: the value checked went from the whole saved record to
  * its `steps`), and nothing flagged it. This is the deterministic half: for
@@ -30,7 +30,7 @@ import { isTestPath } from './literals.ts';
  * operator shown that waves it through. Naming leaves 97 (67 with a reviewer-filed follow-up read too, 90 before a
  * file named only where the ticket says to leave it alone was held). New tests the
  * diff adds to the file release nothing: the one unexplained weakening in
- * those 25 that its ticket did not name (Kiln r_798fb7beb9) sat beside five.
+ * those 25 that its ticket did not name (an earlier run) sat beside five.
  */
 
 /** What makes a line an assertion, a skip or a test declaration. One table; extend it here. */
@@ -369,8 +369,8 @@ export function changedAssertions(diff: string, treeDir: string | null = null): 
  * Is `name` what the assertion on this line checks, or only something it hands to a call? Checked directly: the name
  * is an argument of the assertion itself (`assert.equal(saved, x)`, `expect(saved.steps)`, `assert.ok(saved.includes(…))`,
  * python's `assert saved == x`). Handed on: it sits inside a call inside the assertion (`assert.deepEqual(declared(root), [])`),
- * where what is checked is the call's result and the name is the fixture it was given. Kiln's narrowed
- * `const saved = …` is the first kind; the three fixtures a later Kiln ticket extended (`const root = project({…})`)
+ * where what is checked is the call's result and the name is the fixture it was given. A narrowed
+ * `const saved = …` is the first kind; the three fixtures a later ticket extended (`const root = project({…})`)
  * are the second, and holding the gate for those would teach the operator to wave the hold through.
  */
 function checksDirectly(assertion: string, name: string): boolean {
@@ -444,7 +444,7 @@ function names(named: Named, file: string): boolean {
 /**
  * A sentence that says to leave something as it is, or that something has to go on passing. A test file named in one
  * is not named as a file to change: `Do not change: test/sea.test.ts:263` and `the existing tests in test/ui.test.ts
- * pass unchanged` each released that file's findings (Kiln t_96e23dc2f3, t_4e32137aa4). Word tests only, no reading
+ * pass unchanged` each released that file's findings (two earlier tickets). Word tests only, no reading
  * of what the sentence is about: `in test/a.test.ts, don't pre-create b.txt` is held too, and a person is asked.
  */
 const KEEP = /\b(?:do not|don['’]?t|never|must not|unchanged|unmodified|untouched|must (?:still )?pass|without (?:changing|touching|modifying|editing))\b/i;

@@ -13,7 +13,7 @@ export type Exempt = 'operator' | 'review' | 'gate' | null;
 
 /**
  * "npm run verify passes" and "The gate passes: npx tsc --noEmit, then ..." are proven by the ticket's own gate run,
- * not by a test in the diff, so no map line can satisfy them: Kiln epic B's clang-tidy-profile ticket failed both
+ * not by a test in the diff, so no map line can satisfy them: an earlier epic's clang-tidy-profile ticket failed both
  * pre-review rounds on exactly that item. An item is a gate item only when it STARTS with the gate's subject, says it
  * passes, and is short, so a real behaviour cannot hide behind "... and npm run verify passes".
  */
@@ -113,7 +113,7 @@ interface DiffFile {
    * Where a test name may be found: the post-image of every hunk that adds a line (its added and context lines, plus
    * the function heading git prints after the hunk's @@), with escaped quotes unescaped. Never the path, the file
    * headers, an index line or a removed line. A test whose body a ticket changed is named only in its hunk's heading
-   * or context, and a title written 'program\'s' in source is mapped as "program's": Kiln's raw-stdin ticket failed
+   * or context, and a title written 'program\'s' in source is mapped as "program's": an earlier raw-stdin ticket failed
    * both pre-review rounds on exactly those three items while its map was right.
    */
   changed: string;
@@ -162,7 +162,7 @@ function diffFiles(diff: string): Map<string, DiffFile> {
 
 /**
  * Whether an acceptance item names a file: its path, its base name, or — for a base name with an extension — its stem
- * as a whole word ("README's .kiln.json section" names README.md, "SPEC-CPP §1" names SPEC-CPP.md). Kiln's docs
+ * as a whole word ("README's .app.json section" names README.md, "SPEC-CPP §1" names SPEC-CPP.md). An earlier docs
  * ticket failed both pre-review rounds on four such items while its map was right. A stem shorter than 3 characters
  * (a.ts) or a common word stem would match too much, so only stems of 3+ characters with a capital, digit, '-' or '_'
  * count — and only for documents: a code file's stem is usually also the name of the thing it implements ("the App
@@ -237,11 +237,11 @@ const isRuntimePath = (rel: string): boolean => !isDocPath(rel) && !isTestFile(r
  *   item that asks for a test accepts.
  * - `<test file> :: <exact test title>`, a test that was already there — the file is a test file in the work tree
  *   (in the diff or not) and the title is the title of a test in it, read from `treeDir`. For an item the change must
- *   NOT break ("the logic is unchanged"): Kiln's lock-message ticket spent a repair round on "test name not found"
+ *   NOT break ("the logic is unchanged"): an earlier lock-message ticket spent a repair round on "test name not found"
  *   for exactly such a line. Any other file, or a word that merely occurs in the file, is still a gap.
  * - `(diff) <path>` — the path is in the diff. When the item names that file nothing more is asked (main's rule).
  *   When it does not, the line is accepted for an item the diff itself can show ("recognised through the existing
- *   helper", "every place that enumerates statuses handles the new value") — the Kiln trial's ten false flags were
+ *   helper", "every place that enumerates statuses handles the new value") — an earlier trial's ten false flags were
  *   all "item does not name file" on such lines — but not for an item that asks for a test.
  * - `(operator)` / `(review)` — only for an item the acceptance text itself marks that way.
  *

@@ -6,7 +6,7 @@ import { PINNED, pinnedEnv } from '../isolate.ts';
 /**
  * A review that fails work can demand a test that scans source for an exact
  * string. When that string appears nowhere in the code, the demand cannot be
- * met as written. On the Kiln polish epic a reviewer demanded
+ * met as written. On an earlier polish epic a reviewer demanded
  * `includes("closest('[data-card]')")` of a handler that reads
  * ``closest(`button[${attr}]`)``; the worker failed two rounds chasing text that
  * could never exist, until the operator spelled out the real code.

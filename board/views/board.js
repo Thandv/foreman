@@ -41,7 +41,7 @@ const LANES = [
   },
   {
     name: 'Your call', cls: 'l-gate', statuses: ['awaiting-approval'],
-    tip: 'Finished and staged. Nothing merges until you approve it here. A card marked NO VERDICT is ' +
+    tip: 'Finished and staged. By default nothing merges until you approve it here (an opt-in owner gate can approve for you). A card marked NO VERDICT is ' +
       'not a decision waiting for you — the council failed to reach one, and it wants a re-review.',
     empty: ['Nothing to review', 'Finished runs land here for your decision.'],
   },

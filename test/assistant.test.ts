@@ -237,14 +237,14 @@ test('a rejection outranks approval notes at equal overlap, and approval notes a
 test('scope-ubiquitous terms do not count as overlap', () => {
   const store = new Store(':memory:');
   for (let i = 0; i < 10; i++) {
-    store.rememberFact({ scope: '/repo', key: `note-${i}`, value: `kiln run note ${i}`, confidence: 0.5 });
+    store.rememberFact({ scope: '/repo', key: `note-${i}`, value: `app run note ${i}`, confidence: 0.5 });
   }
   store.rememberFact({
     scope: '/repo', key: `${PREFERENCE_PREFIX}tabs`, confidence: 0.75,
-    value: `rejected "save dirty tabs" — ${'kiln run python ui test '.repeat(15)}. Do not repeat this.`,
+    value: `rejected "save dirty tabs" — ${'app run python ui test '.repeat(15)}. Do not repeat this.`,
   });
   store.rememberFact({ scope: '/repo', key: 'stdin-note', value: 'stdin EOFError when input() reads a pipe', confidence: 0.5 });
-  const got = relevantFacts(store, '/repo', 'Piped stdin reaches the program: printf | kiln run, Python input() EOFError');
+  const got = relevantFacts(store, '/repo', 'Piped stdin reaches the program: printf | app run, Python input() EOFError');
   assert.deepEqual(got.map((f) => f.key), ['stdin-note']);
   store.close();
 });

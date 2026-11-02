@@ -186,14 +186,14 @@ function gitDiff(t: { after: (fn: () => void) => void }, before: Record<string, 
 }
 
 test('a changed line inside an assertion written over several lines is a changed assertion; the lines around one are not', (t) => {
-  // Kiln t_d41d3280e6: the expected message, on a line of its own, changed inside assert.equal( … ).
+  // An earlier ticket: the expected message, on a line of its own, changed inside assert.equal( … ).
   const before = [
     "test('refuses', async () => {",
     "  const note = 'a (';", // an open bracket inside a string is not an open assertion
     '  const second = await start();',
     '  assert.equal(',
     '    second.err(),',
-    '    `kiln: already running (pid ${pid}). Quit it first.\\n`,',
+    '    `app: already running (pid ${pid}). Quit it first.\\n`,',
     '  );',
     '  await cleanup(second);',
     '});',
@@ -205,7 +205,7 @@ test('a changed line inside an assertion written over several lines is a changed
   assert.match(found[0]!.old!, /Quit it first/);
   assert.match(found[0]!.new!, /Lock file/);
   assert.equal(holds(found).length, 1, 'held for a person, like an assertion changed on its own line');
-  assert.match(assertionNote(found), /test\/lock\.test\.ts:6 — assertion removed or changed\n {4}was: `kiln: already running[^\n]*\n {4}now: [^\n]*Lock file[^\n]*\n {4}a line of: assert\.equal\(/);
+  assert.match(assertionNote(found), /test\/lock\.test\.ts:6 — assertion removed or changed\n {4}was: `app: already running[^\n]*\n {4}now: [^\n]*Lock file[^\n]*\n {4}a line of: assert\.equal\(/);
 
   // Not inside one: a line after the assertion closed, and a line before it opened (the string's bracket did not open one).
   const outside = gitDiff(t, { 'test/lock.test.ts': before }, { 'test/lock.test.ts': before.replace('await cleanup(second);', 'await cleanup(second, true);').replace('const second = await start();', 'const second = await start(1);') });

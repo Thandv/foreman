@@ -304,9 +304,9 @@ test('F6: once the run-time budget is spent, the files left could not run, and s
   assert.match(res.tests[1]!.detail, /budget was spent/);
 });
 
-test('F2: Kiln\'s test script (spec to stdout and a skip reporter to a file) is run with TAP in their place, and read', T, async (t) => {
-  const kiln = 'node --test --test-timeout=180000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/skip-reporter.mjs --test-reporter-destination=test-skips.log "test/*.test.js"';
-  const f = fixture(t, {}, kiln);
+test('F2: a project\'s test script (spec to stdout and a skip reporter to a file) is run with TAP in their place, and read', T, async (t) => {
+  const script = 'node --test --test-timeout=180000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/skip-reporter.mjs --test-reporter-destination=test-skips.log "test/*.test.js"';
+  const f = fixture(t, {}, script);
   const calls: string[] = [];
   const res = await check(f, {
     'src/x.js': SRC_AFTER,
