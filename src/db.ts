@@ -326,7 +326,7 @@ const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   // The run whose work a retry carries forward. A worker's changes are never
   // committed in its jail — review reads `git diff HEAD` — so the run's diff
   // artifact is the only copy of that work, and a retry that cut a fresh jail
-  // from HEAD threw it away (Kiln UI ticket: an 8-point UI rewritten from
+  // from HEAD threw it away (an earlier UI ticket: an 8-point UI rewritten from
   // nothing to fix three small defects). One-shot: cleared once applied.
   ['tasks', 'carry_run', 'TEXT'],
   ['tasks', 'operator_demands', 'TEXT'],

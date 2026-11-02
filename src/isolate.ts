@@ -275,7 +275,7 @@ export async function createJail(task: Task, runId: string): Promise<Jail> {
   // work is then missing, but the ticket is workable and says so. A ref that
   // HEAD already contains (the draft merged, and its branch outlived the merge)
   // is HEAD's past: cutting from it would hide everything merged since, which
-  // is how Kiln follow-ups retried "from main" kept opening on a weeks-old tree
+  // is how follow-ups retried "from main" kept opening on a weeks-old tree
   // without the code they were about.
   const wanted = task.baseRef?.trim();
   const exists = !!wanted && (await git(top, ['rev-parse', '--verify', `${wanted}^{commit}`]).then(() => true).catch(() => false));

@@ -351,7 +351,7 @@ async function approve(
   // Held from BEFORE decide() until the merge settles: decide() marks the task
   // done, and the scheduler's next tick (250ms) would otherwise release its
   // dependents and cut their worktrees from a main the merge has not reached
-  // yet. Observed on the first Kiln epic: the executor started in the same
+  // yet. Observed on an earlier crew run: the executor started in the same
   // second its dependency was approved, one second before that merge landed,
   // and failed its typecheck on the missing module.
   if (landable) store.beginLanding(taskId);
@@ -382,7 +382,7 @@ async function approve(
       merge = { ...merge, reason: NOTHING_TO_CHANGE_CLOSED };
     }
     // An approval whose work did not land is not done: its dependents would be
-    // released onto a main without it (Kiln Desktop: a conflict aborted the
+    // released onto a main without it (a desktop-app run: a conflict aborted the
     // settings ticket's merge and it was marked done anyway). It goes back to
     // the gate with the reason; approving again retries the merge. A refused
     // core change is the same, except that approving again is refused again:
