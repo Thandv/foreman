@@ -615,16 +615,18 @@ async function main(): Promise<number> {
     // Warm rung-0 in the background: the first review otherwise pays a cold
     // load for both advisors, serialised by the VRAM guard.
     void prewarmRoster({ onLine: (line) => process.stdout.write(`${line}\n`) }).catch(() => {});
-    server = await listen(store, scheduler);
-    process.stdout.write(
-      `foreman up — board ${daemonUrl(config.host, config.port)}  db ${config.dbPath}  workers ${config.maxWorkers}\n` +
-        `trace ${tracer.path}\n`,
-    );
+    // Before the "foreman up" line: whoever waits for it may signal at once, and a signal with no listener kills the
+    // process outright. shutdown() is safe before the server listens (it closes it only when listening).
     process.on('SIGINT', () => void shutdown(0));
     process.on('SIGTERM', () => void shutdown(0));
     // A hangup (the terminal or the app that started the daemon went away) ends it the same orderly way: without a
     // listener SIGHUP would kill it outright, skipping the lock release, the trace flush and the 'exit' handlers.
     process.on('SIGHUP', () => void shutdown(0));
+    server = await listen(store, scheduler);
+    process.stdout.write(
+      `foreman up — board ${daemonUrl(config.host, config.port)}  db ${config.dbPath}  workers ${config.maxWorkers}\n` +
+        `trace ${tracer.path}\n`,
+    );
     return -1; // stay alive
   }
 
