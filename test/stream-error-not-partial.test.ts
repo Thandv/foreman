@@ -5,11 +5,11 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chat, ModelUnavailable } from '../src/models.ts';
 
-/** A fake Ollama on port 0 that answers /api/chat with the given raw lines, then tears itself down. */
-async function withStream(lines: string[], run: () => Promise<void>): Promise<void> {
+/** A fake Ollama on port 0 that answers /api/chat with the given raw lines, then `last` with no newline after it. */
+async function withStream(lines: string[], run: () => Promise<void>, last = ''): Promise<void> {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
-    res.end(lines.map((l) => `${l}\n`).join(''));
+    res.end(lines.map((l) => `${l}\n`).join('') + last);
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const prev = process.env['FOREMAN_OLLAMA_URL'];
@@ -39,4 +39,17 @@ test('a malformed line in the middle of a good stream is skipped and the reply c
     const res = await ask();
     assert.equal(res.text, 'one two');
   });
+});
+
+// The last line with no newline after it is parsed on its own, after the read loop.
+test('an error object as the last line, with no newline after it, makes chat reject too', async () => {
+  await withStream([chunk('one '), chunk('two')], async () => {
+    await assert.rejects(ask(), (e: unknown) => e instanceof ModelUnavailable && /model ran out of memory/.test((e as Error).message));
+  }, '{"error":"model ran out of memory"}');
+});
+
+test('a malformed last line with no newline after it, after the done line, is skipped and the reply completes', async () => {
+  await withStream([chunk('one '), chunk('two'), final], async () => {
+    assert.equal((await ask()).text, 'one two');
+  }, '{"message": {"content": "tru');
 });
