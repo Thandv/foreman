@@ -120,6 +120,15 @@ test('a swallowed error is logged by its type and never its message', async (t) 
   assert.equal(errType(new DOMException(SENTINEL, 'TimeoutError')), 'TimeoutError');
 });
 
+test('a non-OK ollama version answer ends with one line, carrying its status', async (t) => {
+  setEnv(t, 'FOREMAN_DEBUG', '1');
+  setEnv(t, 'OLLAMA_NUM_PARALLEL', undefined);
+  const lines = captureStderr(t);
+  mockFetch(t, () => new Response('down', { status: 500 }));
+  assert.equal((await checkOllamaParallelism()).ok, false);
+  assert.deepEqual(lines.filter((l) => l.includes('ollama version end')).map((l) => /status=\S+/.exec(l)?.[0]), ['status=500']);
+});
+
 test('a spawn that cannot start logs an end line with status=error and the code', async (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
   const lines = captureStderr(t);
@@ -182,10 +191,10 @@ test('secrets are redacted in every shape', (t) => {
   assert.ok(out.includes('@example.com'));
 });
 
-test('a message with a newline cannot forge a second debug line', (t) => {
+test('a scope or a message with a newline cannot forge a second debug line', (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
   const lines = captureStderr(t);
-  debug('test', 'x\n[foreman debug] model chat end status=ok', { a: 1 });
+  debug('test\n[foreman debug] forged', 'x\n[foreman debug] model chat end status=ok', { a: 1 });
   assert.equal(lines.length, 1);
   assert.equal(lines[0]!.trimEnd().split('\n').length, 1);
 });
@@ -211,12 +220,12 @@ test('a field named tokens_in keeps its numeric value; only values are scrubbed'
 test('a value under a secret-named key is redacted whatever it looks like', (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
   const lines = captureStderr(t);
-  debug('test', 'auth', { token: 'hunter9', api_key: 'sk-test123456789', password: 'hunter10', tokens_in: 3, tokens_out: 2, tok_in: 4, tok_out: 5 });
+  // hunter9-14 match no value pattern on their own: only the key can redact them.
+  debug('test', 'auth', { token: 'hunter9', api_key: 'sk-test123456789', password: 'hunter10', authorization: 'hunter11', apiKey: 'hunter12', secret: 'hunter13', cookie: 'hunter14', tokens_in: 3, tokens_out: 2, tok_in: 4, tok_out: 5 });
   const line = lines[0]!;
-  assert.ok(!line.includes('hunter9'));
-  assert.ok(!line.includes('hunter10'));
+  assert.doesNotMatch(line, /hunter(9|1[0-4])/);
   assert.ok(!line.includes('test123456789'));
-  assert.match(line, /token=\[REDACTED\] api_key=\[REDACTED\] password=\[REDACTED\] tokens_in=3 tokens_out=2 tok_in=4 tok_out=5\n$/);
+  assert.match(line, /token=\[REDACTED\] api_key=\[REDACTED\] password=\[REDACTED\] authorization=\[REDACTED\] apiKey=\[REDACTED\] secret=\[REDACTED\] cookie=\[REDACTED\] tokens_in=3 tokens_out=2 tok_in=4 tok_out=5\n$/);
 });
 
 test('a closed stderr does not throw', (t) => {

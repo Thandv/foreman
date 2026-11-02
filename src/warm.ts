@@ -193,12 +193,15 @@ export async function checkOllamaParallelism(): Promise<ParallelismCheck> {
   const t0 = Date.now();
   try {
     debug('warm', 'ollama version start');
-    const res = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(3000) });
+    // One end line per call, as in loadedModels: a non-OK status is ended by its own line, not again below.
+    const res = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(3000) }).catch((e: unknown) => {
+      debug('warm', 'ollama version end', { status: 'error', error: errType(e), ms: Date.now() - t0 });
+      throw e;
+    });
     debug('warm', 'ollama version end', { status: res.status, ms: Date.now() - t0 });
     if (!res.ok) throw new Error(String(res.status));
     await res.arrayBuffer();
   } catch (e) {
-    debug('warm', 'ollama version end', { status: 'error', error: errType(e), ms: Date.now() - t0 });
     swallowed('warm', 'version', e);
     return { numParallel: null, ok: false, advice: 'ollama is not reachable; council calls will fail' };
   }

@@ -139,3 +139,23 @@ test("output with 'error:' in the middle is not a refusal: the arguments still c
   const { result } = await run((n) => (n <= commands.length ? { tool: 'run_shell', command: commands[n - 1] } : { tool: 'done', summary: 'echoed' }));
   assert.equal(result.ok, true, result.summary);
 });
+
+test('with FOREMAN_DEBUG=1 the loop-stop line names a built-in tool, and any name the model made up as other', async (t) => {
+  const prev = process.env['FOREMAN_DEBUG'];
+  process.env['FOREMAN_DEBUG'] = '1';
+  const lines: string[] = [];
+  const real = fs.writeSync;
+  (fs as { writeSync: unknown }).writeSync = (fd: number, ...rest: unknown[]) =>
+    fd === 2 ? (lines.push(String(rest[0])), 0) : (real as (...a: unknown[]) => number)(fd, ...rest);
+  t.after(() => {
+    (fs as { writeSync: unknown }).writeSync = real;
+    if (prev === undefined) delete process.env['FOREMAN_DEBUG'];
+    else process.env['FOREMAN_DEBUG'] = prev;
+  });
+  await run(() => ({ tool: 'list_dir', path: '.' }));
+  await run(() => ({ tool: 'SENTINEL-made-up-tool' }));
+  const out = lines.join('');
+  assert.match(out, /api loop stopped tool=list_dir repeats=5/);
+  assert.match(out, /api loop stopped tool=other repeats=5/);
+  assert.ok(!out.includes('SENTINEL'), out);
+});

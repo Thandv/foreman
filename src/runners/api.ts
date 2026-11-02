@@ -273,6 +273,8 @@ async function runTool(
 }
 
 const BUILTIN_TOOLS = ['list_dir', 'read_file', 'write_file', 'run_shell', 'find_tool', 'use_tool', 'build_tool', 'done'];
+/** A tool name for a FOREMAN_DEBUG line: the model writes `tool`, so anything but a built-in is logged as `other`. */
+const loggedTool = (tool: string): string => (BUILTIN_TOOLS.includes(tool) ? tool : 'other');
 
 /**
  * The catalog section of the first message. By default every tool, described
@@ -455,7 +457,7 @@ export const apiRunner: Runner = {
       try {
         observation = await runTool(call, ctx);
       } catch (err) {
-        swallowed('api', 'tool', err, { tool: String(call['tool']) });
+        swallowed('api', 'tool', err, { tool: loggedTool(String(call['tool'])) });
         observation = `error: ${(err as Error).message}`;
       }
       ctx.log(`→ ${String(call['tool'])} ${String(call['path'] ?? call['command'] ?? '')} :: ${observation.slice(0, 300)}`);
@@ -469,7 +471,7 @@ export const apiRunner: Runner = {
       lastResult = result;
       if (repeats >= REPEAT_STOP) {
         ctx.log(`stopping a loop: ${label} returned the same result ${repeats} times in a row`);
-        debug('api', 'loop stopped', { tool: String(call['tool']), repeats });
+        debug('api', 'loop stopped', { tool: loggedTool(String(call['tool'])), repeats });
         ctx.progress(1);
         return {
           ok: false,
