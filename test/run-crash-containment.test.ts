@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import { Store, safeRecord } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { RunClock } from '../src/runClock.ts';
@@ -53,7 +54,7 @@ function takeEscaped(): string[] {
 function rig(t: TestContext, over: ConstructorParameters<typeof Scheduler>[1] = {}): { store: Store; sched: Scheduler } {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false, ...over });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });
@@ -75,7 +76,7 @@ function failRecord(t: TestContext, store: Store, when: (e: Parameters<Store['re
 
 function fakeClaude(t: TestContext, body: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crash-claude-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  removeAfterStops(t, dir);
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in --version) echo "2.1.0 (Claude Code)"; exit 0;; esac\necho "${body}"\nexit 1\n`);
   fs.chmodSync(bin, 0o755);

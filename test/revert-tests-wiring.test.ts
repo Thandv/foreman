@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import { config } from '../src/config.ts';
 import { collectDebrief } from '../src/debrief.ts';
 import { hardHumanReason, reviewHolds } from '../src/gate.ts';
@@ -32,7 +33,7 @@ const MIXED = `${HEAD}test('triples', () => assert.equal(x.triple?.(2), 6));\nte
 
 function fixtureRepo(t: TestContext): string {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rtw-repo-')));
-  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  removeAfterStops(t, repo);
   git(repo, 'init', '-q', '-b', 'main');
   git(repo, 'config', 'user.email', 't@example.com');
   git(repo, 'config', 'user.name', 't');
@@ -89,7 +90,7 @@ function rig(t: TestContext, repo: string, revertTests: boolean | undefined): Ri
       });
     },
   });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });

@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ownerGate, ownerGateBatch } from '../src/gate.ts';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
+import { ownerGate,ownerGateBatch } from '../src/gate.ts';
 import { jailTree } from '../src/isolate.ts';
 import { clearPlaybookCache } from '../src/playbooks.ts';
 import { Store } from '../src/queue.ts';
@@ -216,7 +217,7 @@ test('owner gate, batched: every ticket\'s table is in the batch prompt, and the
 
 test('scheduler: a check that could not run as a whole fails, repairs and holds nothing; the reviewer is told', T, async (t) => {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt1-sched-')));
-  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  removeAfterStops(t, repo);
   sh(repo, 'init', '-q', '-b', 'main');
   sh(repo, 'config', 'user.email', 't@example.com');
   sh(repo, 'config', 'user.name', 't');
@@ -240,7 +241,7 @@ test('scheduler: a check that could not run as a whole fails, repairs and holds 
       });
     },
   });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });

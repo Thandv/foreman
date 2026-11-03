@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Broker } from '../src/budget.ts';
@@ -26,8 +27,7 @@ async function pump(t: TestContext, sched: Scheduler, until: () => boolean): Pro
 
 function scratch(t: TestContext, prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  return removeAfterStops(t, dir);
 }
 
 function setEnv(t: TestContext, name: string, value: string): void {
@@ -69,7 +69,7 @@ test('a batched gate whose newer-run lookup throws for the first ticket still fr
 
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });
@@ -113,7 +113,7 @@ async function recheckThatCannotSettle(t: TestContext, fault: unknown): Promise<
     tickMs: 5, maxWorkers: 1, verifyEnabled: false, broker,
     verify: async ({ runId, task }): Promise<Verdict> => store.addVerdict({ runId, taskId: task.id, verdict: 'pass', disagreement: false, council: [] }),
   });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });
@@ -175,7 +175,7 @@ test('a re-check that fails with a non-Error value records the value and backs t
 test('a run whose bookkeeping fails after the log is closed writes nothing to the closed log descriptor', { timeout: 30_000 }, async (t) => {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });
@@ -213,7 +213,7 @@ test('a run whose bookkeeping fails after the log is closed writes nothing to th
 test('a run whose bookkeeping fails with a non-Error value still closes its log', { timeout: 30_000 }, async (t) => {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });

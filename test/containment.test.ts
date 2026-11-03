@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import { Store } from '../src/queue.ts';
 import { Scheduler, type SchedulerOptions } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
@@ -86,14 +87,13 @@ const idOf = (v: string | { taskId?: string | null } | undefined): string | unde
 
 function scratch(t: TestContext, prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  return removeAfterStops(t, dir);
 }
 
 function rig(t: TestContext, opts: SchedulerOptions = {}): { store: Store; sched: Scheduler } {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, maxWorkers: 1, verifyEnabled: false, ...opts });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });
@@ -259,7 +259,7 @@ function provisional(t: TestContext): { store: Store; sched: Scheduler; task: Ta
     tickMs: 5, maxWorkers: 1, verifyEnabled: false, broker,
     verify: async ({ runId }): Promise<Verdict> => store.addVerdict({ runId, taskId: task.id, verdict: 'pass', disagreement: false, council: [] }),
   });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });
@@ -327,7 +327,7 @@ test('a manual re-review that fails, with the ledger refusing the failure, escap
   });
   const server = createServer(store, sched);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
+  stopsFirst(t, async () => {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await sched.stop();
@@ -367,7 +367,7 @@ test('a trace sweep that cannot delete a stale day escapes nothing, and record r
   const rm = t.mock.method(fs, 'rmSync', () => {
     throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
   });
-  t.after(() => {
+  stopsFirst(t, () => {
     tracer.stop();
     store.close();
   });

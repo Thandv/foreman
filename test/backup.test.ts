@@ -7,6 +7,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import { Store } from '../src/queue.ts';
 import {
   backupIfDue, backupNow, backupSettings, isoWeek, restoreFrom, selectPrune,
@@ -30,8 +31,7 @@ const TABLES = { memory: 5, receipts: 7, verdicts: 3 } as const;
 /** A scratch folder removed when the test ends, pass or fail. */
 function scratch(t: TestContext): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-backup-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  return removeAfterStops(t, dir);
 }
 
 /**
@@ -119,7 +119,7 @@ test('backupNow: a database a live Store holds open is copied whole, rows still 
   const root = scratch(t);
   const dbPath = path.join(root, 'foreman.db');
   const store = new Store(dbPath);
-  t.after(() => store.close());
+  stopsFirst(t, () => store.close());
   const task = store.addTask({ title: 'kept', prompt: 'x' });
   store.record({ taskId: task.id, type: 'status', message: 'written while the backup is taken' });
 
@@ -128,7 +128,7 @@ test('backupNow: a database a live Store holds open is copied whole, rows still 
   const restored = path.join(root, 'restored.db');
   fs.writeFileSync(restored, zlib.gunzipSync(fs.readFileSync(r.file)));
   const db = new DatabaseSync(restored, { readOnly: true });
-  t.after(() => db.close());
+  stopsFirst(t, () => db.close());
   assert.equal((db.prepare('SELECT title FROM tasks WHERE id = ?').get(task.id) as { title: string }).title, 'kept');
   assert.equal(
     (db.prepare("SELECT count(*) AS n FROM events WHERE message = 'written while the backup is taken'").get() as { n: number }).n,
@@ -464,7 +464,7 @@ test('restoreFrom: an empty gzip and other databases are refused with the ledger
 
   assert.equal(r.aside, `${dbPath}.before-restore-2026-10-11T12-00-00`);
   store = new Store(dbPath);
-  t.after(() => store.close());
+  stopsFirst(t, () => store.close());
   assert.equal(store.getTask(kept.id)!.title, 'in the backup');
   assert.ok(!store.getTask(later.id));
 });

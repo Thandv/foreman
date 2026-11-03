@@ -14,6 +14,7 @@ import path from 'node:path';
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import type { Broker } from '../src/budget.ts';
 import type { RunnerContext } from '../src/runners/index.ts';
 import type { Task } from '../src/types.ts';
@@ -159,17 +160,13 @@ function fixture(t: TestContext, jailName?: string): Fixture {
   const otherJail = path.join(fs.realpathSync(testHome), 'work', `r_other_${id}`);
   fs.mkdirSync(otherJail, { recursive: true });
   fs.writeFileSync(path.join(otherJail, 'notes.txt'), 'DECOY-OTHER-JAIL-3310\n');
-  t.after(() => {
-    for (const d of [jail, otherJail, repo]) fs.rmSync(d, { recursive: true, force: true });
-  });
+  for (const d of [jail, otherJail, repo]) removeAfterStops(t, d);
   return { repo, jail, otherJail, otherSha, mainSha };
 }
 
 /** A scratch directory under the temp dir (not a repo), removed after the test. */
 function scratch(t: TestContext, name = 'fsbx-'): string {
-  const dir = fs.mkdtempSync(path.join(TMP, name));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  return removeAfterStops(t, fs.mkdtempSync(path.join(TMP, name)));
 }
 
 const alive = (pid: number): boolean => {
@@ -1205,7 +1202,7 @@ test('flow: the private TMPDIR and HOME, python3, a C++ compile, and the environ
   const built = await withEnv(OFF, () => runTests(f.jail, 'clang++ -o waitbin wait.cpp', guard()));
   assert.equal(built.passed, true, built.output);
   const outsider = spawn(path.join(f.jail, 'waitbin'), [], { stdio: 'ignore' });
-  t.after(() => outsider.kill('SIGKILL'));
+  stopsFirst(t, () => void outsider.kill('SIGKILL'));
   const atos = `atos -p ${outsider.pid} 0x100000000 2>&1; echo OUT atos done`;
   const on = await withEnv(ON, () => runTests(f.jail, atos, guard()));
   assert.match(on.output, /cannot examine process/, on.output);
@@ -1229,7 +1226,7 @@ test('flow + attack: a suite can allocate and use its own pseudo-terminal; a ter
     "print('GOT', got, flush=True)",
   ].join('\n');
   const holder = spawn('python3', ['-c', holderSrc], { stdio: ['pipe', 'pipe', 'ignore'], killSignal: 'SIGKILL' });
-  t.after(() => holder.kill('SIGKILL'));
+  stopsFirst(t, () => void holder.kill('SIGKILL'));
   let held = '';
   holder.stdout!.on('data', (d: Buffer) => (held += d));
   await until(() => held.includes('\n') || holder.exitCode !== null, 'the stand-in terminal', 60_000);
@@ -1677,7 +1674,7 @@ test('the slot wrapper end to end: the lease is taken from the live daemon by th
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
   let child: ChildProcess | null = null;
-  t.after(async () => {
+  stopsFirst(t, async () => {
     child?.kill('SIGKILL');
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
@@ -1763,7 +1760,7 @@ test('a shell ticket through the scheduler: its command and its test command bot
     maxWorkers: 1, tickMs: 5,
     verify: async ({ task, runId }) => store.addVerdict({ runId, taskId: task.id, verdict: 'pass', disagreement: false, council: [] }),
   });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });

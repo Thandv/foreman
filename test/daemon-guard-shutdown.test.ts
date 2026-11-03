@@ -1,5 +1,6 @@
 import './env.ts';
 import test, { type TestContext } from 'node:test';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,7 +20,7 @@ async function until(cond: () => boolean, ms: number): Promise<boolean> {
 
 function serveWith(t: TestContext, inject: string) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-guard-')));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  removeAfterStops(t, home);
   const marker = path.join(home, 'exit-marker');
   const env = {
     ...process.env, FOREMAN_HOME: home, FOREMAN_DB: path.join(home, 'foreman.db'), FOREMAN_PORT: '0', FOREMAN_PREWARM: 'off',
@@ -27,7 +28,7 @@ function serveWith(t: TestContext, inject: string) {
     GUARD_INJECT: inject, GUARD_EXIT_MARKER: marker,
   };
   const child = spawn(process.execPath, ['--import', fixture, cli, 'serve'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  stopsFirst(t, () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   const guard = setTimeout(() => child.kill('SIGKILL'), 60_000);
   t.after(() => clearTimeout(guard));
   const out = { text: '' };
