@@ -697,6 +697,19 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         if (skills !== null && !(Array.isArray(skills) && skills.every((s) => typeof s === 'string'))) {
           return json(res, 400, { error: 'skills must be a list of skill names' });
         }
+        // Optional text fields: a non-string would reach SQLite as an unbindable value.
+        for (const name of ['repo', 'agent', 'testCmd', 'role', 'playbook', 'kind', 'runner', 'sensitivity', 'assignee']) {
+          const v = body[name];
+          if (v != null && typeof v !== 'string') return json(res, 400, { error: `${name} must be text` });
+        }
+        let acceptance: string | null = null;
+        const rawAcceptance = body['acceptance'];
+        if (typeof rawAcceptance === 'string') acceptance = rawAcceptance || null;
+        else if (Array.isArray(rawAcceptance) && rawAcceptance.every((a) => typeof a === 'string')) {
+          acceptance = rawAcceptance.length ? rawAcceptance.map((a) => `- ${a}`).join('\n') : null;
+        } else if (rawAcceptance != null) {
+          return json(res, 400, { error: 'acceptance must be text or a list of text' });
+        }
         const task = store.addTask({
           title: String(body['title'] ?? ''),
           prompt: String(body['prompt'] ?? ''),
@@ -711,7 +724,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           role: (body['role'] as string) || null,
           playbook: (body['playbook'] as string) || null,
           points: body['points'] == null ? null : Number(body['points']),
-          acceptance: (body['acceptance'] as string) || null,
+          acceptance,
           allowCore: body['allowCore'] === true,
           mergeOnApprove: body['mergeOnApprove'] === undefined ? undefined : Boolean(body['mergeOnApprove']),
           maxRepairs: body['maxRepairs'] === undefined ? undefined : Number(body['maxRepairs']),
