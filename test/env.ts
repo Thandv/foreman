@@ -39,7 +39,7 @@ export const testHome = dir;
 process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
 
 // Temp dirs a test makes under os.tmpdir() (the "foreman-*" ones) are removed when the test process exits, so a full
-// run leaves nothing behind (scripts/checks/tmp-leaks.ts holds verify to that). Use this in place of
+// run leaves nothing behind (scripts/verify.sh counts them and fails). Use this in place of
 // fs.mkdtempSync(path.join(os.tmpdir(), prefix)); a test that needs the dir gone sooner (a stopped scheduler's dir,
 // say) removes it itself with test/helpers/removal.ts.
 const scratch = new Set<string>();

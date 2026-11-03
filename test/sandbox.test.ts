@@ -19,11 +19,14 @@ import type { Broker } from '../src/budget.ts';
 import type { RunnerContext } from '../src/runners/index.ts';
 import type { Task } from '../src/types.ts';
 
-privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
+// The temp dir as this file started, the one Foreman's home (testHome) is in: the tests below rely on that. Only
+// TMPDIR (and so os.tmpdir()) moves, for the slot wrapper, which keeps its saved output in the temp dir.
+const OUTER_TMP = os.tmpdir();
+privateTmpdir();
 
 process.env['FOREMAN_OLLAMA_URL'] = 'http://127.0.0.1:9';
 
-const TMP = fs.realpathSync(os.tmpdir());
+const TMP = fs.realpathSync(OUTER_TMP);
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const made: string[] = [];
 const listeners: net.Server[] = [];
@@ -571,7 +574,7 @@ test('fail closed: sandbox-exec missing, not executable, failing, or a profile t
 test('wrap: every path goes in as a real path in its own -D argv entry; relative paths, a fifth read-only tree, one inside Foreman\'s home, and a jail that contains Foreman\'s home are refused', T, async (t) => {
   const dir = scratch(t);
   // os.tmpdir() is /var/folders/… (a symlink to /private/var/…); /tmp is one to /private/tmp.
-  const viaVar = path.join(os.tmpdir(), path.basename(dir));
+  const viaVar = path.join(OUTER_TMP, path.basename(dir));
   assert.notEqual(viaVar, dir, 'precondition: the temp dir is reached through a symlink');
   const tmpDir = fs.mkdtempSync('/tmp/fsbx-wrap-');
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
@@ -598,7 +601,7 @@ test('wrap: every path goes in as a real path in its own -D argv entry; relative
   await withEnv({ FOREMAN_SANDBOX_RO: '/a:/b:/c' }, () =>
     assert.rejects(sbx.wrap('tests', { ...o, readOnly: ['/d', '/e'] }, '/usr/bin/true', []), /at most 4 read-only trees/, 'the two lists share the four slots'));
   await assert.rejects(sbx.wrap('tests', { ...o, readOnly: [path.join(testHome, 'artifacts')] }, '/usr/bin/true', []), /inside Foreman's home/);
-  await withEnv({ FOREMAN_SANDBOX_RO: path.join(os.tmpdir(), path.basename(testHome)) }, () =>
+  await withEnv({ FOREMAN_SANDBOX_RO: path.join(OUTER_TMP, path.basename(testHome)) }, () =>
     assert.rejects(sbx.wrap('tests', o, '/usr/bin/true', []), /inside Foreman's home/, 'also through FOREMAN_SANDBOX_RO, also through the symlinked spelling'));
   await assert.rejects(sbx.wrap('tests', { ...o, jail: TMP }, '/usr/bin/true', []), /contains Foreman's home/);
   await assert.rejects(sbx.wrap('tests', { ...o, jail: testHome }, '/usr/bin/true', []), /contains Foreman's home/);
@@ -688,7 +691,7 @@ test('wrap refuses a read-only tree that is, or contains, a tree the sandbox clo
     ['/var', /\/var/],
     ['/private/var/folders', /per-user temp dirs/],
     [HOME, /your home directory/],
-    [path.join(os.tmpdir(), path.basename(HOME)), /your home directory/], // the symlinked spelling (/var/folders/…)
+    [path.join(OUTER_TMP, path.basename(HOME)), /your home directory/], // the symlinked spelling (/var/folders/…)
     [os.userInfo().homedir, /your home directory/], // the account's home, whatever HOME says
     [TMP, /./], // the temp dir: Foreman's home, the fake home and every private HOME are inside it
     [path.dirname(fs.realpathSync(testHome)), /Foreman's home|your home directory/],

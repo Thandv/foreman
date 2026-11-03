@@ -73,9 +73,13 @@ test('verify.sh on a passing suite exits 0 with its counts and ends on "verify: 
 test('verify.sh fails a passing suite that leaves a foreman-* entry in its temp dir, naming it, and leaves the operator\'s own entries alone', () => {
   const operator = scratchDir('ft-operator-');
   fs.mkdirSync(path.join(operator, 'foreman-old-entry'));
-  const r = runVerify('', { npm: 'mkdir "$TMPDIR/foreman-leaky-entry"\necho "ℹ pass 1"\nexit 0', tmpdir: operator });
+  const seen = path.join(scratchDir('ft-seen-'), 'suite-tmpdir');
+  const r = runVerify('', { npm: `echo "$TMPDIR" > '${seen}'\nmkdir "$TMPDIR/foreman-leaky-entry"\necho "ℹ pass 1"\nexit 0`, tmpdir: operator });
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /foreman-leaky-entry/);
+  const suiteTmp = fs.readFileSync(seen, 'utf8').trim();
+  assert.ok(suiteTmp && suiteTmp !== operator, suiteTmp);
+  assert.equal(fs.existsSync(suiteTmp), false, 'the suite\'s own temp dir is removed with what it left');
   assert.equal(lastLine(r.out), 'verify: FAIL (1 foreman-* temp entries left behind by the tests)');
   assert.doesNotMatch(r.out, /foreman-old-entry/, 'only the suite\'s own temp dir is counted');
   assert.deepEqual(fs.readdirSync(operator), ['foreman-old-entry'], 'the operator\'s entry stays, and the run\'s temp dir is gone');

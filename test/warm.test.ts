@@ -1,4 +1,4 @@
-import './env.ts';
+import { privateTmpdir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -6,6 +6,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { prewarmRoster, residentSummary, warmSummary, warmTargets } from '../src/warm.ts';
 import { testHome } from './env.ts';
+
+privateTmpdir(); // `doctor` runs the slot wrapper (src/doctorJail.ts), which keeps its saved output in the temp dir
 
 test('doctor reads residency before its /api/doctor pings, which load models, so it never reports its own loads', async () => {
   // One stand-in for both the daemon and Ollama: nothing is resident until /api/doctor is asked, which (like the real
