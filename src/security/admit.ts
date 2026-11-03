@@ -34,9 +34,21 @@ const RULES: Rule[] = [
   { severity: 'block', rule: 'privilege', pattern: /(^|\n|[;&|]\s*|`|\$\()\s*sudo\s+\S/i, message: 'runs a command as root' },
   { severity: 'warn', rule: 'privilege-mention', pattern: /\bsudo\b/i, message: 'mentions sudo' },
   // Like sudo: installing or loading a job is a block, merely naming the folders or flags is a warning (a ticket
-  // that changes the code generating a plist installs nothing). Install forms: copy/write/redirect a file INTO a
-  // launchd folder, launchctl load/bootstrap/enable, a crontab edit/replace, systemctl enable.
-  { severity: 'block', rule: 'persistence', pattern: /(\b(cp|mv|ln|install|rsync|tee|copy|copies|copying|write|writes|writing|move|moves|moving|symlink|symlinks|save|saves|saving|drop|drops|place|places|put|puts)\b[^\n]*?\b(into|to|in|at)\b[^\n]*?Launch(Agents|Daemons)\b|\b(cp|mv|ln|install|rsync|tee)\b[^\n]*?Launch(Agents|Daemons)\b|>>?\s*\S*Launch(Agents|Daemons)\b|\blaunchctl\s+(\S+\s+)*?(load|bootstrap|enable)\b|\bcrontab\s+(-[a-z]*e[a-z]*\b|-(\s|$)|-[a-z]*r\b)|\bsystemctl\s+(--?\S+\s+)*enable\b)/i, message: 'installs a persistent background job' },
+  // that changes the code generating a plist installs nothing). Install forms: a verb putting a file INTO a launchd
+  // folder in one clause, a file-writing command before the folder on one (continued) line, a file inside the
+  // folder, a redirect into it or the folder in a variable, launchctl load/bootstrap/enable, a crontab
+  // edit/replace, systemctl enable. Quotes around a command word do not hide it.
+  {
+    severity: 'block', rule: 'persistence', message: 'installs a persistent background job',
+    pattern: new RegExp([
+      String.raw`\b(cp|mv|ln|install|installs|installing|rsync|tee|copy|copies|copying|write|writes|writing|move|moves|moving|symlink|symlinks|save|saves|saving|drop|drops|place|places|put|puts)\b[^\n.;,]{0,60}?\b(into|to|in|at)\s+(the\s+|your\s+)?["'\x60]?\S*Launch(Agents|Daemons)\b`,
+      String.raw`\b(cp|mv|ln|install|rsync|tee|ditto|dd|curl|wget|defaults|plutil|scp)\b([^\n]|\\\n)*?Launch(Agents|Daemons)\b`,
+      String.raw`Launch(Agents|Daemons)\/[^\s/]|>>?\s*["']?\S*Launch(Agents|Daemons)\b|=\s*["']?\S*Launch(Agents|Daemons)\b`,
+      String.raw`\blaunchctl["']?\s+(\S+\s+)*?["']?(load|bootstrap|enable)\b`,
+      String.raw`\bcrontab\s+(-u\s*\S+\s+(?!-l\b)\S|-[a-z]*e[a-z]*\b|-(\s|$)|-[a-z]*r\b)`,
+      String.raw`\bsystemctl["']?\s+(--?\S+\s+)*["']?enable\b`,
+    ].join('|'), 'i'),
+  },
   { severity: 'warn', rule: 'persistence-mention', pattern: /(LaunchAgents|LaunchDaemons|\bcrontab\s+-|\bsystemctl\s+enable|\blaunchctl\b)/i, message: 'mentions a launchd/cron/systemd job location or command' },
   { severity: 'block', rule: 'permission-bypass', pattern: /--dangerously-skip-permissions|--yolo\b/i, message: 'asks a runner to bypass its own permission gate' },
   { severity: 'block', rule: 'secret-exfil', pattern: /(\.ssh\/|\.aws\/credentials|\.env\b|security\s+find-generic-password|id_rsa)[\s\S]{0,200}?\b(curl\b|wget\b|nc\b|scp\b|http)/i, message: 'reads credentials and then sends them somewhere' },

@@ -336,12 +336,22 @@ test('the persistence rule blocks installing or loading a job but only warns on 
     'cat jobs | crontab -',
     'systemctl --user enable foo.service',
     'systemctl enable foo',
+    'cp com.x.plist \\\n  ~/Library/LaunchAgents/',
+    'D=~/Library/LaunchAgents; cp com.x.plist "$D/"',
+    'ditto com.x.plist ~/Library/LaunchAgents/',
+    'defaults write ~/Library/LaunchAgents/com.x Label com.x',
+    'Create ~/Library/LaunchAgents/com.x.plist with RunAtLoad true',
+    '"launchctl" load ~/Library/LaunchAgents/com.x.plist',
+    'crontab -u root -e',
+    'installs the plist into ~/Library/LaunchAgents',
   ]) {
     assert.throws(() => admit({ ...base, prompt }), /persistence/, `should block: ${prompt}`);
   }
   for (const prompt of [
     'Change the code that generates the plist that belongs in ~/Library/LaunchAgents; install nothing.',
     'The per-user folder is ~/Library/LaunchAgents and the system one is /Library/LaunchDaemons.',
+    // The ticket this rule refused on 2026-11-03: the verb and the folder are two sentences apart.
+    '`foreman service` must not write secret values into the plist. Today it copies every FOREMAN_* variable from the environment, so the keys land in clear text in ~/Library/LaunchAgents.',
   ]) {
     const findings = admit({ ...base, prompt });
     assert.equal(findings.filter((f) => f.severity === 'block').length, 0, `false positive on: ${prompt}`);
