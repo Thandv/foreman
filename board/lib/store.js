@@ -281,7 +281,7 @@ export async function awaitReview(taskId, started, opts = {}) {
     }
     if (d?.reverifying) continue;
     if ((d?.verdicts?.length ?? 0) > before) {
-      return { ok: true, message: `Re-reviewed: ${d.verdicts[0]?.verdict ?? 'no verdict'}` };
+      return { ok: true, message: `Re-reviewed: ${d.verdicts[0] ? verdictRowLabel(d.verdicts[0]) : 'no verdict'}` };
     }
     if (d?.reverifying === false) {
       return { ok: false, message: 'Re-review finished without a new verdict — see the timeline' };

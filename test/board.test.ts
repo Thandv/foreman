@@ -703,7 +703,8 @@ test('both approve call sites report through the shared gate-outcome selector', 
 
 test('the Re-review toast waits for the daemon to finish, then reports the newest verdict', async () => {
   type Outcome = { ok: boolean; message: string };
-  type Detail = { reverifying?: boolean; verdicts: Array<{ verdict: string }> };
+  type Detail = { reverifying?: boolean; verdicts: Array<{ verdict: string; council?: unknown[]; provisional?: boolean }> };
+  const read = [{ verdict: 'pass' }]; // one reviewer read the work
   const { awaitReview } = (await import(new URL('../board/lib/store.js', import.meta.url).href)) as {
     awaitReview: (id: string, started: unknown, opts: Record<string, unknown>) => Promise<Outcome>;
   };
@@ -715,15 +716,19 @@ test('the Re-review toast waits for the daemon to finish, then reports the newes
   assert.deepEqual(
     await awaitReview('t1', { started: true, verdictsBefore: 1 }, replay([
       { reverifying: true, verdicts: [{ verdict: 'split' }, { verdict: 'split' }] },
-      { reverifying: false, verdicts: [{ verdict: 'pass' }, { verdict: 'split' }, { verdict: 'split' }] },
+      { reverifying: false, verdicts: [{ verdict: 'pass', council: read }, { verdict: 'split' }, { verdict: 'split' }] },
     ])),
     { ok: true, message: 'Re-reviewed: pass' },
   );
+  // A stepped-down or unread re-review is never reported as a pass (src/verify/council.ts reviewLabel).
+  const said = async (v: Detail['verdicts'][number]) => (await awaitReview('t1', { verdictsBefore: 0 }, replay([{ verdicts: [v] }]))).message;
+  assert.equal(await said({ verdict: 'pass', council: read, provisional: true }), 'Re-reviewed: provisional pass');
+  assert.equal(await said({ verdict: 'split', council: [{ error: 'sent nothing' }] }), 'Re-reviewed: not reviewed');
   const none = await awaitReview('t1', { verdictsBefore: 1 }, replay([{ reverifying: false, verdicts: [{ verdict: 'split' }] }]));
   assert.equal(none.ok, false);
   assert.match(none.message, /finished without a new verdict/);
   // An older daemon never sends the flag: a new row is still reported, and the wait is bounded.
-  assert.equal((await awaitReview('t1', { verdictsBefore: 0 }, replay([{ verdicts: [{ verdict: 'fail' }] }]))).message, 'Re-reviewed: fail');
+  assert.equal((await awaitReview('t1', { verdictsBefore: 0 }, replay([{ verdicts: [{ verdict: 'fail', council: read }] }]))).message, 'Re-reviewed: fail');
   assert.match((await awaitReview('t1', { verdictsBefore: 0 }, replay([{ verdicts: [] }]))).message, /still running/);
 
   // A failed poll (a daemon restart, a blip) is not the re-review failing; five in a row is losing touch.
@@ -732,7 +737,7 @@ test('the Re-review toast waits for the daemon to finish, then reports the newes
     fetchTask: async () => {
       calls++;
       if (calls === 1) throw new Error('fetch failed');
-      return { reverifying: false, verdicts: [{ verdict: 'pass' }, { verdict: 'split' }] };
+      return { reverifying: false, verdicts: [{ verdict: 'pass', council: read }, { verdict: 'split' }] };
     },
     wait: async () => {}, attempts: 5,
   };
@@ -743,7 +748,7 @@ test('the Re-review toast waits for the daemon to finish, then reports the newes
     fetchTask: async () => {
       n++;
       if (n <= 4) throw new Error('fetch failed');
-      return { reverifying: false, verdicts: [{ verdict: 'fail' }, { verdict: 'split' }] };
+      return { reverifying: false, verdicts: [{ verdict: 'fail', council: read }, { verdict: 'split' }] };
     },
     wait: async () => {}, attempts: 10,
   };
@@ -754,7 +759,7 @@ test('the Re-review toast waits for the daemon to finish, then reports the newes
     fetchTask: async () => {
       m++;
       if (m % 2) throw new Error('fetch failed');
-      return m < 12 ? { reverifying: true, verdicts: [] } : { reverifying: false, verdicts: [{ verdict: 'pass' }, { verdict: 'split' }] };
+      return m < 12 ? { reverifying: true, verdicts: [] } : { reverifying: false, verdicts: [{ verdict: 'pass', council: read }, { verdict: 'split' }] };
     },
     wait: async () => {}, attempts: 20,
   };

@@ -372,7 +372,7 @@ in which it misread a diff twice.
 
 | Seat | Model | Why |
 |---|---|---|
-| Council advisors (code) | 2B on rung 0, then the 9B + coder-14B | cheap first for diffs; two *different* models, never one model counted twice |
+| Council advisors (code) | 9B + coder-14B at every rung; the 2B sits on no council | the 2B failed a correct one-file change for a nonsense reason; two *different* models, never one model counted twice. A seat stepped down for memory can still land on it, and that verdict is provisional |
 | Council advisors (prose) | 9B + coder-14B at every rung | the 2B returned nothing on a 6,000-token chapter; llama benched 0.25 |
 | Council chair | the strongest reasoner not already seated; **opus at the top rung** when the cloud is allowed and the task is not S2 | the chair decides every disagreement — it used to be llama or the 2B |
 | Chair already argued a side | nobody — the vote is a `split`, which escalates or parks | one model re-reading its own vote is not a decision |
