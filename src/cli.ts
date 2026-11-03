@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { servicePlist } from './service.ts';
+import { secretWarning, servicePlist, skippedSecrets, stableNodePath } from './service.ts';
 import { config, daemonUrl } from './config.ts';
 import { humanDuration, sweepJails } from './archive.ts';
 import {
@@ -1819,8 +1819,9 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'service': {
-      const node = process.execPath;
+      const node = stableNodePath(process.execPath, process.env['PATH']);
       const cli = new URL('./cli.ts', import.meta.url).pathname;
+      for (const name of skippedSecrets(process.env)) process.stderr.write(`${secretWarning(name)}\n`);
       process.stdout.write(
         servicePlist({ node, cli, cwd: process.cwd(), home: config.home, env: process.env, userHome: os.homedir() }),
       );

@@ -49,9 +49,14 @@ a parent also cancels its descendants.
   crash (a non-zero exit, as an uncaught exception gives), not after `foreman stop` (SIGTERM, a clean exit 0). So after
   a stop the daemon stays down; start it again with `launchctl kickstart` or `foreman serve`, and unload the job when
   it must not come back, as for a restore. The plist carries every `FOREMAN_*` variable set in the shell where you ran
-  `foreman service` (values XML-escaped), plus `PATH` and `HOME`, and `FOREMAN_HOME` as an absolute path. Keys among
-  them (`FOREMAN_GATEWAY_KEY`, `FOREMAN_TRACE_KEY`) are written in clear, so keep the printed plist private. Set your
-  settings before running it, and regenerate and reload the job after changing them. A stop
+  `foreman service` (values XML-escaped), plus `PATH` and `HOME`, and `FOREMAN_HOME` as an absolute path. Variables
+  whose names look secret (a `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL` or `AUTH` name segment) are
+  left out, so no secret lands in clear in the plist; a warning on stderr names each one and never prints its value.
+  Foreman has no way to load such values from a file, so features that need them (gateway models need
+  `FOREMAN_GATEWAY_KEY`; the trace sink needs `FOREMAN_TRACE_KEY`) work only when you start the daemon by hand with the
+  variable set (`FOREMAN_GATEWAY_KEY=... foreman serve`). The plist names `node` by its stable Homebrew path
+  (`/opt/homebrew/bin/node`) rather than the versioned Cellar path when both are the same binary, so `brew upgrade node`
+  does not break it. Set your settings before running it, and regenerate and reload the job after changing them. A stop
   is not a verdict on work in flight: running tasks go back in the queue, with their worktrees kept.
 
 ## Debug logging

@@ -1,9 +1,11 @@
 import './env.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { servicePlist } from '../src/service.ts';
+import { secretWarning, servicePlist, skippedSecrets, stableNodePath } from '../src/service.ts';
 
 // A small plist reader (dict, array, string, true, false): enough to parse what servicePlist writes, so the tests
 // check the document's meaning rather than substrings. Nothing is installed or loaded.
@@ -105,4 +107,65 @@ test('`foreman service` itself carries the FOREMAN_* variables of the shell it r
   const env = (parsePlist(xml) as Record<string, Record<string, PV>>)['EnvironmentVariables']!;
   assert.equal(env['FOREMAN_SERVICE_PROBE'], 'a&b<c>');
   assert.equal(env['FOREMAN_HOME'], process.env['FOREMAN_HOME']);
+});
+
+test('secret-looking FOREMAN_* variables are left out of the plist, non-secret ones stay, and each skip is warned without its value', () => {
+  const env = {
+    FOREMAN_GATEWAY_KEY: 'gw-value-123',
+    FOREMAN_TRACE_KEY: 'trace-value-456',
+    FOREMAN_DB_PASSWORD: 'pw-value-789',
+    FOREMAN_COUNCIL_MAX_TOKENS: '900',
+    FOREMAN_KEYBOARD: 'dvorak',
+    FOREMAN_PORT: '4999',
+  };
+  const xml = servicePlist({ ...base, env });
+  const vars = (parsePlist(xml) as Record<string, Record<string, PV>>)['EnvironmentVariables']!;
+  for (const n of ['FOREMAN_GATEWAY_KEY', 'FOREMAN_TRACE_KEY', 'FOREMAN_DB_PASSWORD']) assert.ok(!(n in vars), n);
+  assert.equal(vars['FOREMAN_COUNCIL_MAX_TOKENS'], '900');
+  assert.equal(vars['FOREMAN_KEYBOARD'], 'dvorak');
+  assert.equal(vars['FOREMAN_PORT'], '4999');
+  const skipped = skippedSecrets(env);
+  assert.deepEqual(skipped, ['FOREMAN_DB_PASSWORD', 'FOREMAN_GATEWAY_KEY', 'FOREMAN_TRACE_KEY']);
+  const warnings = skipped.map(secretWarning);
+  assert.equal(warnings.length, 3);
+  skipped.forEach((n, k) => assert.ok(warnings[k]!.includes(n)));
+  assert.match(warnings[1]!, /gateway/);
+  assert.match(warnings[2]!, /trace/);
+  const out = xml + warnings.join('\n');
+  for (const v of ['gw-value-123', 'trace-value-456', 'pw-value-789']) assert.ok(!out.includes(v), v);
+});
+
+test('`foreman service` prints a warning per skipped secret on stderr and no value anywhere', () => {
+  const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const r = spawnSync(process.execPath, [cli, 'service'], {
+    env: { ...process.env, FOREMAN_GATEWAY_KEY: 'sekrit-gw', FOREMAN_TRACE_KEY: 'sekrit-tr' }, encoding: 'utf8',
+  });
+  assert.match(r.stderr, /FOREMAN_GATEWAY_KEY/);
+  assert.match(r.stderr, /FOREMAN_TRACE_KEY/);
+  assert.ok(!(r.stdout + r.stderr).includes('sekrit'));
+  assert.ok(!r.stdout.includes('FOREMAN_GATEWAY_KEY'));
+});
+
+test('a versioned Cellar node path is replaced by the stable one when it is the same binary; otherwise execPath is kept', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'svc-node-')));
+  try {
+    const cellar = path.join(root, 'Cellar', 'node', '26.0.0', 'bin', 'node');
+    fs.mkdirSync(path.dirname(cellar), { recursive: true });
+    fs.writeFileSync(cellar, '#!/bin/sh\n');
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    fs.symlinkSync(cellar, path.join(bin, 'node'));
+    assert.equal(stableNodePath(cellar, '/nonexistent'), path.join(bin, 'node'));
+    fs.unlinkSync(path.join(bin, 'node'));
+    const other = path.join(root, 'other');
+    fs.mkdirSync(other);
+    fs.symlinkSync(cellar, path.join(other, 'node'));
+    assert.equal(stableNodePath(cellar, ['/nonexistent', other].join(':')), path.join(other, 'node'));
+    fs.unlinkSync(path.join(other, 'node'));
+    fs.writeFileSync(path.join(other, 'node'), 'different');
+    assert.equal(stableNodePath(cellar, other), cellar);
+    assert.equal(stableNodePath('/usr/bin/node', other), '/usr/bin/node');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
