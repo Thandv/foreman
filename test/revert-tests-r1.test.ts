@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
-import { ownerGate,ownerGateBatch } from '../src/gate.ts';
+import { ownerGate, ownerGateBatch } from '../src/gate.ts';
 import { jailTree } from '../src/isolate.ts';
 import { clearPlaybookCache } from '../src/playbooks.ts';
 import { Store } from '../src/queue.ts';
