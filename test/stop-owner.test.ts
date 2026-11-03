@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { stopDaemon, type StopDeps, type ProcInfo } from '../src/daemonOwner.ts';
+import { spawn } from 'node:child_process';
+import { stopDaemon, systemDescribe, type StopDeps, type ProcInfo } from '../src/daemonOwner.ts';
 
 const DAEMON = 'node /x/foreman/src/cli.ts serve';
 
@@ -100,4 +101,32 @@ test('no pidfile and no owner: stop says so and exits 0', async (t) => {
   t.after(() => fs.rmSync(s.home, { recursive: true, force: true }));
   assert.equal(await stopDaemon(s.deps), 0);
   assert.match(s.out.join(''), /no daemon pidfile/);
+});
+
+test('a live daemon whose home cannot be matched keeps its pidfile and is not signalled; a symlinked spelling matches', async (t) => {
+  const s = setup({ 42: { command: DAEMON, home: '/some/other/home' } }, [42], '42\n');
+  t.after(() => fs.rmSync(s.home, { recursive: true, force: true }));
+  assert.equal(await stopDaemon(s.deps), 1);
+  assert.equal(s.signals.length, 0);
+  assert.equal(fs.existsSync(s.pidFile), true, 'removing a live daemon\'s lock would let a second one start');
+  fs.symlinkSync(s.home, `${s.home}-link`);
+  t.after(() => fs.rmSync(`${s.home}-link`, { force: true }));
+  s.deps.describe = () => ({ command: DAEMON, home: s.home });
+  assert.equal(await stopDaemon({ ...s.deps, home: `${s.home}-link` }), 0);
+  assert.deepEqual(s.signals.filter(([, g]) => g === 'SIGTERM'), [[42, 'SIGTERM']]);
+});
+
+test('a foreman process for this home that is not `serve` (a CLI call, a worker) is never signalled', async (t) => {
+  const s = setup({ 300: { command: '' } }, [300], '300\n');
+  t.after(() => fs.rmSync(s.home, { recursive: true, force: true }));
+  s.deps.describe = () => ({ command: 'node /x/foreman/src/cli.ts status', home: s.home });
+  assert.equal(await stopDaemon(s.deps), 0);
+  assert.deepEqual(s.signals, []);
+});
+
+test('systemDescribe reads a FOREMAN_HOME that contains a space', async (t) => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { env: { ...process.env, FOREMAN_HOME: '/x/sp ace/h' }, stdio: 'ignore' });
+  t.after(() => child.kill('SIGKILL'));
+  await new Promise((r) => child.once('spawn', r));
+  assert.equal(systemDescribe(child.pid!)?.home, '/x/sp ace/h');
 });

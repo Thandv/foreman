@@ -31,9 +31,21 @@ export function pidfileHolder(home: string): number {
 
 /** True only for a `foreman serve` process whose home is this one. */
 export function isDaemonFor(info: ProcInfo | undefined, home: string, defaultHome: string): boolean {
-  if (!info) return false;
-  if (!/(^|[\s/])(cli\.ts|foreman)(\s|$)/.test(info.command) || !/(^|\s)serve(\s|$)/.test(info.command)) return false;
-  return path.resolve(info.home ?? defaultHome) === path.resolve(home);
+  if (!info || !isServe(info.command)) return false;
+  return realHome(info.home ?? defaultHome) === realHome(home);
+}
+
+function isServe(command: string): boolean {
+  return /(^|[\s/])(cli\.ts|foreman)(\s|$)/.test(command) && /(^|\s)serve(\s|$)/.test(command);
+}
+
+/** One spelling per directory: a home named through a symlink (/tmp vs /private/tmp) is the same home. */
+function realHome(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 /**
@@ -75,7 +87,7 @@ export function systemDescribe(pid: number): ProcInfo | undefined {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000,
     }).trim();
     if (!out) return undefined;
-    const m = /(?:^|\s)FOREMAN_HOME=(\S+)/.exec(out);
+    const m = /(?:^|\s)FOREMAN_HOME=(.*?)(?=\s+[A-Za-z_][A-Za-z0-9_]*=|$)/.exec(out); // a home may contain spaces
     // Environment entries follow the arguments; the command is everything before the first KEY=value token.
     const command = out.split(/\s+(?=[A-Z_][A-Z0-9_]*=)/)[0] ?? out;
     return { command, home: m?.[1] };
@@ -104,6 +116,13 @@ export async function stopDaemon(deps: StopDeps): Promise<number> {
       return 0;
     }
     if (!Number.isInteger(held)) throw new Error(`unreadable pidfile: ${pidFile}`);
+    // A live holder that may be a daemon (its home could not be matched, or it could not be read) keeps its pidfile:
+    // removing a live daemon's lock would let a second daemon start on this home.
+    const info = deps.alive(held) ? deps.describe(held) : null;
+    if (info !== null && (info === undefined || isServe(info.command))) {
+      deps.err(`pid ${held} in ${pidFile} is alive but is not verified as the daemon for ${deps.home}; not signalling it, pidfile kept\n`);
+      return 1;
+    }
     deps.out(`daemon ${held} was not running; clearing a stale pidfile\n`);
     fs.rmSync(pidFile, { force: true });
     return 0;

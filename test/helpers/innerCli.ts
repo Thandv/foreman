@@ -11,7 +11,11 @@ import { testHome } from '../env.ts';
 // `ready` (the CLI's marker is there), waits for `go`, then lets the CLI finish and exits.
 const ctrl = process.argv[2]!;
 fs.writeFileSync(path.join(ctrl, 'home'), testHome);
-const holder = spawn('sh', ['-c', 'trap "" TERM; exec sleep 60'], { stdio: 'ignore' });
+// It must look like this home's `foreman serve`: `foreman stop` signals nothing else (src/daemonOwner.ts).
+// A node process: macOS ps shows no environment for platform binaries such as sh.
+const holder = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)', 'foreman', 'serve'], {
+  stdio: 'ignore', env: { ...process.env, FOREMAN_HOME: testHome },
+});
 fs.writeFileSync(path.join(testHome, 'daemon.pid'), String(holder.pid));
 const cli = spawn(process.execPath, [path.join(import.meta.dirname, '..', '..', 'src', 'cli.ts'), 'stop'], { env: process.env, stdio: 'ignore' });
 const exited = new Promise<number | null>((r) => cli.on('exit', (code) => r(code)));

@@ -72,8 +72,11 @@ const liveChanges = (before: LiveFrozen): string[] => {
 };
 
 /** A process that ignores SIGTERM, named by `home/daemon.pid`: `foreman stop` against it waits until the test kills it. */
+const HOLD = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)';
 function stubbornDaemon(g: ProcGuard): ChildProcess {
-  const holder = spawn('sh', ['-c', 'trap "" TERM; exec sleep 60'], { stdio: 'ignore' });
+  // It must look like this home's `foreman serve`: `foreman stop` signals nothing else (src/daemonOwner.ts).
+  // A node process: macOS ps shows no environment for platform binaries such as sh.
+  const holder = spawn(process.execPath, ['-e', HOLD, 'foreman', 'serve'], { stdio: 'ignore', env: g.env });
   g.track(holder.pid);
   fs.writeFileSync(path.join(g.home, 'daemon.pid'), String(holder.pid));
   return holder;
