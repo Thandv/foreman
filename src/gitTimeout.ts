@@ -12,9 +12,12 @@ export function gitTimeoutMs(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_GIT_TIMEOUT_MS;
 }
 
-/** The options every git spawn carries (execFile, execFileSync and spawn all take them). */
-export function gitTimeoutOpts(): { timeout: number; killSignal: 'SIGKILL' } {
-  return { timeout: gitTimeoutMs(), killSignal: 'SIGKILL' };
+/**
+ * The options every git spawn carries (execFile, execFileSync and spawn all take them). `capMs` keeps a call's own
+ * shorter limit: a synchronous lookup holds the event loop for as long as git runs.
+ */
+export function gitTimeoutOpts(capMs = Infinity): { timeout: number; killSignal: 'SIGKILL' } {
+  return { timeout: Math.min(capMs, gitTimeoutMs()), killSignal: 'SIGKILL' };
 }
 
 /** The subcommand of a git argv: the first word that is not an option or the value of -c / -C. */

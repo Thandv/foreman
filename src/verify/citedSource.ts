@@ -121,7 +121,7 @@ function listedByGit(dir: string): string[] | null {
     const env: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(process.env)) if (!NOT_INHERITED.test(key)) env[key] = value;
     const raw = execFileSync('git', ['-C', dir, ...PINNED, '--no-optional-locks', 'ls-files', '-z'], {
-      encoding: 'utf8', ...gitTimeoutOpts(), maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8', ...gitTimeoutOpts(5_000), maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
       env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' },
     });
     return raw.split('\0').filter(Boolean);

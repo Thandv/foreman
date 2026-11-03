@@ -76,7 +76,7 @@ function trackedFiles(root: string): string[] {
     const raw = execFileSync('git', ['-C', root, ...PINNED, 'ls-files', '-z'], {
       env: pinnedEnv(),
       encoding: 'utf8',
-      ...gitTimeoutOpts(),
+      ...gitTimeoutOpts(5_000), // synchronous: it holds the event loop
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });

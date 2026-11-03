@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pinnedGit } from '../src/isolate.ts';
-import { gitSubcommand, gitTimeoutMs } from '../src/gitTimeout.ts';
+import { gitSubcommand, gitTimeoutMs, gitTimeoutOpts } from '../src/gitTimeout.ts';
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
@@ -65,4 +65,25 @@ test('FOREMAN_GIT_TIMEOUT_MS falls back to 120000 on empty, non-numeric or non-p
   }
   await withEnv({ FOREMAN_GIT_TIMEOUT_MS: '300' }, async () => assert.equal(gitTimeoutMs(), 300));
   assert.equal(gitSubcommand(['-c', 'core.x=1', '-C', '/p/a/th', '--no-optional-locks', 'ls-files', '-z']), 'ls-files');
+});
+
+test('a call\'s own shorter limit is kept, and FOREMAN_GIT_TIMEOUT_MS still lowers it', async () => {
+  await withEnv({ FOREMAN_GIT_TIMEOUT_MS: '' }, async () => assert.equal(gitTimeoutOpts(5_000).timeout, 5_000));
+  await withEnv({ FOREMAN_GIT_TIMEOUT_MS: '300' }, async () => assert.equal(gitTimeoutOpts(5_000).timeout, 300));
+});
+
+test('every git process src/ starts carries gitTimeoutOpts', () => {
+  const src = path.join(import.meta.dirname, '..', 'src');
+  const bare: string[] = [];
+  for (const rel of fs.readdirSync(src, { recursive: true }) as string[]) {
+    if (!rel.endsWith('.ts')) continue;
+    const text = fs.readFileSync(path.join(src, rel), 'utf8');
+    for (const m of text.matchAll(/\b(?:execFile|execFileSync|spawn|spawnSync|exec|execGit|execBuf)\(\s*'git'/g)) {
+      let depth = 0;
+      let end = m.index + m[0].indexOf('(');
+      do depth += text[end] === '(' ? 1 : text[end] === ')' ? -1 : 0; while (depth > 0 && ++end < text.length);
+      if (!text.slice(m.index, end).includes('gitTimeoutOpts(')) bare.push(`${rel}:${text.slice(0, m.index).split('\n').length}`);
+    }
+  }
+  assert.deepEqual(bare, []);
 });
