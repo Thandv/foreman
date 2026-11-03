@@ -51,6 +51,7 @@ import {
 import { hasRunLease, maxVerifies, verifySlotStats } from './verify/slots.ts';
 import { BACKGROUND_RESUME_PROMPT, backgroundTestPending } from './verify/backgroundRun.ts';
 import { SensitivityViolation, specs } from './models.ts';
+import { freeMb, minFreeMb, type StatfsFn } from './diskSpace.ts';
 import { TERMINAL_STATUSES } from './types.ts';
 import type { CouncilVerdict, Run, Stage, Task, Verdict } from './types.ts';
 
@@ -66,6 +67,8 @@ export interface SchedulerOptions {
   verifyEnabled?: boolean;
   /** Injectable clock for the red-main and dirty-checkout backoffs and the tick-error rate limit. */
   now?: () => number;
+  /** Injectable free-space probe (src/diskSpace.ts); tests use it to fake a full disk. */
+  statfs?: StatfsFn;
   /** Injectable so tests can drive a run's deadline with a clock of their own (src/runClock.ts). */
   runClock?: (budgetMs: number, onExpire: () => void) => RunClock;
   /** Injectable so tests can drive the red-main re-check without a real test run. */
@@ -707,6 +710,11 @@ export class Scheduler {
   private readonly recheckNotBefore = new Map<string, number>();
   /** Edge-tracking, so "paused" and "resumed" are logged once, not per tick. */
   private deferredForLock = false;
+  /** Disk-pause edge: set while dispatch is held for low free space, so the event is one per pause. */
+  private pausedForDisk = false;
+  private readonly statfsFn: StatfsFn | undefined;
+  /** Volumes found low during the current tick (reason text), cleared at the top of each dispatch pass. */
+  private diskLowSeen: string | null = null;
   private ticking = false;
   private stopped = true;
 
@@ -718,6 +726,7 @@ export class Scheduler {
     this.maxVerifying = Math.max(1, opts.maxVerifying ?? config.maxVerifying);
     this.tickMs = opts.tickMs ?? config.schedulerTickMs;
     this.now = opts.now ?? Date.now;
+    this.statfsFn = opts.statfs;
     this.runClockFn = opts.runClock ?? ((budgetMs, onExpire) => new RunClock(budgetMs, onExpire));
     this.checkMainFn = opts.checkMain ?? checkMain;
     this.repoHeadFn = opts.repoHead ?? repoHead;
@@ -971,6 +980,13 @@ export class Scheduler {
       // it happened once for real. Work already running is left alone; only
       // dispatch pauses, so the queue drains the moment the lock frees.
       if (this.deferForLocalModelLock()) return;
+      // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
+      this.diskLowSeen = null;
+      this.diskVolumeCache.clear();
+      if (this.diskLow(config.home)) {
+        this.noteDisk();
+        return;
+      }
       // Only the work lane consumes worker slots.
       const free = this.maxWorkers - this.laneCount('work');
       if (free <= 0) return;
@@ -991,13 +1007,16 @@ export class Scheduler {
         // Never cut a jail from a main that just failed its own tests.
         && !this.store.repoRed(t.repo)
         // Nor from an operator checkout with uncommitted changes: held, not claimed.
-        && !(t.repo && this.dirtyHolds.has(path.resolve(t.repo)));
+        && !(t.repo && this.dirtyHolds.has(path.resolve(t.repo)))
+        // Nor onto a repo volume that is below the free-space floor.
+        && !(t.repo && this.diskLow(path.resolve(t.repo)));
       for (const task of this.store.claimable(free, holding ? { excludeRunner: 'claude-code', usable } : { usable })) {
         if (this.laneCount('work') >= this.maxWorkers) break;
         if (!usable(task)) continue; // changed since the page was read
         if (!this.store.claim(task.id)) continue; // lost the race
         this.launch({ ...task, attempts: task.attempts + 1 });
       }
+      this.noteDisk();
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
       // (It is also never reached while the training lock defers dispatch, or
@@ -2908,6 +2927,33 @@ export class Scheduler {
    * `FOREMAN_IGNORE_TRAINING_LOCK=1` opts out for an operator with the memory
    * headroom to run both — this machine does not, but another might.
    */
+  private readonly diskVolumeCache = new Map<string, boolean>();
+
+  /** True when the volume holding `dir` has less than FOREMAN_MIN_FREE_MB free. Cached per tick. */
+  private diskLow(dir: string): boolean {
+    const cached = this.diskVolumeCache.get(dir);
+    if (cached !== undefined) return cached;
+    const min = minFreeMb();
+    const free = freeMb(dir, this.statfsFn);
+    const low = free !== null && free < min;
+    if (low) this.diskLowSeen ??= `${Math.floor(free)} MB free under ${dir}, need ${min} MB (FOREMAN_MIN_FREE_MB)`;
+    this.diskVolumeCache.set(dir, low);
+    return low;
+  }
+
+  /** Records the disk pause / resume edges: one event per pause, not per tick. */
+  private noteDisk(): void {
+    if (this.diskLowSeen) {
+      if (!this.pausedForDisk) {
+        this.pausedForDisk = true;
+        this.store.record({ type: 'status', message: `dispatch paused: disk — ${this.diskLowSeen}. Running work continues.` });
+      }
+    } else if (this.pausedForDisk) {
+      this.pausedForDisk = false;
+      this.store.record({ type: 'status', message: 'disk space recovered; dispatch resumed' });
+    }
+  }
+
   private deferForLocalModelLock(): boolean {
     if (process.env['FOREMAN_IGNORE_TRAINING_LOCK'] === '1') return false;
     const holder = localModelLockHolder();
