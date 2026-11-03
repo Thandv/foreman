@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -66,7 +66,7 @@ interface Stub {
 
 /** Stand-in for the claude CLI: logs its argv, prints a canned envelope. */
 function stubClaude(body: string): Stub {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-forgecli-'));
+  const dir = scratchDir('foreman-forgecli-');
   const bin = path.join(dir, 'claude');
   const bodyFile = path.join(dir, 'body.json');
   const logFile = path.join(dir, 'argv.log');
@@ -90,7 +90,7 @@ function stubClaude(body: string): Stub {
 }
 
 function withPlaybooks(files: Record<string, string> = {}): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-forgepb-'));
+  const dir = scratchDir('foreman-forgepb-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
   clearPlaybookCache();

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -22,7 +22,7 @@ const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cw
 
 /** `cleanup` removes the temp root; the test calls it only after the scheduler has stopped and the store is closed. */
 function fixture(t: TestContext): { repo: string; seen: () => string[]; cleanup: () => void } {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-agentcfg-w-')));
+  const root = fs.realpathSync(scratchDir('foreman-agentcfg-w-'));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.claude'), { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');

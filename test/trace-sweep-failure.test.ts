@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import { Store } from '../src/queue.ts';
 import { Tracer } from '../src/trace.ts';
 
 function scratch(t: TestContext): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-trace-sweep-'));
+  const dir = scratchDir('foreman-trace-sweep-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

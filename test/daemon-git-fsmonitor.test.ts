@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -13,7 +13,7 @@ import { hermeticGitEnv } from './helpers/git.ts';
 // The three daemon-side git calls outside isolate.ts that read a jail's index (or the repo's, whose config every jail
 // can write): unpinned, each ran the worker's core.fsmonitor once.
 test('a core.fsmonitor planted in the shared config does not run from repoBrief, literals or deps', async (t) => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-fsmonitor-')));
+  const root = fs.realpathSync(scratchDir('foreman-fsmonitor-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = hermeticGitEnv(t);
   const g = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.email=a@b', '-c', 'user.name=n', ...a], { cwd, env, encoding: 'utf8' });

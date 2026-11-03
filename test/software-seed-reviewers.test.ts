@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -38,7 +38,7 @@ function writeSkill(root: string, name: string): void {
 
 /** The repo seed loaded against a fixture skills dir that has all of `names`; fn runs while the env points at it. */
 function withSeed<T>(names: string[], fn: (c: PlaybookCatalog, pb: Playbook) => T): T {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-seed-')));
+  const base = fs.realpathSync(scratchDir('foreman-seed-'));
   const saved = process.env['FOREMAN_SKILLS_DIR'];
   try {
     const root = path.join(base, 'repo');

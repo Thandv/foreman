@@ -1,6 +1,6 @@
 // Review r1 on the decisions ledger: the tree a row calls "landed" is read from what main received, not from a
 // branch name that anything left behind by a run can move after the merge; and a row cannot be replaced.
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -21,7 +21,7 @@ import type { Decision } from '../src/types.ts';
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
 function repo(files: Record<string, string>): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-r1-')));
+  const dir = fs.realpathSync(scratchDir('foreman-ledger-r1-'));
   git(dir, 'init', '-q'); git(dir, 'config', 'user.email', 't@e.x'); git(dir, 'config', 'user.name', 'T');
   for (const [f, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), body);
   git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');

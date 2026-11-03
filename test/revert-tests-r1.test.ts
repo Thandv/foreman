@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -30,7 +30,7 @@ const H = "import test from 'node:test';\nimport assert from 'node:assert/strict
 interface Fx { root: string; repo: string; jail: string; base: string; workRoot: string }
 
 function fixture(t: TestContext, baseTest: string | null = null): Fx {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt1-')));
+  const root = fs.realpathSync(scratchDir('foreman-rt1-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   const jail = path.join(root, 'jail');
@@ -109,7 +109,7 @@ test('a template name with two holes or more has no pattern (it would backtrack 
 test('the daemon\'s event loop is not held by a worker\'s test names (25-hole template, a 40-character name)', T, () => {
   // In a child: the regex this guards against blocks the event loop, so no timer here could fire.
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const child = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt1-redos-')), 'child.ts');
+  const child = path.join(scratchDir('foreman-rt1-redos-'), 'child.ts');
   fs.writeFileSync(child, `
 import ${JSON.stringify(path.join(here, 'env.ts'))};
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { execFileSync } from 'node:child_process';
@@ -151,7 +151,7 @@ const AUTO = `---\n${JSON.stringify({
 }, null, 2)}\n---\n## role: planner\n\nYou plan.\n\n## role: dev\n\nYou build.\n`;
 
 function ownerRig(t: TestContext, reply: string): { store: Store; prompts: () => string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt1-owner-'));
+  const dir = scratchDir('foreman-rt1-owner-');
   fs.writeFileSync(path.join(dir, 'auto.md'), AUTO);
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   clearPlaybookCache();
@@ -216,7 +216,7 @@ test('owner gate, batched: every ticket\'s table is in the batch prompt, and the
 // ------------------------------------------------------------------ in the scheduler: a check that could not run
 
 test('scheduler: a check that could not run as a whole fails, repairs and holds nothing; the reviewer is told', T, async (t) => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt1-sched-')));
+  const repo = fs.realpathSync(scratchDir('foreman-rt1-sched-'));
   removeAfterStops(t, repo);
   sh(repo, 'init', '-q', '-b', 'main');
   sh(repo, 'config', 'user.email', 't@example.com');

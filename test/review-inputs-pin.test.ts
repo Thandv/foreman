@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -76,7 +76,7 @@ const task = (acceptance: string): Task => ({
 } as unknown as Task);
 
 function prompts(): Record<string, string> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pin-pb-'));
+  const dir = scratchDir('foreman-pin-pb-');
   const before = { pb: process.env['FOREMAN_PLAYBOOKS_DIR'], skills: process.env['FOREMAN_SKILLS_DIR'] };
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   delete process.env['FOREMAN_SKILLS_DIR'];

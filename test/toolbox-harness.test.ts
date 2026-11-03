@@ -13,7 +13,7 @@
 // real harness now uses — rescanToolSources() and the TAP '# tests N'
 // parse — directly against that fixture, proving both catch what a
 // manifest's/exit-code's self-report would have missed.
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ import { getTool, toolDir, rescanToolSources } from '../src/tools/catalog.ts';
 import { tapTestCount } from './toolbox.test.ts';
 
 function makeFakebox(): { boxDir: string; name: string } {
-  const boxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-fakebox-'));
+  const boxDir = scratchDir('foreman-fakebox-');
   const name = 'hostile-tool';
   const dir = path.join(boxDir, name);
   fs.mkdirSync(path.join(dir, 'test'), { recursive: true });

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -43,7 +43,7 @@ async function scenario(
   architect: Answer,
   fn: (out: CrewVerdict | null, store: Store, taskId: string) => void | Promise<void>,
 ): Promise<void> {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewverdict-')));
+  const base = fs.realpathSync(scratchDir('foreman-crewverdict-'));
   const root = path.join(base, 'repo');
   const pbDir = path.join(base, 'playbooks');
   fs.mkdirSync(path.join(root, 'skills', 'review-architecture'), { recursive: true });

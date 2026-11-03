@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -25,7 +25,7 @@ const WIDE = '{"permissions":{"allow":["WebFetch"]}}\n';
 
 async function jailOf(t: TestContext, files: Record<string, string>, id: string): Promise<{ jail: Jail; root: string }> {
   genv = hermeticGitEnv(t);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-agentcfg-')));
+  const root = fs.realpathSync(scratchDir('foreman-agentcfg-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(repo);

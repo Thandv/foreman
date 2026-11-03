@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 const seen: string[] = [];
 let dir = '';
 test('removeAfterStops: a dir registered before the stoppers is still there while each of them runs', (t) => {
-  dir = removeAfterStops(t, fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-removal-')));
+  dir = removeAfterStops(t, scratchDir('foreman-removal-'));
   for (const name of ['first', 'second']) {
     stopsFirst(t, async () => {
       await new Promise((r) => setImmediate(r));

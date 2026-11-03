@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +15,7 @@ import {
  * scans, so the line count is the number of admission scans that really ran.
  */
 function friskCounter(t: TestContext): () => number {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cache-frisk-'));
+  const dir = scratchDir('foreman-cache-frisk-');
   const log = path.join(dir, 'calls.log');
   const bin = path.join(dir, 'frisk-scan');
   fs.writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\necho scan >> "${log}"\necho '{"findings":[]}'\n`);
@@ -41,7 +41,7 @@ function edit(file: string, text: string): void {
 
 /** A temp personas dir holding three seed manifests. */
 function personasFixture(t: TestContext): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cache-personas-'));
+  const dir = scratchDir('foreman-cache-personas-');
   const before = process.env['FOREMAN_PERSONAS_DIR'];
   process.env['FOREMAN_PERSONAS_DIR'] = dir;
   t.after(() => {
@@ -135,7 +135,7 @@ test('savePersona clears the cache: a same-size rewrite in the same mtime tick i
 
 /** A temp agents dir holding three definitions: two JSON, one Markdown. */
 function agentsFixture(t: TestContext): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cache-agents-'));
+  const dir = scratchDir('foreman-cache-agents-');
   const before = process.env['FOREMAN_AGENTS_DIR'];
   process.env['FOREMAN_AGENTS_DIR'] = dir;
   t.after(() => {
@@ -244,7 +244,7 @@ const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
  * reports one blocking finding for whatever it is given; `remove` takes it out.
  */
 function scannerSlot(t: TestContext): { install: () => void; remove: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cache-scanner-'));
+  const dir = scratchDir('foreman-cache-scanner-');
   const bin = path.join(dir, 'frisk-scan');
   const before = process.env['PATH'];
   process.env['PATH'] = dir;

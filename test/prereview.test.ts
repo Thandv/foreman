@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -52,7 +52,7 @@ interface Rig {
 
 /** A fake claude CLI that counts every call (the reviewer broker) and always passes. */
 function rig(opts: { onVerify?: (args: VerifyArgs) => void } = {}): Rig {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prereview-'));
+  const dir = scratchDir('foreman-prereview-');
   fs.writeFileSync(path.join(dir, 'solo.md'), SOLO);
   const countFile = path.join(dir, 'calls');
   const bin = path.join(dir, 'claude');
@@ -64,7 +64,7 @@ function rig(opts: { onVerify?: (args: VerifyArgs) => void } = {}): Rig {
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   process.env['FOREMAN_CLAUDE_BIN'] = bin;
   process.env['FOREMAN_CREW_REVIEW'] = 'always';
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prereview-repo-'));
+  const repo = scratchDir('foreman-prereview-repo-');
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: repo, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 't@example.com');
@@ -213,9 +213,9 @@ test('a forbidden-path edit still standing after the pre-review cap fails the ti
 });
 
 test('a DB without tasks.pre_review_repairs reads 0; retry resets the count, reopen keeps it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prereview-db-'));
+  const dir = scratchDir('foreman-prereview-db-');
   const file = path.join(dir, 'f.db');
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prereview-wt-'));
+  const wt = scratchDir('foreman-prereview-wt-');
   try {
     const first = new Store(file);
     const id = first.addTask({ title: 't', prompt: 'p', runner: 'echo' }).id;

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -122,7 +122,7 @@ function grandchildScript(pidFile: string): string {
 }
 
 test('aborting a run kills a descendant that made its own process group', NEEDS_PS, async () => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pt-'));
+  const work = scratchDir('foreman-pt-');
   const pidFile = path.join(work, 'grandchild.pid');
   let gpid = 0;
   try {
@@ -145,7 +145,7 @@ test('aborting a run kills a descendant that made its own process group', NEEDS_
 });
 
 test('killLiveRunGroups (stop / restart recovery) also kills own-group descendants of a recorded run', NEEDS_PS, async () => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pt-'));
+  const work = scratchDir('foreman-pt-');
   const pidFile = path.join(work, 'grandchild.pid');
   const worker = spawn(process.execPath, ['-e', grandchildScript(pidFile)], { detached: true, stdio: 'ignore' });
   worker.unref();
@@ -190,7 +190,7 @@ function trappingScript(pidFile: string, sigFile: string, ignoreTerm: boolean): 
 }
 
 async function abortWithGrandchild(ignoreTerm: boolean): Promise<{ gpid: number; sigFile: string; work: string }> {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pt-'));
+  const work = scratchDir('foreman-pt-');
   const pidFile = path.join(work, 'grandchild.pid');
   const sigFile = path.join(work, 'grandchild.sig');
   const ac = new AbortController();

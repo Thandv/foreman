@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -29,7 +29,7 @@ const FAKE_CLI = [
 
 /** Runs the check on a temp tree holding the fake cli.ts and `files`, then removes the tree. */
 function check(files: Record<string, string>): ReturnType<typeof run> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-opscmds-'));
+  const dir = scratchDir('foreman-opscmds-');
   try {
     for (const [rel, text] of Object.entries({ 'src/cli.ts': FAKE_CLI, ...files })) {
       fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
@@ -61,7 +61,7 @@ test('the ops-commands check passes known commands, subcommands and flags, and i
 });
 
 test('the ops-commands check fails when src/cli.ts cannot be read', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-opscmds-'));
+  const dir = scratchDir('foreman-opscmds-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   assert.equal(run(dir).status, 1);
 });
@@ -77,7 +77,7 @@ test('the ops-commands check starts no process and reads no FOREMAN_HOME', () =>
 });
 
 test('the command names parsed from src/cli.ts are exactly the commands the real `foreman help` names', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-opshome-'));
+  const home = scratchDir('foreman-opshome-');
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli.ts'), 'help'], {
     cwd: root, encoding: 'utf8', env: { ...process.env, FOREMAN_HOME: home, FOREMAN_RUN_ID: '' },

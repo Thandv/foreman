@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -208,7 +208,7 @@ test('forbiddenPaths round-trips plan -> Store -> Task', () => {
 });
 
 test('a DB created without tasks.forbidden_paths migrates, opens and reads null', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-scope-'));
+  const dir = scratchDir('foreman-scope-');
   const file = path.join(dir, 'f.db');
   try {
     const first = new Store(file);

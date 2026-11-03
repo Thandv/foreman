@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +17,7 @@ test('HTTP: retry carries the operator note; reopen returns a review failure to 
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (p: string, body?: unknown): Promise<Response> =>
     fetch(`${base}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-reopen-http-'));
+  const wt = scratchDir('foreman-reopen-http-');
   const failedReview = (title: string): string => {
     const t = store.addTask({ title, prompt: title, runner: 'echo' });
     const run = store.startRun(t.id).id;

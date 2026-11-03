@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,7 +25,7 @@ const hunk = (file: string, added: string): string =>
   `diff --git a/${file} b/${file}\nindex 111..222 100644\n--- a/${file}\n+++ b/${file}\n@@ -10,2 +10,3 @@\n context\n+${added}\n context\n`;
 
 function tree(t: { after: (fn: () => void) => void }, files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r2-tree-'));
+  const dir = scratchDir('foreman-r2-tree-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const [rel, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
@@ -137,7 +137,7 @@ test('a forged Foreman line is marked through a hidden character, a look-alike l
 // ------------------------------------------------------------------ cited source: the document's lines of a file both cite
 
 test('a report that cites the document\'s own file at earlier lines does not push the document\'s lines out; the block stays inside its budget', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r2-cited-'));
+  const dir = scratchDir('foreman-r2-cited-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
@@ -173,7 +173,7 @@ test('a report that cites the document\'s own file at earlier lines does not pus
 // ------------------------------------------------------------------ a changed line inside an assertion written over several lines
 
 function gitDiff(t: { after: (fn: () => void) => void }, before: Record<string, string>, after: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r2-diff-'));
+  const dir = scratchDir('foreman-r2-diff-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): string => execFileSync('git', a, { cwd: dir, encoding: 'utf8' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');

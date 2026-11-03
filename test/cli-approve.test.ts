@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -195,7 +195,7 @@ test('CLI approve: the NOT MERGED line fires on what mergeApproved itself answer
   const { execFileSync } = await import('node:child_process');
   const fs = await import('node:fs');
   const os = await import('node:os');
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-notmerged-'));
+  const repo = scratchDir('foreman-notmerged-');
   execFileSync('git', ['init', '-q', repo]);
   try {
     const task = { id: 't_x', status: 'done', kind: 'writing', repo, mergeOnApprove: false, allowCore: false };

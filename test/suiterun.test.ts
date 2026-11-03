@@ -1,6 +1,6 @@
 // A worker's own suite run through the slot wrapper: one per ticket at a time, its whole output saved, its wait
 // said out loud (trial finding F28).
-import { testHome } from './env.ts';
+import { testHome, scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -63,7 +63,7 @@ function scratch(): {
   cmd: (opts?: { lines?: number; width?: number; exit?: number; hold?: boolean; tap?: boolean; tag?: string }) => string;
   starts: () => number[]; printedBytes: (tag?: string) => number; finished: (tag?: string) => boolean;
 } {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-suiterun-')));
+  const root = fs.realpathSync(scratchDir('foreman-suiterun-'));
   const work = path.join(root, 'work');
   const tmp = path.join(root, 'tmp');
   fs.mkdirSync(work);

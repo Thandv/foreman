@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,7 +27,7 @@ function withLocalOnly<T>(on: boolean, fn: () => T): T {
 }
 
 function playbookFrom(body: string): { pb: Playbook | undefined; refused: string[] } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cards-'));
+  const dir = scratchDir('foreman-cards-');
   const fm = {
     id: 'cards', description: 'cards', triggers: ['cards'],
     roles: { dev: { tier: 'worker' }, senior: { tier: 'senior' } },

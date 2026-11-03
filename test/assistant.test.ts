@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -81,9 +81,9 @@ test('a needed tool becomes a build node the work depends on', async () => {
 });
 
 test('an existing tool is reused instead of rebuilt', async () => {
-  const catalog = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-plancat-'));
+  const catalog = scratchDir('foreman-plancat-');
   process.env['FOREMAN_TOOLS_DIR'] = catalog;
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-plansrc-'));
+  const src = scratchDir('foreman-plansrc-');
   fs.writeFileSync(path.join(src, 'manifest.json'), JSON.stringify({
     name: 'csv-pivot', description: 'pivots a csv into an xlsx', runtime: 'node', entry: 'tool.js',
   }));

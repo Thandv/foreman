@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -19,7 +19,7 @@ const DAY = 86_400_000;
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
 function repo(files: Record<string, string> = { 'a.txt': 'one\n' }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-life-')));
+  const dir = fs.realpathSync(scratchDir('foreman-life-'));
   git(dir, 'init', '-q'); git(dir, 'config', 'user.email', 't@e.x'); git(dir, 'config', 'user.name', 'T');
   for (const [f, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), body);
   git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
@@ -157,7 +157,7 @@ test('the sweep never touches a task whose merge is landing, nor one done less t
 test('the sweep removes nothing outside the work root, no unarchived rejected task, and at most `limit` dirs', async () => {
   const dir = repo();
   const store = new Store(':memory:');
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-outside-'));
+  const outside = scratchDir('foreman-outside-');
   try {
     // A run row pointing outside the work root (no repo, so no git check stands in front of the guard).
     const loose = store.addTask({ title: 'loose', prompt: 'p', runner: 'echo' });
@@ -306,7 +306,7 @@ test('a paused scheduler claims nothing (a shutdown before its approvals drain)'
 // ---------------------------------------------------------------- C3 traces
 
 function traceDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-traces-'));
+  return scratchDir('foreman-traces-');
 }
 const lines = (file: string): string[] =>
   fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : [];

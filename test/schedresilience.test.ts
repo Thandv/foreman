@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,7 +25,7 @@ test('the red-main backoff is 10, 30, 60 minutes, then hourly', () => {
 });
 
 test('a red main is re-checked at the same HEAD on a backoff, and its red state survives a restart', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-red-'));
+  const dir = scratchDir('foreman-red-');
   const dbFile = path.join(dir, 'foreman.db');
   const repo = path.join(dir, 'repo');
   let now = 1_700_000_000_000;
@@ -111,7 +111,7 @@ test('a failing tick is recorded once, rate-limited, and the next tick still dis
 // ------------------------------------------------- held tickets never starve other repos
 
 async function dispatchesPastHeld(hold: (sched: Scheduler, store: Store, repo: string) => void): Promise<void> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-starve-'));
+  const dir = scratchDir('foreman-starve-');
   const repo = path.join(dir, 'held-repo');
   const now = 1_700_000_000_000;
   const store = new Store(':memory:');
@@ -150,7 +150,7 @@ test('a red repo\'s ticket at the front of the queue does not starve another rep
 
 /** A red repo whose same-HEAD re-check is due, with a checkMain the test resolves by hand. */
 async function racingRecheck(outcome: boolean, body: (store: Store, repo: string) => void): Promise<void> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-redrace-'));
+  const dir = scratchDir('foreman-redrace-');
   const repo = path.join(dir, 'repo');
   const now = 1_700_000_000_000;
   let release!: (c: MainCheck) => void;
@@ -192,7 +192,7 @@ test('a failing re-check of an older HEAD does not overwrite a newer red record'
   }));
 
 test('the speculative same-HEAD re-check waits for a free verify slot', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-redslot-'));
+  const dir = scratchDir('foreman-redslot-');
   const repo = path.join(dir, 'repo');
   let now = 1_700_000_000_000;
   let calls = 0;
@@ -227,7 +227,7 @@ test('the speculative same-HEAD re-check waits for a free verify slot', async ()
 });
 
 test('re-marking a repo that is already red does not make its re-check due at once', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-remark-'));
+  const dir = scratchDir('foreman-remark-');
   const repo = path.join(dir, 'repo');
   let calls = 0;
   const checkMain = async (): Promise<MainCheck> => {
@@ -254,7 +254,7 @@ test('re-marking a repo that is already red does not make its re-check due at on
 // ------------------------------------------------- dirty-checkout holds
 
 function cleanRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-clean-'));
+  const dir = scratchDir('foreman-clean-');
   const git = (...args: string[]): void => void execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 't@example.com');
@@ -285,7 +285,7 @@ test('six runs failing dirty together are one hold, probed on the first 30s back
 });
 
 test('a dirty-checkout probe that errors keeps the hold rather than releasing it', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-probeerr-'));
+  const dir = scratchDir('foreman-probeerr-');
   const repo = path.join(dir, 'gone'); // git cannot even start here
   let now = 1_700_000_000_000;
   const store = new Store(':memory:');
@@ -333,7 +333,7 @@ test('a probe still running at stop() and store close raises no unhandled reject
 });
 
 test('a red re-check whose checkMain throws backs off instead of retrying every window', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-redthrow-'));
+  const dir = scratchDir('foreman-redthrow-');
   const repo = path.join(dir, 'repo');
   let now = 1_700_000_000_000;
   let calls = 0;
@@ -384,7 +384,7 @@ test('a ticket with no test command is detected at run time from its jail, and t
 });
 
 test('a throwing re-check after HEAD moved also backs off (the observed HEAD is recorded)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-redthrow2-'));
+  const dir = scratchDir('foreman-redthrow2-');
   const repo = path.join(dir, 'repo');
   let now = 1_700_000_000_000;
   let calls = 0;
@@ -411,7 +411,7 @@ test('a throwing re-check after HEAD moved also backs off (the observed HEAD is 
 });
 
 test('a throwing re-check at a moved HEAD starts the backoff over: it waits redBackoffMs(1), not a longer step', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-redthrow3-'));
+  const dir = scratchDir('foreman-redthrow3-');
   const repo = path.join(dir, 'repo');
   let now = 1_700_000_000_000;
   let calls = 0;

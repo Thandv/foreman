@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -29,7 +29,7 @@ interface Proc {
 
 /** A fresh fixture /proc holding `procs`, plus the entries a real one has that are not processes. */
 function procTree(procs: Proc[]): string {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-proc-')));
+  const root = fs.realpathSync(scratchDir('foreman-proc-'));
   for (const d of ['self', 'net', 'sys']) fs.mkdirSync(path.join(root, d));
   fs.writeFileSync(path.join(root, 'uptime'), '1000.00 900.00\n');
   setProcs(root, procs);

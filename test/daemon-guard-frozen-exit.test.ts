@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,7 +26,7 @@ function stat(pid: number): string {
 
 /** A shell loop that ignores TERM, in its own group (the shell that started it exits at once): the leftover to freeze. */
 async function leftover(t: TestContext): Promise<{ pid: number; group: number; work: string }> {
-  const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-gfx-')));
+  const work = fs.realpathSync(scratchDir('foreman-gfx-'));
   const pidFile = path.join(work, 'left.pid');
   const loop = path.join(work, 'loop.sh');
   fs.writeFileSync(loop, `trap '' TERM\necho $$ > '${pidFile}'\nwhile :; do sleep 0.2; done\n`);

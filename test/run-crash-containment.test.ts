@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { after, before, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -75,7 +75,7 @@ function failRecord(t: TestContext, store: Store, when: (e: Parameters<Store['re
 }
 
 function fakeClaude(t: TestContext, body: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crash-claude-'));
+  const dir = scratchDir('foreman-crash-claude-');
   removeAfterStops(t, dir);
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in --version) echo "2.1.0 (Claude Code)"; exit 0;; esac\necho "${body}"\nexit 1\n`);

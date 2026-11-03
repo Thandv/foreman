@@ -1,4 +1,4 @@
-import { testHome } from './env.ts';
+import { testHome, scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -1092,7 +1092,7 @@ test('read-only: the ledger is read through a connection that cannot write it, a
 
 test('read-only: a ledger this binary would migrate is debriefed without being touched, and a missing one is not created', () => {
   const cli = path.join(config.sourceRoot, 'src', 'cli.ts');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-old-'));
+  const home = scratchDir('foreman-debrief-old-');
   try {
     const db = path.join(home, 'foreman.db');
     store.db.exec(`VACUUM INTO '${db.replaceAll("'", "''")}'`);
@@ -1111,7 +1111,7 @@ test('read-only: a ledger this binary would migrate is debriefed without being t
     assert.deepEqual(left.filter((n) => n !== 'frozen'), ['debriefs', 'foreman.db'], 'nothing was created beside it but the debriefs directory');
     assert.equal(execFileSync('sqlite3', [db, "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = 'assignee'"], { encoding: 'utf8' }).trim(), '0', 'not migrated');
 
-    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-none-'));
+    const empty = scratchDir('foreman-debrief-none-');
     try {
       assert.throws(
         () => execFileSync(process.execPath, [cli, 'debrief', epic.id, '--no-model'], { env: { ...process.env, FOREMAN_HOME: empty }, encoding: 'utf8', stdio: 'pipe' }),
@@ -1190,8 +1190,8 @@ test('markdown: text Foreman did not write cannot forge a heading, a link, an im
 });
 
 test('output: a debriefs directory that is a link is refused, a link standing where a report goes is replaced and never written through', async () => {
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-else-'));
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-out-'));
+  const elsewhere = scratchDir('foreman-debrief-else-');
+  const out = scratchDir('foreman-debrief-out-');
   try {
     const precious = path.join(elsewhere, 'precious.txt');
     fs.writeFileSync(precious, 'PRECIOUS');
@@ -1359,7 +1359,7 @@ function ledgerContent(file: string): { schema: string; tables: Record<string, s
 }
 
 test('receipt: a debrief with a model call adds one receipts row to the ledger and changes nothing else in it, schema included', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-receipt-'));
+  const home = scratchDir('foreman-debrief-receipt-');
   try {
     const file = path.join(home, 'foreman.db');
     store.db.exec(`VACUUM INTO '${file.replaceAll("'", "''")}'`);
@@ -1425,7 +1425,7 @@ test('receipt: a debrief with a model call adds one receipts row to the ledger a
 });
 
 test('output: a debriefs directory that is a link is refused before any model is called', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debrief-link-'));
+  const home = scratchDir('foreman-debrief-link-');
   try {
     fs.mkdirSync(path.join(home, 'elsewhere'));
     fs.symlinkSync(path.join(home, 'elsewhere'), path.join(home, 'debriefs'));

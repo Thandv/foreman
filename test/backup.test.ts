@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -30,7 +30,7 @@ const TABLES = { memory: 5, receipts: 7, verdicts: 3 } as const;
 
 /** A scratch folder removed when the test ends, pass or fail. */
 function scratch(t: TestContext): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-backup-'));
+  const dir = scratchDir('foreman-backup-');
   return removeAfterStops(t, dir);
 }
 

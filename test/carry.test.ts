@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -9,7 +9,7 @@ import { carryDiff, createJail, diffJail, jailTree } from '../src/isolate.ts';
 import type { Task } from '../src/types.ts';
 
 function repo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-carry-'));
+  const dir = scratchDir('foreman-carry-');
   const g = (...a: string[]): void => { execFileSync('git', a, { cwd: dir, stdio: 'ignore' }); };
   g('init', '-q'); g('config', 'user.email', 't@e.x'); g('config', 'user.name', 'T');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\ntwo\nthree\n');

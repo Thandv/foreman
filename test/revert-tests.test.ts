@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -40,7 +40,7 @@ function write(dir: string, files: Record<string, string>): void {
 }
 
 function fixture(t: TestContext, base: Record<string, string> = {}, script = 'node --test "test/*.test.js"'): Fixture {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt-')));
+  const root = fs.realpathSync(scratchDir('foreman-rt-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   const jail = path.join(root, 'jail');
@@ -461,7 +461,7 @@ test('parseTap: nesting, directives, a block-scalar error, escaped names', () =>
 // ------------------------------------------------------------------ the runner's two new answers (verify/tests.ts)
 
 test('runTests: a shorter per-command limit kills the command and says so; a longer one is not honoured; a refused sandbox says refused', T, async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rt-run-'));
+  const dir = scratchDir('foreman-rt-run-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const signal = new AbortController().signal;
   const slow = await runTests(dir, 'sleep 60', signal, undefined, undefined, { timeoutMs: 500 });

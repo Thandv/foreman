@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -20,7 +20,7 @@ import { routerModel } from '../src/assistant/crewPlan.ts';
 
 /** A fake `claude` that answers `auth status --json` with the given body (or exits with `code`). */
 function fakeCli(body: string, code = 0): { bin: string; dir: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cloudmode-'));
+  const dir = scratchDir('foreman-cloudmode-');
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(bin, `#!/bin/sh\ncat <<'EOF'\n${body}\nEOF\nexit ${code}\n`);
   fs.chmodSync(bin, 0o755);
@@ -90,7 +90,7 @@ test('auto: a signed-out CLI reroutes Claude-dependent work locally — and is N
 
 test('auto: "loggedIn:true" alone never clears a down state — only a call that works does', async () => {
   // Measured: the CLI reports loggedIn:true for a garbage key or OAuth token.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cloudmode-'));
+  const dir = scratchDir('foreman-cloudmode-');
   const bin = path.join(dir, 'claude');
   const okFile = path.join(dir, 'calls-work');
   fs.writeFileSync(
@@ -160,7 +160,7 @@ test('auto: a held flood cannot starve the work behind it', async () => {
 });
 
 test('auto: an unreadable status line cannot hold the fallback forever — a real call decides', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cloudmode-'));
+  const dir = scratchDir('foreman-cloudmode-');
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(
     bin,
@@ -182,7 +182,7 @@ test('auto: an unreadable status line cannot hold the fallback forever — a rea
 });
 
 test('auto: overlapping probes share one confirmation call', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cloudmode-'));
+  const dir = scratchDir('foreman-cloudmode-');
   const bin = path.join(dir, 'claude');
   const log = path.join(dir, 'calls');
   fs.writeFileSync(
@@ -206,7 +206,7 @@ test('auto: overlapping probes share one confirmation call', async () => {
 });
 
 test('off: nothing is probed and no confirmation calls are spent', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cloudmode-'));
+  const dir = scratchDir('foreman-cloudmode-');
   const bin = path.join(dir, 'claude');
   const log = path.join(dir, 'calls');
   fs.writeFileSync(bin, `#!/bin/sh\necho "$1" >> "${log}"\necho '{"loggedIn": true}'\n`);
@@ -373,7 +373,7 @@ test('a worker refused by the provider usage limit is held and requeued, not fai
   const prevBackoff = process.env['FOREMAN_LIMIT_BACKOFF_MS'];
   process.env['FOREMAN_LIMIT_BACKOFF_MS'] = '60000';
   // Like the real CLI at its limit: --version still answers, real work is refused.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-limit-'));
+  const dir = scratchDir('foreman-limit-');
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in --version) echo "2.1.0 (Claude Code)"; exit 0;; esac\necho "You've hit your session limit · resets 4:30pm (Europe/London)"\nexit 1\n`);
   fs.chmodSync(bin, 0o755);

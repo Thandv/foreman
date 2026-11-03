@@ -1,6 +1,6 @@
 // The ledger's own records of what `foreman debrief` used to guess: one `decisions` row per approve / reject /
 // cancel / retry / reopen, a `decision` line on the timeline, and what a run records about itself when it ends.
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -41,7 +41,7 @@ async function until(cond: () => boolean, what: string, ms = 120_000): Promise<v
 }
 
 function repo(files: Record<string, string>): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-')));
+  const dir = fs.realpathSync(scratchDir('foreman-ledger-'));
   git(dir, 'init', '-q'); git(dir, 'config', 'user.email', 't@e.x'); git(dir, 'config', 'user.name', 'T');
   for (const [f, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), body);
   git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
@@ -381,7 +381,7 @@ test('a retry writes one row, with its note and with the skills it was given', (
 
 test('a reopen writes one row with its note', () => {
   const store = new Store(':memory:');
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-reopen-'));
+  const work = scratchDir('foreman-reopen-');
   try {
     const task = store.addTask({ title: 'failed review', prompt: 'p', runner: 'echo' });
     const run = store.startRun(task.id);
@@ -417,11 +417,11 @@ const AUTO = `---\n${JSON.stringify({
 
 /** A stand-in claude CLI that answers the owner gate with `reply`, and a playbook whose gate is the owner's. */
 function ownerRig(decision: string, rationale: string): { cleanup: () => void } {
-  const pbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-pb-'));
+  const pbDir = scratchDir('foreman-ledger-pb-');
   fs.writeFileSync(path.join(pbDir, 'auto.md'), AUTO);
   process.env['FOREMAN_PLAYBOOKS_DIR'] = pbDir;
   clearPlaybookCache();
-  const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-cli-'));
+  const cliDir = scratchDir('foreman-ledger-cli-');
   const bin = path.join(cliDir, 'claude');
   const body = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.05, result: JSON.stringify({ decision, rationale }) });
   fs.writeFileSync(path.join(cliDir, 'body'), body);
@@ -606,7 +606,7 @@ test('the decision and skills events survive the end-of-run prune that drops ord
 
 /** A stand-in `claude` that records its `-p` prompt, replays `transcript` and exits with `code`. */
 function fakeClaude(transcript: string[], code: number, opts: { block?: boolean } = {}): { dir: string; bin: string; prompt: () => string; release: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-claude-'));
+  const dir = scratchDir('foreman-ledger-claude-');
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(path.join(dir, 'transcript'), transcript.map((l) => `${l}\n`).join(''));
   fs.writeFileSync(bin, [
@@ -723,7 +723,7 @@ test('a claude-code run that stops on its turn ceiling records turn-ceiling and 
 });
 
 test('a claude-code run refused by the provider limit records provider-limit', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-limit-'));
+  const dir = scratchDir('foreman-ledger-limit-');
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in --version) echo "2.1.0 (Claude Code)"; exit 0;; esac\necho "You've hit your session limit · resets 4:30pm (Europe/London)"\nexit 1\n`);
   fs.chmodSync(bin, 0o755);
@@ -905,7 +905,7 @@ function toBaseSchema(file: string): void {
 }
 
 test('a base-schema ledger gains the table and the columns once, keeps its rows, and base-era statements still run on it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-db-'));
+  const dir = scratchDir('foreman-ledger-db-');
   const file = path.join(dir, 'f.db');
   const schema = (): { tables: string[]; runCols: string[]; triggers: string[] } => {
     const raw = new DatabaseSync(file);
@@ -1051,7 +1051,7 @@ test('a malformed value on the approve route is a 400 and nothing is decided', a
 
 test('a body that cannot be read is a 400 on approve, retry and reopen: nothing is done without what the caller sent (a cancel goes ahead)', async () => {
   const h = await harness();
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-reopen-'));
+  const work = scratchDir('foreman-ledger-reopen-');
   try {
     const broken = '{"note": "the checks passed", "corrected": tru';
     const approve = parked(h.store).task;
@@ -1140,7 +1140,7 @@ test('a body that cannot be read is a 400 on approve, retry and reopen: nothing 
 
 /** A fixture ledger on disk with every kind of row, and a copy of it taken back to main's schema. */
 function debriefFixture(): { dir: string; withRows: string; without: string; ids: Record<string, string>; epic: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ledger-debrief-'));
+  const dir = scratchDir('foreman-ledger-debrief-');
   const withRows = path.join(dir, 'with.db');
   const store = new Store(withRows);
   const epic = store.addTask({ title: 'the epic', prompt: 'ship it', runner: 'echo', isEpic: true });

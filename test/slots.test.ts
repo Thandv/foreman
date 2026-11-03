@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -109,7 +109,7 @@ test('an aborted holder releases its slot and an aborted waiter leaves the queue
 // ------------------------------------------------------- scheduler integration
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slots-repo-'));
+  const dir = scratchDir('foreman-slots-repo-');
   const git = (...args: string[]): void => void execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 'test@example.com');
@@ -154,7 +154,7 @@ test('a gate check takes a slot, and the run records the time it waited as verif
 
 test('a crew test gate (a playbook check) takes a slot', () =>
   withCap('1', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slots-pb-'));
+    const dir = scratchDir('foreman-slots-pb-');
     process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
     const fm = {
       id: 'slots-pb', description: 'one check', triggers: ['x'],
@@ -216,7 +216,7 @@ test('the post-merge check and its re-run each take a slot', () =>
   }));
 
 test('a DB created without runs.verify_wait_ms migrates, opens and reads 0', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slots-db-'));
+  const dir = scratchDir('foreman-slots-db-');
   const file = path.join(dir, 'f.db');
   try {
     const first = new Store(file);

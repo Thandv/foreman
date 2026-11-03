@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,7 +26,7 @@ const RAN = '✖ greets the world (1.2ms)\nℹ tests 3\nℹ pass 2\nℹ fail 1\n
 const DID_NOT_LOAD = '✖ test/x.test.js (30ms)\nℹ tests 1\nℹ pass 0\nℹ fail 1\n\n✖ failing tests:\n\ntest at test/x.test.js:1:1\n✖ test/x.test.js (30ms)\n  \'test failed\'\n';
 
 async function check(t: TestContext, flags: string, output: string): Promise<{ res: Awaited<ReturnType<typeof revertCheck>>; cmd: string }> {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revert-reporters-')));
+  const root = fs.realpathSync(scratchDir('foreman-revert-reporters-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   const jail = path.join(root, 'jail');

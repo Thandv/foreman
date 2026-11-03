@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,7 +25,7 @@ test('demandedLiterals pulls every scanned string from a critique, in each quote
 });
 
 function repo(files: Record<string, string>, untracked: Record<string, string> = {}): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-literals-'));
+  const dir = scratchDir('foreman-literals-');
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 't@example.com');
@@ -62,7 +62,7 @@ test('a demanded string that only a test file contains is still ungrounded; the 
 });
 
 test('no claim about a tree that cannot be listed, and none when nothing is demanded', () => {
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-literals-nogit-'));
+  const plain = scratchDir('foreman-literals-nogit-');
   try {
     assert.deepEqual(ungroundedLiterals("includes('anything at all')", plain), []);
     assert.deepEqual(ungroundedLiterals('prose only', plain), []);

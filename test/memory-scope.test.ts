@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import { Store } from '../src/queue.ts';
 import { relevantFacts } from '../src/assistant/memory.ts';
 
 function scratch(): { store: Store; done: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-memscope-'));
+  const dir = scratchDir('foreman-memscope-');
   const store = new Store(path.join(dir, 'foreman.db'));
   return { store, done: () => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }

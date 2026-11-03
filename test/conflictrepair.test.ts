@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -15,7 +15,7 @@ import type { Run, Task } from '../src/types.ts';
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
 function repo(files: Record<string, string | Buffer>): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-conflict-')));
+  const dir = fs.realpathSync(scratchDir('foreman-conflict-'));
   git(dir, 'init', '-q'); git(dir, 'config', 'user.email', 't@e.x'); git(dir, 'config', 'user.name', 'T');
   for (const [f, body] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
@@ -63,7 +63,7 @@ const HAND_MERGE = /approved, but not landed: merge conflict, aborted — resolv
 const setup = (files: Record<string, string | Buffer> = { 'a.txt': 'l1\nl2\nl3\n' }, selfRoot?: string) => {
   process.env['FOREMAN_POSTMERGE_CHECK'] = 'off';
   const dir = repo(files);
-  const seen = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-seen-'));
+  const seen = scratchDir('foreman-seen-');
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, ...(selfRoot ? { selfRoot: selfRoot === 'repo' ? dir : selfRoot } : {}) });
   return { dir, seen, store, sched };

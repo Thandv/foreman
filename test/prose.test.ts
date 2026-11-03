@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -595,7 +595,7 @@ test('CLI: foreman prose import splits a manuscript into chapter files and refus
 // ============================================== playbooks.ts (proseAudit)
 
 function withPlaybookDir(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prose-playbooks-'));
+  const dir = scratchDir('foreman-prose-playbooks-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, contents] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), contents);
   clearPlaybookCache();
@@ -658,7 +658,7 @@ test('loadPlaybooks: proseAudit parses true, and defaults false when the key is 
  * manuscript in it names a non-prose seed instead.
  */
 function fixtureRepo(files: Record<string, string> = {}, seed = 'README.md'): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prose-repo-'));
+  const dir = scratchDir('foreman-prose-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };

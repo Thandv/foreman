@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -374,7 +374,7 @@ test('the cap is at most grace + 5 s, and an overrun or a throw is logged and re
  * `prepare` gets the home first. Resolves with its output up to "foreman up".
  */
 async function serveWith(t: TestContext, fault: string | null, prepare: (home: string) => void = () => {}): Promise<string> {
-  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-sweep-serve-')));
+  const parent = fs.realpathSync(scratchDir('foreman-sweep-serve-'));
   const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
   prepare(path.join(parent, 'home'));
   const env: NodeJS.ProcessEnv = {

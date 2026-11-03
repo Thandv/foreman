@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -282,7 +282,7 @@ test('POST /api/prose/audit audits a directory and 400s on anything else', async
   assert.equal(missing.status, 400);
   assert.match((await missing.json()).error, /no such directory/);
 
-  const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-prose-')), 'one.md');
+  const filePath = path.join(scratchDir('foreman-prose-'), 'one.md');
   fs.writeFileSync(filePath, 'a file, not a directory');
   const notDir = await post({ dir: filePath });
   assert.equal(notDir.status, 400);

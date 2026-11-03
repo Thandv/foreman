@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +21,7 @@ async function run(replies: (n: number) => Record<string, unknown> | string): Pr
   calls: number;
   sent: Msg[][];
 }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-apiloop-'));
+  const dir = scratchDir('foreman-apiloop-');
   fs.writeFileSync(path.join(dir, 'README.md'), 'hello\n');
   const store = new Store(':memory:');
   const sent: Msg[][] = [];

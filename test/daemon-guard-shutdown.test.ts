@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import assert from 'node:assert/strict';
@@ -19,7 +19,7 @@ async function until(cond: () => boolean, ms: number): Promise<boolean> {
 }
 
 function serveWith(t: TestContext, inject: string) {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-guard-')));
+  const home = fs.realpathSync(scratchDir('foreman-guard-'));
   removeAfterStops(t, home);
   const marker = path.join(home, 'exit-marker');
   const env = {

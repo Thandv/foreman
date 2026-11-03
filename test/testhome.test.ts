@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import { runTests } from '../src/verify/tests.ts';
 
 /** Point process.env.HOME at a fake "real home" for the duration, so nothing touches the operator's. */
 function withFakeHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-realhome-'));
+  const fake = scratchDir('foreman-realhome-');
   fs.writeFileSync(path.join(fake, '.gitconfig'), '[user]\n\tname = Op\n\temail = op@example.com\n');
   const saved = process.env['HOME'];
   process.env['HOME'] = fake;
@@ -22,7 +22,7 @@ function withFakeHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
 
 test('a test stage writing to ~ lands in a throwaway home, never the operator\'s, and keeps the git identity', async () => {
   await withFakeHome(async (real) => {
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-th-work-'));
+    const work = scratchDir('foreman-th-work-');
     const cmd = `mkdir -p "$HOME/Sample Projects/guard-made" && echo "home=$HOME" && node -e "console.log('homedir='+require('os').homedir())" && git config --global user.name && echo "xdg=$XDG_CONFIG_HOME"`;
     const r = await runTests(work, cmd, new AbortController().signal);
     assert.equal(r.passed, true, r.output);
@@ -91,7 +91,7 @@ function running(pid: number): boolean {
 test('a test command that never exits is killed at FOREMAN_TEST_TIMEOUT_MIN and fails saying so', async () => {
   const saved = process.env['FOREMAN_TEST_TIMEOUT_MIN'];
   process.env['FOREMAN_TEST_TIMEOUT_MIN'] = '0.01'; // 600 ms
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-to-work-'));
+  const work = scratchDir('foreman-to-work-');
   const pidFile = path.join(work, 'grandchild.pid');
   try {
     const started = Date.now();
@@ -112,7 +112,7 @@ test('a test command that never exits is killed at FOREMAN_TEST_TIMEOUT_MIN and 
 });
 
 test('an aborted run is not reported as a timeout', async () => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-to-work-'));
+  const work = scratchDir('foreman-to-work-');
   const ac = new AbortController();
   setTimeout(() => ac.abort(), 200);
   const r = await runTests(work, 'sleep 30', ac.signal);
@@ -123,7 +123,7 @@ test('an aborted run is not reported as a timeout', async () => {
 
 /** Point TMPDIR (what os.tmpdir() and the isolated home follow) at a fresh dir, so leaks can be counted. */
 async function withFakeTmp<T>(fn: (tmp: string) => Promise<T>): Promise<T> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-faketmp-'));
+  const tmp = scratchDir('foreman-faketmp-');
   const saved = process.env['TMPDIR'];
   process.env['TMPDIR'] = tmp;
   try {
@@ -136,7 +136,7 @@ async function withFakeTmp<T>(fn: (tmp: string) => Promise<T>): Promise<T> {
 }
 
 test('a test command\'s temp files land in the isolated home and leave nothing in the real temp dir', async () => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-th-work-'));
+  const work = scratchDir('foreman-th-work-');
   try {
     await withFakeTmp(async (tmp) => {
       // macOS /usr/bin/mktemp ignores TMPDIR without a template (it asks confstr), so the
@@ -167,12 +167,14 @@ test('a spawn error still removes the isolated home', async () => {
 });
 
 test('the per-run TMPDIR stays short: a unix socket a few levels under it can still listen', async () => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-th-work-'));
+  const work = scratchDir('foreman-th-work-');
   try {
-    // A project's race-test shape: <TMPDIR>/app-race-XXXXXX/proj/sub/s.sock. macOS caps the path at 104 bytes.
+    // A project's race-test shape: <TMPDIR>/r-XXXXXX/proj/sub/s.sock. macOS caps the path at 104 bytes. The dir name is
+    // short because this test itself runs under verify's fresh TMPDIR (scripts/verify.sh), one level deeper than the
+    // user's: the TMPDIR-adds-at-most-10 assertion below is what guards the length, not the project's dir name.
     const script =
       "const p=require('path'),fs=require('fs'),os=require('os'),net=require('net');" +
-      "const d=fs.mkdtempSync(p.join(os.tmpdir(),'app-race-'));fs.mkdirSync(p.join(d,'proj','sub'),{recursive:true});" +
+      "const d=fs.mkdtempSync(p.join(os.tmpdir(),'r-'));fs.mkdirSync(p.join(d,'proj','sub'),{recursive:true});" +
       "const s=net.createServer();s.on('error',e=>{console.log('listen-error '+e.code);process.exit(1)});" +
       "s.listen(p.join(d,'proj','sub','s.sock'),()=>{console.log('listening');s.close()})";
     const r = await runTests(work, `echo "tmpdir=$TMPDIR" && node -e "${script}"`, new AbortController().signal);
@@ -186,7 +188,7 @@ test('the per-run TMPDIR stays short: a unix socket a few levels under it can st
 });
 
 test('a suite that leaves an unreadable dir in TMPDIR keeps its passing result, and nothing is left behind', async () => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-th-work-'));
+  const work = scratchDir('foreman-th-work-');
   try {
     await withFakeTmp(async (tmp) => {
       const cmd = 'mkdir -p "$TMPDIR/locked/inner" "$HOME/locked/inner" && touch "$TMPDIR/locked/inner/f" "$HOME/locked/inner/f" && chmod 000 "$TMPDIR/locked" "$HOME/locked" && echo done';
@@ -202,7 +204,7 @@ test('a suite that leaves an unreadable dir in TMPDIR keeps its passing result, 
 test('a test command does not see credential-shaped variables unless FOREMAN_TEST_KEEP_ENV names them', async () => {
   const names = ['FOREMAN_PLANTED_API_KEY', 'FOREMAN_PLANTED_TOKEN', 'FOREMAN_PLANTED_PLAIN'];
   for (const n of names) process.env[n] = `value-of-${n}`;
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-env-work-'));
+  const work = scratchDir('foreman-env-work-');
   try {
     const cmd = names.map((n) => `echo "${n}=\${${n}:-unset}"`).join(' && ');
     const r = await runTests(work, cmd, new AbortController().signal);

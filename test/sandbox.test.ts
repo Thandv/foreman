@@ -3,7 +3,7 @@
 // the real ~/.ssh), and listeners standing in for the control port and the other closed loopback ports. Each attack
 // asserts the EFFECT is absent, and has the same command run with the switch off beside it where that proves the
 // switch is what is being tested.
-import { testHome } from './env.ts';
+import { testHome, privateTmpdir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -18,6 +18,8 @@ import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import type { Broker } from '../src/budget.ts';
 import type { RunnerContext } from '../src/runners/index.ts';
 import type { Task } from '../src/types.ts';
+
+privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
 
 process.env['FOREMAN_OLLAMA_URL'] = 'http://127.0.0.1:9';
 

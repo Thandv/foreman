@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -91,7 +91,7 @@ test('the backfill reads gate decisions back from the timeline, and only those',
 });
 
 test('opening a ledger from before the column labels its old decisions once', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rundecision-'));
+  const dir = scratchDir('foreman-rundecision-');
   const file = path.join(dir, 'foreman.db');
   try {
     const old = new Store(file);

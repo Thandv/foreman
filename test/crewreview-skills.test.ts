@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -41,7 +41,7 @@ const ENV_KEYS = ['FOREMAN_SKILLS_DIR', 'FOREMAN_SKILL_BRIEF_BYTES', 'FOREMAN_PL
 
 /** A temp skills repo and playbooks dir, the env pointed at them, put back afterwards. */
 async function world(reviewers: unknown[], fn: (w: { root: string; pb: Playbook }) => void | Promise<void>): Promise<void> {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewskills-')));
+  const base = fs.realpathSync(scratchDir('foreman-crewskills-'));
   const root = path.join(base, 'repo');
   const pbDir = path.join(base, 'playbooks');
   for (const d of [path.join(root, 'skills'), pbDir]) fs.mkdirSync(d, { recursive: true });
@@ -138,7 +138,7 @@ const envelope = (result: string): string => JSON.stringify({ type: 'result', su
 
 /** A claude CLI stand-in that logs each prompt it is called with and always passes. */
 function stubClaude(): { dir: string; count(): number; prompts(): string[] } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewskills-cli-'));
+  const dir = scratchDir('foreman-crewskills-cli-');
   const bin = path.join(dir, 'claude');
   const logs = path.join(dir, 'calls');
   fs.mkdirSync(logs);

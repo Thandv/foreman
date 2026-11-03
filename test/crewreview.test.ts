@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -104,7 +104,7 @@ You write the draft.
 `);
 
 function withPlaybooks(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-pb-'));
+  const dir = scratchDir('foreman-crewrev-pb-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
   return dir;
@@ -154,7 +154,7 @@ interface Stub {
  * chair) where the calls are genuinely sequential.
  */
 function stubClaude(bodies: string[], keys: string[] = []): Stub {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-cli-'));
+  const dir = scratchDir('foreman-crewrev-cli-');
   const bin = path.join(dir, 'claude');
   const logFile = path.join(dir, 'argv.log');
   const countFile = path.join(dir, 'count');
@@ -297,7 +297,7 @@ async function waitUntil(until: () => boolean, ms = 30_000): Promise<void> {
 }
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-repo-'));
+  const dir = scratchDir('foreman-crewrev-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };
@@ -1388,7 +1388,7 @@ test('same-repo dedupe compares resolved paths: a relative spelling of the same 
   const title = 'Overlapping projectsBase changes release the settings hold too early';
   const stub = stubClaude([reviewReply('pass', 'fine', [{ title, prompt: 'p', severity: 'normal', role: 'dev' }])]);
   const store = new Store(':memory:');
-  const abs = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-samerepo-'));
+  const abs = scratchDir('foreman-samerepo-');
   try {
     const epic = store.addTask({ title: 'epic', prompt: 'x', runner: 'echo' });
     const earlier = store.addTask({ title: 'Overlapping projectsBase changes release the settings-save hold early', prompt: 'x', runner: 'echo', parentId: epic.id, repo: path.relative(process.cwd(), abs) });
@@ -1783,7 +1783,7 @@ test('a crew chain that lost a reviewer while the rest passed parks a council PA
 test("the chair's share of a two-reviewer chain is a third of the chain's budget", async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
   // Both reviewers pass; the chair (the one call that is no reviewer) never answers and is killed at its share.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-chair-'));
+  const dir = scratchDir('foreman-crewrev-chair-');
   // One line per spawn, reviewers and chair apart. The timed run never counts the chair's: killed at its share on a
   // loaded machine, it may not have reached a line of its script.
   const calls = path.join(dir, 'calls');
@@ -1827,7 +1827,7 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
   const chairAfterOne = SOFTWARE.replace('"afterFailures": 2', '"afterFailures": 1');
   assert.notEqual(chairAfterOne, SOFTWARE);
   const pbDir = withPlaybooks({ 'soft.md': chairAfterOne });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-stop-'));
+  const dir = scratchDir('foreman-crewrev-stop-');
   fs.writeFileSync(path.join(dir, 'fail.json'), reviewReply('fail', 'the guard is inverted'));
   fs.writeFileSync(path.join(dir, 'junk.json'), envelope('I would rather not'));
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
@@ -1870,7 +1870,7 @@ test('a chain stopped after its survivor FAILED the work never parks saying a cr
  * a timer.
  */
 function slowAdvocate(): { dir: string; started: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-slowadv-'));
+  const dir = scratchDir('foreman-crewrev-slowadv-');
   const started = path.join(dir, 'advocate-started');
   fs.writeFileSync(path.join(dir, 'pass.json'), reviewReply('pass', 'fine'));
   fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncase "$*" in *devils-advocate*) touch "${started}"; sleep 30;; esac\ncat "${dir}/pass.json"\n`);
@@ -2063,7 +2063,7 @@ test("a reviewer cut off by the run's own deadline is recorded as missing, not p
 
 test('a cancel while the chair is deciding writes no crew verdict', { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-slowchair-'));
+  const dir = scratchDir('foreman-crewrev-slowchair-');
   fs.writeFileSync(path.join(dir, 'fail.json'), reviewReply('fail', 'the guard is inverted'));
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
@@ -2094,7 +2094,7 @@ test('a cancel while the chair is deciding writes no crew verdict', { timeout: 6
 
 test("a deadline while the chair is deciding keeps the chain's FAIL: out of time is not withdrawn", { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-deadchair-'));
+  const dir = scratchDir('foreman-crewrev-deadchair-');
   fs.writeFileSync(path.join(dir, 'fail.json'), reviewReply('fail', 'the guard is inverted'));
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('pass', 'fine'));
   fs.writeFileSync(
@@ -2228,7 +2228,7 @@ test('a stopping daemon claims nothing: a tick during shutdown starts no run', a
 
 test('a cancel that lands after the deadline still reads as a cancel: no verdict, no follow-up tickets', { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-lateCancel-'));
+  const dir = scratchDir('foreman-crewrev-lateCancel-');
   fs.writeFileSync(path.join(dir, 'fail.json'), reviewReply('fail', 'the guard is inverted', [
     { title: 'Invert the guard', prompt: 'the token check is backwards', severity: 'normal', role: 'dev' },
   ]));
@@ -2340,7 +2340,7 @@ test('a daemon stop while the crew chain leads asks no fallback council either',
 
 test('a daemon stop while the crew chair is deciding writes no crew verdict, and the task is requeued', { timeout: 60_000 }, async () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE.replace('"afterFailures": 2', '"afterFailures": 1') });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrev-stopchair-'));
+  const dir = scratchDir('foreman-crewrev-stopchair-');
   fs.writeFileSync(path.join(dir, 'fail.json'), reviewReply('fail', 'the guard is inverted'));
   fs.writeFileSync(path.join(dir, 'chair.json'), chairReply('fail', 'agree'));
   fs.writeFileSync(
@@ -2721,7 +2721,7 @@ test('the right-sizing thresholds hold their fire on thin or unremarkable eviden
 
 test('CLI: foreman crew report renders the table and the advisory, without a daemon', () => {
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewrep-home-'));
+  const home = scratchDir('foreman-crewrep-home-');
   const dbPath = path.join(home, 'foreman.db');
   const store = new Store(dbPath);
   try {
@@ -3068,7 +3068,7 @@ test('re-reviewing a crew ticket asks its crew chain, not the local council', as
   const pbDir = withPlaybooks({ 'solo.md': SOLO });
   const stub = stubClaude([reviewReply('pass', 'the stored diff meets the ticket')]);
   const store = new Store(':memory:');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crew-rv-'));
+  const dir = scratchDir('foreman-crew-rv-');
   process.env['FOREMAN_CREW_REVIEW'] = 'always';
   let councilCalls = 0;
   const sched = new Scheduler(store, {

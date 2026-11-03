@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -63,7 +63,7 @@ test('sparse with none of the role\'s tools usable says so, and still names ever
 test('the api runner sends the sparse section in its first message only when asked to', async () => {
   // The unit tests above prove the section; this proves the wiring: the first
   // message the model actually receives is built from it.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-toolsurface-'));
+  const dir = scratchDir('foreman-toolsurface-');
   const store = new Store(':memory:');
   const firstMessages: string[] = [];
   const broker = {

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -231,7 +231,7 @@ You verify the claim.
 `);
 
 function withPlaybooks(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-planpb-'));
+  const dir = scratchDir('foreman-planpb-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
   return dir;
@@ -250,7 +250,7 @@ interface Stub {
 
 /** A stand-in for the claude CLI: dumps its argv and prints whatever canned envelope the body file holds. */
 function stubClaude(body: string): Stub {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-planstub-'));
+  const dir = scratchDir('foreman-planstub-');
   const bin = path.join(dir, 'claude');
   const bodyFile = path.join(dir, 'body.json');
   const logFile = path.join(dir, 'argv.log');
@@ -325,7 +325,7 @@ test('critiquePlan: a malformed reply degrades to null, never throwing', async (
 });
 
 test('critiquePlan: an unreachable CLI degrades to null rather than throwing', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-plangone-'));
+  const dir = scratchDir('foreman-plangone-');
   process.env['FOREMAN_CLAUDE_BIN'] = path.join(dir, 'no-such-claude');
   try {
     assert.equal(await critiquePlan(critiqueFixturePlan, PB, {}), null);
@@ -467,7 +467,7 @@ test('--from-epic yields empty findings and makes no critique call, even for a p
 
 test('critiquePlan: with a repo, the critic sees the same snapshot the planner saw', async () => {
   const stub = stubClaude(envelope(JSON.stringify({ verdict: 'sound', notes: [] })));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-critrepo-'));
+  const repo = scratchDir('foreman-critrepo-');
   fs.writeFileSync(path.join(repo, 'README.md'), 'CRITIC-SEES-README');
   execFileSync('git', ['init', '-q', repo]);
   execFileSync('git', ['-C', repo, 'add', '-A']);

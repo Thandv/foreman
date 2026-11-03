@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ function withMenu(
   front: Record<string, unknown>,
   fn: (pb: Playbook) => void,
 ): void {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-planner-menu-')));
+  const base = fs.realpathSync(scratchDir('foreman-planner-menu-'));
   const saved = { skills: process.env['FOREMAN_SKILLS_DIR'], playbooks: process.env['FOREMAN_PLAYBOOKS_DIR'] };
   try {
     const root = path.join(base, 'repo');
