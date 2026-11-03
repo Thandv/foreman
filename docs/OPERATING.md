@@ -49,7 +49,8 @@ a parent also cancels its descendants.
   crash (a non-zero exit, as an uncaught exception gives), not after `foreman stop` (SIGTERM, a clean exit 0). So after
   a stop the daemon stays down; start it again with `launchctl kickstart` or `foreman serve`, and unload the job when
   it must not come back, as for a restore. The plist carries every `FOREMAN_*` variable set in the shell where you ran
-  `foreman service` (values XML-escaped), plus `PATH` and `HOME`, and `FOREMAN_HOME` as an absolute path; set your
+  `foreman service` (values XML-escaped), plus `PATH` and `HOME`, and `FOREMAN_HOME` as an absolute path. Keys among
+  them (`FOREMAN_GATEWAY_KEY`, `FOREMAN_TRACE_KEY`) are written in clear, so keep the printed plist private. Set your
   settings before running it, and regenerate and reload the job after changing them. A stop
   is not a verdict on work in flight: running tasks go back in the queue, with their worktrees kept.
 

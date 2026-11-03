@@ -1,5 +1,8 @@
+import './env.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { servicePlist } from '../src/service.ts';
 
 // A small plist reader (dict, array, string, true, false): enough to parse what servicePlist writes, so the tests
@@ -17,9 +20,10 @@ function parsePlist(xml: string): PV {
     if (t === '<true/>') return true;
     if (t === '<false/>') return false;
     if (t === '<string>') {
-      let text = '';
-      while (toks[i] !== '</string>') text += toks[i++];
-      i++;
+      // One text token at most, with no bare & in it: an unescaped < or & is a broken plist, not text.
+      const text = toks[i] === '</string>' ? '' : toks[i++]!;
+      assert.equal(toks[i++], '</string>', `an unescaped < in a string: ${text}`);
+      assert.doesNotMatch(text, /&(?!(?:amp|lt|gt|quot|apos);)/, `an unescaped & in a string: ${text}`);
       return unescape(text);
     }
     if (t === '<array>') {
@@ -91,4 +95,14 @@ test('a value with & < > and quotes is XML-escaped in the text and round-trips t
   const p = parsePlist(xml) as Record<string, PV>;
   assert.equal((p['EnvironmentVariables'] as Record<string, PV>)['FOREMAN_NASTY'], nasty);
   assert.equal(p['WorkingDirectory'], '/w&x<y>');
+});
+
+test('`foreman service` itself carries the FOREMAN_* variables of the shell it runs in', () => {
+  const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const xml = execFileSync(process.execPath, [cli, 'service'], {
+    env: { ...process.env, FOREMAN_SERVICE_PROBE: 'a&b<c>' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const env = (parsePlist(xml) as Record<string, Record<string, PV>>)['EnvironmentVariables']!;
+  assert.equal(env['FOREMAN_SERVICE_PROBE'], 'a&b<c>');
+  assert.equal(env['FOREMAN_HOME'], process.env['FOREMAN_HOME']);
 });
