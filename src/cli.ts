@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
+import { servicePlist } from './service.ts';
 import { config, daemonUrl } from './config.ts';
 import { humanDuration, sweepJails } from './archive.ts';
 import {
@@ -1819,27 +1821,9 @@ async function main(): Promise<number> {
     case 'service': {
       const node = process.execPath;
       const cli = new URL('./cli.ts', import.meta.url).pathname;
-      process.stdout.write(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.foreman.daemon</string>
-  <key>ProgramArguments</key>
-  <array><string>${node}</string><string>${cli}</string><string>serve</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>${process.cwd()}</string>
-  <key>StandardOutPath</key><string>${config.home}/daemon.log</string>
-  <key>StandardErrorPath</key><string>${config.home}/daemon.err.log</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>FOREMAN_HOME</key><string>${config.home}</string>
-    <key>FOREMAN_MAX_WORKERS</key><string>${config.maxWorkers}</string>
-    <key>PATH</key><string>${process.env['PATH'] ?? '/usr/bin:/bin'}</string>
-  </dict>
-</dict>
-</plist>
-`);
+      process.stdout.write(
+        servicePlist({ node, cli, cwd: process.cwd(), home: config.home, env: process.env, userHome: os.homedir() }),
+      );
       process.stderr.write(
         '\n# save as ~/Library/LaunchAgents/com.foreman.daemon.plist, then:\n' +
           '#   launchctl load -w ~/Library/LaunchAgents/com.foreman.daemon.plist\n',

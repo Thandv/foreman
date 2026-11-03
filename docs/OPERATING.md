@@ -44,9 +44,13 @@ a parent also cancels its descendants.
   `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20). These two read the
   database directly and need no daemon.
 - **Restart.** There is no `restart` command. Run `foreman stop` (it waits up to 90 seconds for in-flight work to wind
-  down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd (the plist
-  `foreman service` prints sets `KeepAlive`), launchd starts the daemon again by itself after the stop: do not also
-  run `foreman serve`, and unload the launchd job first when the daemon must stay stopped, as for a restore. A stop
+  down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd, the plist
+  `foreman service` prints sets `KeepAlive` to `SuccessfulExit = false`: launchd restarts the daemon only after a
+  crash (a non-zero exit, as an uncaught exception gives), not after `foreman stop` (SIGTERM, a clean exit 0). So after
+  a stop the daemon stays down; start it again with `launchctl kickstart` or `foreman serve`, and unload the job when
+  it must not come back, as for a restore. The plist carries every `FOREMAN_*` variable set in the shell where you ran
+  `foreman service` (values XML-escaped), plus `PATH` and `HOME`, and `FOREMAN_HOME` as an absolute path; set your
+  settings before running it, and regenerate and reload the job after changing them. A stop
   is not a verdict on work in flight: running tasks go back in the queue, with their worktrees kept.
 
 ## Debug logging
