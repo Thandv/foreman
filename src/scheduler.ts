@@ -710,11 +710,9 @@ export class Scheduler {
   private readonly recheckNotBefore = new Map<string, number>();
   /** Edge-tracking, so "paused" and "resumed" are logged once, not per tick. */
   private deferredForLock = false;
-  /** Disk-pause edge: set while dispatch is held for low free space, so the event is one per pause. */
-  private pausedForDisk = false;
+  /** Dirs held for low free space: one event when a dir goes low, one when a later check finds it recovered. */
+  private readonly diskHeld = new Set<string>();
   private readonly statfsFn: StatfsFn | undefined;
-  /** Volumes found low during the current tick (reason text), cleared at the top of each dispatch pass. */
-  private diskLowSeen: string | null = null;
   private ticking = false;
   private stopped = true;
 
@@ -981,12 +979,8 @@ export class Scheduler {
       // dispatch pauses, so the queue drains the moment the lock frees.
       if (this.deferForLocalModelLock()) return;
       // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
-      this.diskLowSeen = null;
       this.diskVolumeCache.clear();
-      if (this.diskLow(config.home)) {
-        this.noteDisk();
-        return;
-      }
+      if (this.diskLow(config.home)) return;
       // Only the work lane consumes worker slots.
       const free = this.maxWorkers - this.laneCount('work');
       if (free <= 0) return;
@@ -1016,7 +1010,6 @@ export class Scheduler {
         if (!this.store.claim(task.id)) continue; // lost the race
         this.launch({ ...task, attempts: task.attempts + 1 });
       }
-      this.noteDisk();
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
       // (It is also never reached while the training lock defers dispatch, or
@@ -2913,6 +2906,26 @@ export class Scheduler {
    * to manage the lane by hand with `foreman archive`.
    */
 
+  private readonly diskVolumeCache = new Map<string, boolean>();
+
+  /** True when the volume holding `dir` has less than FOREMAN_MIN_FREE_MB free. Cached per tick. */
+  private diskLow(dir: string): boolean {
+    const cached = this.diskVolumeCache.get(dir);
+    if (cached !== undefined) return cached;
+    const min = minFreeMb();
+    const free = freeMb(dir, this.statfsFn);
+    const low = free !== null && free < min;
+    this.diskVolumeCache.set(dir, low);
+    // Edges per dir, decided only when the dir is checked: a tick that never reached a held repo's task says nothing.
+    if (low && !this.diskHeld.has(dir)) {
+      this.diskHeld.add(dir);
+      this.store.record({ type: 'status', message: `dispatch paused: disk — ${Math.floor(free)} MB free under ${dir}, need ${min} MB (FOREMAN_MIN_FREE_MB). Running work continues.` });
+    } else if (!low && this.diskHeld.delete(dir)) {
+      this.store.record({ type: 'status', message: `disk space recovered under ${dir}; dispatch resumed` });
+    }
+    return low;
+  }
+
   /**
    * True when new work must not start because something else owns the
    * machine's inference.
@@ -2927,33 +2940,6 @@ export class Scheduler {
    * `FOREMAN_IGNORE_TRAINING_LOCK=1` opts out for an operator with the memory
    * headroom to run both — this machine does not, but another might.
    */
-  private readonly diskVolumeCache = new Map<string, boolean>();
-
-  /** True when the volume holding `dir` has less than FOREMAN_MIN_FREE_MB free. Cached per tick. */
-  private diskLow(dir: string): boolean {
-    const cached = this.diskVolumeCache.get(dir);
-    if (cached !== undefined) return cached;
-    const min = minFreeMb();
-    const free = freeMb(dir, this.statfsFn);
-    const low = free !== null && free < min;
-    if (low) this.diskLowSeen ??= `${Math.floor(free)} MB free under ${dir}, need ${min} MB (FOREMAN_MIN_FREE_MB)`;
-    this.diskVolumeCache.set(dir, low);
-    return low;
-  }
-
-  /** Records the disk pause / resume edges: one event per pause, not per tick. */
-  private noteDisk(): void {
-    if (this.diskLowSeen) {
-      if (!this.pausedForDisk) {
-        this.pausedForDisk = true;
-        this.store.record({ type: 'status', message: `dispatch paused: disk — ${this.diskLowSeen}. Running work continues.` });
-      }
-    } else if (this.pausedForDisk) {
-      this.pausedForDisk = false;
-      this.store.record({ type: 'status', message: 'disk space recovered; dispatch resumed' });
-    }
-  }
-
   private deferForLocalModelLock(): boolean {
     if (process.env['FOREMAN_IGNORE_TRAINING_LOCK'] === '1') return false;
     const holder = localModelLockHolder();

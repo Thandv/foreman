@@ -58,6 +58,8 @@ function plainGitEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+/** How long the identity lookup may take. Past it git is treated as unable to answer (the fallback comparison). */
+const IDENTITY_TIMEOUT_MS = 5_000;
 /** How long an identity that was found is reused. */
 const IDENTITY_TTL_MS = 60_000;
 /** How long "git could not answer here" is reused: short, so a repository that appears is noticed. */
@@ -111,7 +113,7 @@ function identityFrom(dir: string, out: string): string | null {
 function lookupIdentity(dir: string): string | null {
   try {
     const out = execFileSync('git', IDENTITY_ARGS, {
-      cwd: dir, encoding: 'utf8', ...gitTimeoutOpts(), stdio: ['ignore', 'pipe', 'ignore'], env: plainGitEnv(),
+      cwd: dir, encoding: 'utf8', ...gitTimeoutOpts(IDENTITY_TIMEOUT_MS), stdio: ['ignore', 'pipe', 'ignore'], env: plainGitEnv(),
     });
     return identityFrom(dir, out);
   } catch {
@@ -123,7 +125,7 @@ function lookupIdentity(dir: string): string | null {
 async function lookupIdentityAsync(dir: string): Promise<string | null> {
   try {
     const { stdout } = await exec('git', IDENTITY_ARGS, {
-      cwd: dir, encoding: 'utf8', ...gitTimeoutOpts(), env: plainGitEnv(),
+      cwd: dir, encoding: 'utf8', ...gitTimeoutOpts(IDENTITY_TIMEOUT_MS), env: plainGitEnv(),
     });
     return identityFrom(dir, stdout);
   } catch {
