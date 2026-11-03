@@ -19,6 +19,7 @@ import { workerSuiteInJail } from './doctorJail.ts';
 import { doctorTimingLine } from './doctorTiming.ts';
 import { formatSkillList, skillBlock, skillsDoctorLine, skillsFor } from './skills.ts';
 import { acquireDaemonLock } from './lock.ts';
+import { stopDaemon, systemDescribe, systemListeners } from './daemonOwner.ts';
 import { Store } from './queue.ts';
 import { Scheduler } from './scheduler.ts';
 import { listen } from './server.ts';
@@ -633,38 +634,29 @@ async function main(): Promise<number> {
   }
 
   if (cmd === 'stop') {
-    const pidFile = path.join(config.home, 'daemon.pid');
-    let holder = NaN;
-    try {
-      holder = Number(fs.readFileSync(pidFile, 'utf8').trim());
-    } catch {
-      process.stdout.write(`no daemon pidfile at ${pidFile}\n`);
-      return 0;
-    }
-    if (!Number.isInteger(holder) || holder <= 0) throw new Error(`unreadable pidfile: ${pidFile}`);
-    try {
-      process.kill(holder, 'SIGTERM');
-    } catch {
-      process.stdout.write(`daemon ${holder} was not running; clearing a stale pidfile\n`);
-      fs.rmSync(pidFile, { force: true });
-      return 0;
-    }
-    // Shutdown aborts in-flight runs and escalates to SIGKILL, so give it room.
-    // It also lets an in-flight merge finish (up to APPROVAL_DRAIN_CAP_MS).
-    const deadline = Date.now() + 90_000;
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 200));
-      try {
-        process.kill(holder, 0);
-      } catch {
-        process.stdout.write(`daemon ${holder} stopped\n`);
-        return 0;
-      }
-      if (Date.now() > deadline) {
-        process.stderr.write(`daemon ${holder} is still shutting down after 90s; check ${config.home}\n`);
-        return 1;
-      }
-    }
+    // The owner is the daemon the ownership check would name, not just whatever daemon.pid says (see daemonOwner.ts).
+    // Shutdown aborts in-flight runs and escalates to SIGKILL, and lets an in-flight merge finish
+    // (up to APPROVAL_DRAIN_CAP_MS), so the wait is long.
+    return stopDaemon({
+      home: config.home,
+      defaultHome: path.join(os.homedir(), '.foreman'),
+      port: config.port,
+      alive: (pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (err) {
+          return (err as NodeJS.ErrnoException).code === 'EPERM';
+        }
+      },
+      listeners: systemListeners,
+      describe: systemDescribe,
+      kill: (pid, sig) => process.kill(pid, sig),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: Date.now,
+      out: (s) => void process.stdout.write(s),
+      err: (s) => void process.stderr.write(s),
+    });
   }
 
   switch (cmd) {
