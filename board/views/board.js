@@ -10,7 +10,7 @@
  */
 import { $, add, api, clear, el, emptyState, fmtAgo, fmtDur, fmtTime, fmtUsd, post } from '../lib/dom.js';
 import { icon } from '../lib/icons.js';
-import { approvalOutcome, awaitReview, heldByReviewer, rejectionOutcome, splitNote, store, summaryHeading } from '../lib/store.js';
+import { approvalOutcome, awaitReview, cardReviewLabel, heldByReviewer, verdictRowLabel, rejectionOutcome, splitNote, store, summaryHeading } from '../lib/store.js';
 import { tip } from '../lib/tooltip.js';
 import { goTo } from '../lib/nav.js';
 import { runAction, toast } from '../lib/toast.js';
@@ -119,7 +119,9 @@ function card(task) {
   if (run?.verdict) {
     const held = heldByReviewer(task, run);
     const label = held ? 'held for you' : run.verdict === 'split' ? 'no verdict' : run.verdict;
-    const chip = el('span', `chip ${VERDICT_CHIP[run.verdict]}`, label);
+    // Unreviewed or provisional work never wears a green `pass` (lib/store.js cardReviewLabel).
+    const caveat = held ? null : cardReviewLabel(task, run);
+    const chip = el('span', `chip ${caveat ? 'warn' : VERDICT_CHIP[run.verdict]}`, caveat ?? label);
     if (held) {
       tip(chip, 'The reviewer could not sign this off',
         'The review found nothing to fail, but an acceptance item was not verified, was given no status, or is ' +
@@ -266,9 +268,9 @@ function renderCouncil(verdicts) {
   }
   for (const v of verdicts) {
     const isCrew = v.source === 'crew';
-    const head = el('div', `op ${v.verdict === 'pass' ? 'pass' : v.verdict === 'fail' ? 'fail' : 'err'}`);
+    const head = el('div', `op ${v.verdict === 'pass' && verdictRowLabel(v) === 'pass' ? 'pass' : v.verdict === 'fail' ? 'fail' : 'err'}`);
     const h = el('h5');
-    h.appendChild(el('span', null, `${isCrew ? 'crew review' : 'council'} verdict: ${v.verdict}${splitNote(v)}`));
+    h.appendChild(el('span', null, `${isCrew ? 'crew review' : 'council'} verdict: ${verdictRowLabel(v)}${splitNote(v)}`));
     h.appendChild(el('span', null, `${fmtUsd(v.costUsd, 4)} · ${fmtTime(v.createdAt)}`));
     head.appendChild(h);
     // The chair's reasoning gets its own block below; don't print it twice.

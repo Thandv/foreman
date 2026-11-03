@@ -270,6 +270,21 @@ export function wasReviewed(verdict: { council: AdvisorOpinion[] } | null): bool
   return verdict.council.some((opinion) => !opinion.error);
 }
 
+/**
+ * Whether a verdict row may be shown or counted as a PASS: some reviewer read the work
+ * and the seats were not stepped down because memory was short. A provisional pass is
+ * not one until the full council re-checks it; a row nobody read is no review at all.
+ */
+export function countsAsPass(v: { verdict: string; provisional?: boolean; council: AdvisorOpinion[] } | null | undefined): boolean {
+  return v?.verdict === 'pass' && !v.provisional && wasReviewed(v);
+}
+
+/** How to word a verdict row to a person: its verdict, or `not reviewed` / `provisional <verdict>` where that is the truth. */
+export function reviewLabel(v: { verdict: string; provisional?: boolean; council: AdvisorOpinion[] }): string {
+  if (!wasReviewed(v)) return 'not reviewed';
+  return v.provisional ? `provisional ${v.verdict}` : v.verdict;
+}
+
 export function parseOpinion(text: string): { verdict: 'pass' | 'fail'; confidence: number; critique: string } | null {
   const parsed = extractJson<{ verdict?: string; confidence?: number; issues?: unknown; critique?: unknown; reason?: unknown }>(text);
   if (!parsed) return null;
@@ -376,22 +391,25 @@ export function councilAliases(
   // and misread a diff twice in the one live council on record. It stays in
   // the registry as a last resort when nothing better is reachable.
   const prose = kind === 'writing';
-  const ladder: string[][] = localOnly() || prose
-    ? [[reason, code], [code, reason], [reason, code]]
-    : [[fast, code], [code, reason], [reason, code]];
+  // The 2B `fast` model sits on NO review council: it failed a correct one-file
+  // change by reading "(code, shell)" in a title as a request for a script. It
+  // keeps its other uses; review seats go to code/reason.
+  const ladder: string[][] = [[code, reason], [reason, code], [reason, code]];
   const effective = Math.min(Math.max(0, rung), ladder.length - 1);
   // The conventional names close the list, so a bench that names one model
   // for two seats still leaves a second strong model to fall back to before
   // anything weaker; local models come before remote ones for the same reason.
   const preferred = [...new Set([...ladder[effective]!, ...ladder.flat(), 'local-reason', 'local-code'])];
   const isLocal = (a: string): boolean => specs().get(a)?.local ?? false;
-  const ordered = [
+  const fastModel = specs().get(fast)?.model ?? fast;
+  const isFast = (a: string): boolean => (specs().get(a)?.model ?? a) === fastModel;
+  const orderedAll = [
     ...preferred.filter((a) => pool.includes(a)),
     ...pool.filter((a) => !preferred.includes(a) && isLocal(a)),
     ...pool.filter((a) => !preferred.includes(a) && !isLocal(a)),
   ];
-  const fastModel = specs().get(fast)?.model ?? fast;
-  const isFast = (a: string): boolean => (specs().get(a)?.model ?? a) === fastModel;
+  // The fast model is never seated while anything else can sit.
+  const ordered = orderedAll.some((a) => !isFast(a)) ? orderedAll.filter((a) => !isFast(a)) : orderedAll;
   // Seat two DIFFERENT models when two exist: aliases can share weights (a
   // models.json entry, a bench roster), and two seats on one model is one
   // opinion counted twice.

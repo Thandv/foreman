@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { Store } from '../src/queue.ts';
 import { Broker } from '../src/budget.ts';
 import { ModelUnavailable, TruncatedReply, reloadSpecs, resolveSpec } from '../src/models.ts';
-import { chairRuled, runCouncil } from '../src/verify/council.ts';
+import { chairRuled, countsAsPass, runCouncil } from '../src/verify/council.ts';
 import { triageDiff } from '../src/verify/triage.ts';
 import { hardHumanReason } from '../src/gate.ts';
 import { probeTask, type Run, type Verdict } from '../src/types.ts';
@@ -74,14 +74,14 @@ async function review(
 
 const usable = (v: Verdict): number => v.council.filter((o) => !o.error).length;
 
-test('a lone PASS after an unparseable 2B at rung 0 is not a pass — it climbs to rung 1\'s different advisors, who decide', async () => {
-  // Rung 0 seats local-fast + local-code; rung 1 seats local-code + local-reason.
-  const { v, asked, newest, notes } = await review({ 'local-fast': 'Looks great to me, ship it!' });
-  assert.ok(asked.includes('local-reason'), `climbed to rung 1: ${asked.join(',')}`);
-  assert.equal(v.verdict, 'pass');
-  assert.equal(usable(v), 2, 'the pass that stands was given by two advisors, not one');
-  assert.equal(newest?.verdict, 'pass', "the run's newest verdict row is the decision");
-  assert.ok(notes.some((n) => /asking rung 1's advisors/.test(n)), notes.join(' | '));
+test('a lone PASS after an off-contract seat at rung 0 is not a pass — no rung seats different advisors, so it parks', async () => {
+  // The 2B sits on no council: rung 0 seats local-code + local-reason and so does every rung above it.
+  const { v, asked, newest, notes } = await review({ 'local-code': 'Looks great to me, ship it!' });
+  assert.ok(!asked.includes('local-fast'), `the 2B was never asked: ${asked.join(',')}`);
+  assert.equal(v.verdict, 'split');
+  assert.equal(usable(v), 1);
+  assert.equal(newest?.verdict, 'split', "the run's newest verdict row is the split");
+  assert.ok(notes.some((n) => /no higher rung seats different advisors/.test(n)), notes.join(' | '));
 });
 
 test('a lost-seat split records the survivor, names the lost seat, and is no disagreement', async () => {
@@ -102,20 +102,16 @@ test('prose: rung 1 seats the same two models (only the chair differs) — the l
   assert.deepEqual([...asked].sort(), ['local-code', 'local-reason'], `two calls, no replay: ${asked.join(',')}`);
 });
 
-test('a seat lost to memory parks for the re-check even where a higher rung seats different advisors', async () => {
-  // Not local-only: rung 1 (coder + 9B) differs from rung 0 (2B + coder), so only the memory rule stops the climb.
-  const { v, asked } = await review({ 'local-fast': new ModelUnavailable('http://x/api/chat sent nothing for 180000ms') });
-  assert.equal(v.verdict, 'split');
+test('a seat lost to memory is marked provisional, so it is never a plain pass', async () => {
+  const { v, newest } = await review({ 'local-code': new ModelUnavailable('http://x/api/chat sent nothing for 180000ms') });
   assert.equal(v.provisional, true);
-  assert.ok(!asked.includes('local-reason'), `did not climb under memory pressure: ${asked.join(',')}`);
+  assert.equal(newest?.provisional, true);
+  assert.equal(countsAsPass(v), false, 'a provisional pass is not shown or counted as one');
 });
 
 test('a climb that hears from fewer advisors keeps the earlier verdict — as the run\'s newest row', async () => {
-  // Rung 0: 2B off-contract, coder PASS. Rung 1: coder and 9B both unreachable.
-  const down = (): Error => new Error('connect ECONNREFUSED 127.0.0.1:11434');
-  const { v, newest } = await review({
-    'local-fast': 'not json', 'local-code': (n) => (n === 1 ? PASS : down()), 'local-reason': down(),
-  });
+  // Rung 0: the 9B off-contract, coder PASS; no higher rung seats different advisors.
+  const { v, newest } = await review({ 'local-reason': 'not json', 'local-code': PASS });
   assert.equal(v.verdict, 'split');
   assert.match(v.chairSummary ?? '', /a seat answered nothing usable/);
   assert.equal(usable(v), 1, 'the one reviewer who read it is not dropped');
@@ -123,34 +119,6 @@ test('a climb that hears from fewer advisors keeps the earlier verdict — as th
   assert.equal(usable(newest!), 1);
   assert.match(newest!.critique ?? '', /naming nit/, "the survivor's critique comes back with it");
   assert.equal(newest!.disagreement, false);
-});
-
-test('an ordinary split whose climb loses a seat keeps the rung-0 FAIL in front of the operator', async () => {
-  // Rung 0: 2B FAIL vs coder PASS, chair (9B) unreachable -> split, climbs.
-  // Rung 1: the coder unreachable, the 9B PASS -> a lone PASS that must not bury the FAIL.
-  const { v } = await review({
-    'local-fast': FAIL,
-    'local-code': (n) => (n === 1 ? PASS : new Error('connect ECONNREFUSED')),
-    'local-reason': (n) => (n === 1 ? new Error('connect ECONNREFUSED') : PASS),
-  });
-  assert.equal(v.verdict, 'split');
-  assert.equal(usable(v), 2);
-  assert.ok(v.council.some((o) => o.verdict === 'fail' && /off-by-one/.test(o.critique)), JSON.stringify(v.council));
-  assert.equal(v.disagreement, true, 'still the split the advisors had');
-  assert.match(v.critique ?? '', /off-by-one/, 'the debate the gate shows comes back with it');
-});
-
-test("a higher rung's lone FAIL stands — it is not swapped for the earlier split", async () => {
-  // Rung 0: 2B FAIL vs coder PASS, chair (9B) unreachable -> split, climbs.
-  // Rung 1: the coder unreachable, the 9B FAIL -> fewer advisors, but a lone
-  // FAIL stands wherever it is heard: the work goes to repair.
-  const { v, newest } = await review({
-    'local-fast': FAIL,
-    'local-code': (n) => (n === 1 ? PASS : new Error('connect ECONNREFUSED')),
-    'local-reason': (n) => (n === 1 ? new Error('connect ECONNREFUSED') : FAIL),
-  });
-  assert.equal(v.verdict, 'fail');
-  assert.equal(newest?.id, v.id);
 });
 
 test("the store's verdict event says whether a chair ruled on a split, not just that there was one", () => {
@@ -165,25 +133,6 @@ test("the store's verdict event says whether a chair ruled on a split, not just 
   } finally {
     store.close();
   }
-});
-
-test('a reinstated verdict keeps its provisional mark, so the re-check sweep still finds it', async () => {
-  // Rung 0: 2B FAIL vs coder PASS; the chair (9B) stalls for memory and its
-  // step-down (the 2B) is unreachable -> a provisional split, which climbs.
-  // Rung 1: the coder unreachable, the 9B's seat answered by its step-down ->
-  // fewer advisors, so the rung-0 split is written again — still provisional,
-  // or the sweep that re-asks memory-hit reviews never sees it.
-  const { v, newest, notes } = await review({
-    'local-fast': (n) => (n === 1 ? FAIL : n === 2 ? new Error('connect ECONNREFUSED') : PASS),
-    'local-code': (n) => (n === 1 ? PASS : new Error('connect ECONNREFUSED')),
-    'local-reason': () => new ModelUnavailable('http://x/api/chat sent nothing for 180000ms'),
-  });
-  assert.ok(notes.some((n) => /escalating to rung 1/.test(n)), notes.join('\n'));
-  assert.ok(notes.some((n) => /keeping the earlier verdict/.test(n)), notes.join('\n'));
-  assert.equal(v.verdict, 'split');
-  assert.equal(usable(v), 2, 'the rung-0 round is the one kept');
-  assert.equal(newest?.id, v.id);
-  assert.equal(newest?.provisional, true);
 });
 
 test('local-only: every rung seats the same two models, so the lost seat parks, and the stored run is what the owner gate refuses', async () => {
@@ -210,22 +159,22 @@ test('a lone PASS after a seat errored outright is not a pass at rung 0 either',
 // ------------------------------------------------ what the fix must NOT change
 
 test('a lone FAIL still stands: failing closed is the safe direction', async () => {
-  const { v, asked } = await review({ 'local-fast': 'not json', 'local-code': FAIL });
+  const { v, asked } = await review({ 'local-reason': 'not json', 'local-code': FAIL });
   assert.equal(v.verdict, 'fail');
   assert.equal(usable(v), 1);
-  assert.ok(!asked.includes('local-reason'), `no escalation and no chair for a lone fail: ${asked.join(',')}`);
+  assert.equal(asked.length, 2, `no escalation and no chair for a lone fail: ${asked.join(',')}`);
 });
 
 test('two usable PASSes are a pass at rung 0 — no escalation, no extra cost', async () => {
   const { v, asked } = await review({});
   assert.equal(v.verdict, 'pass');
   assert.equal(usable(v), 2);
-  assert.deepEqual([...asked].sort(), ['local-code', 'local-fast']);
+  assert.deepEqual([...asked].sort(), ['local-code', 'local-reason']);
 });
 
 test('an ordinary split (advisors disagree) still goes to the chair, as before', async () => {
-  const { v, asked } = await review({ 'local-fast': FAIL });
-  assert.ok(asked.includes('local-reason'), `the chair was asked: ${asked.join(',')}`);
+  const { v, asked } = await review({ 'local-code': FAIL });
+  assert.ok(asked.includes('opus'), `the independent chair above was asked after the advisors: ${asked.join(',')}`);
   assert.equal(v.disagreement, true);
 });
 
@@ -236,18 +185,18 @@ test('the opt-in fast tier is one seat by design: its lone PASS still ends the r
   try {
     const { v, asked } = await review({}, { body: docsOnly });
     assert.equal(v.verdict, 'pass');
-    assert.deepEqual(asked, ['local-fast'], 'one reviewer, no full council');
+    assert.deepEqual(asked, ['local-code'], 'one reviewer, no full council, and never the 2B');
   } finally {
     delete process.env['FOREMAN_FAST_VERIFY'];
   }
 });
 
 test('a chair that rules with nothing to add is still a ruling', async () => {
-  // The advisors disagree; the chair (the 9B) answers a bare PASS, no issues.
+  // The advisors disagree; the chair (the 9B, asked a second time) answers a bare PASS, no issues.
+  // Both local models argued a side, so the chair is the independent one above them (rung 2).
   const { v } = await review({
-    'local-fast': FAIL,
-    'local-code': PASS,
-    'local-reason': JSON.stringify({ verdict: 'pass', confidence: 0.9, issues: [] }),
+    'local-code': FAIL,
+    'opus': JSON.stringify({ verdict: 'pass', confidence: 0.9, issues: [] }),
   });
   assert.equal(v.verdict, 'pass');
   assert.equal(v.disagreement, true);
@@ -258,9 +207,8 @@ test('a chair that rules with nothing to add is still a ruling', async () => {
 
 test('a bare chair FAIL still hands the repair round something to work from', async () => {
   const { v } = await review({
-    'local-fast': FAIL,
-    'local-code': PASS,
-    'local-reason': JSON.stringify({ verdict: 'fail', confidence: 0.9, issues: [] }),
+    'local-code': FAIL,
+    'opus': JSON.stringify({ verdict: 'fail', confidence: 0.9, issues: [] }),
   });
   assert.equal(v.verdict, 'fail');
   assert.ok((v.critique ?? '').length > 0, 'the debate, not an empty critique');

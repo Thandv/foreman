@@ -131,9 +131,9 @@ test('the ladder follows the bench, not the alias names', () => {
     models: [], roster: { fast: 'local-code', code: 'local-reason', reason: 'local-general' }, measuredAt: '',
   }));
   const rung0 = councilAliases('S1', 0);
-  assert.equal(rung0.advisors[0], 'local-code', 'rung 0 uses the benched fast model, whatever it is called');
+  assert.equal(rung0.advisors[0], 'local-reason', 'rung 0 leads with the benched code model (the fast model sits on no council)');
   const rung1 = councilAliases('S1', 1);
-  assert.equal(rung1.advisors[0], 'local-reason', 'rung 1 uses the benched code model');
+  assert.equal(rung1.advisors[0], 'local-reason', 'rung 1 leads with a reasoner (the banned benched one is never seated)');
   clearBench();
 });
 
@@ -213,7 +213,9 @@ test('a split verdict escalates one rung, and the receipts show it', async () =>
   });
   assert.equal(verdict.verdict, 'split', 'unparseable advisors never become a pass');
   assert.ok(seenKinds.some((k) => k === 'council@r0'), `expected a rung-0 round, saw ${seenKinds.join(',')}`);
-  assert.ok(seenKinds.some((k) => k === 'council@r1'), 'a split must escalate one rung');
+  // Rung 1 seats the same two models as rung 0 now that the 2B is off the council: the climb skips to the next different council.
+  assert.ok(seenKinds.some((k) => k === 'council@r2'), 'a split must escalate to a different council');
+  assert.ok(!seenKinds.some((k) => k === 'council@r1'), 'an identical council is not asked twice');
   assert.ok(round >= 4, 'both rounds actually ran');
   store.close();
 });
