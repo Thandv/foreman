@@ -114,25 +114,27 @@ test('secret-looking FOREMAN_* variables are left out of the plist, non-secret o
     FOREMAN_GATEWAY_KEY: 'gw-value-123',
     FOREMAN_TRACE_KEY: 'trace-value-456',
     FOREMAN_DB_PASSWORD: 'pw-value-789',
+    FOREMAN_X_SECRETS: 'sec-value-1', FOREMAN_X_CREDENTIALS: 'cred-value-2', FOREMAN_APIKEY: 'api-value-3',
     FOREMAN_COUNCIL_MAX_TOKENS: '900',
     FOREMAN_KEYBOARD: 'dvorak',
     FOREMAN_PORT: '4999',
   };
   const xml = servicePlist({ ...base, env });
   const vars = (parsePlist(xml) as Record<string, Record<string, PV>>)['EnvironmentVariables']!;
-  for (const n of ['FOREMAN_GATEWAY_KEY', 'FOREMAN_TRACE_KEY', 'FOREMAN_DB_PASSWORD']) assert.ok(!(n in vars), n);
+  for (const n of ['FOREMAN_GATEWAY_KEY', 'FOREMAN_TRACE_KEY', 'FOREMAN_DB_PASSWORD', 'FOREMAN_X_SECRETS', 'FOREMAN_X_CREDENTIALS', 'FOREMAN_APIKEY']) {
+    assert.ok(!(n in vars), n);
+  }
   assert.equal(vars['FOREMAN_COUNCIL_MAX_TOKENS'], '900');
   assert.equal(vars['FOREMAN_KEYBOARD'], 'dvorak');
   assert.equal(vars['FOREMAN_PORT'], '4999');
   const skipped = skippedSecrets(env);
-  assert.deepEqual(skipped, ['FOREMAN_DB_PASSWORD', 'FOREMAN_GATEWAY_KEY', 'FOREMAN_TRACE_KEY']);
+  assert.deepEqual(skipped, ['FOREMAN_APIKEY', 'FOREMAN_DB_PASSWORD', 'FOREMAN_GATEWAY_KEY', 'FOREMAN_TRACE_KEY', 'FOREMAN_X_CREDENTIALS', 'FOREMAN_X_SECRETS']);
   const warnings = skipped.map(secretWarning);
-  assert.equal(warnings.length, 3);
   skipped.forEach((n, k) => assert.ok(warnings[k]!.includes(n)));
-  assert.match(warnings[1]!, /gateway/);
-  assert.match(warnings[2]!, /trace/);
+  assert.match(warnings[2]!, /gateway/);
+  assert.match(warnings[3]!, /trace/);
   const out = xml + warnings.join('\n');
-  for (const v of ['gw-value-123', 'trace-value-456', 'pw-value-789']) assert.ok(!out.includes(v), v);
+  for (const v of ['gw-value-123', 'trace-value-456', 'pw-value-789', 'sec-value-1', 'cred-value-2', 'api-value-3']) assert.ok(!out.includes(v), v);
 });
 
 test('`foreman service` prints a warning per skipped secret on stderr and no value anywhere', () => {
@@ -140,10 +142,13 @@ test('`foreman service` prints a warning per skipped secret on stderr and no val
   const r = spawnSync(process.execPath, [cli, 'service'], {
     env: { ...process.env, FOREMAN_GATEWAY_KEY: 'sekrit-gw', FOREMAN_TRACE_KEY: 'sekrit-tr' }, encoding: 'utf8',
   });
+  assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /FOREMAN_GATEWAY_KEY/);
   assert.match(r.stderr, /FOREMAN_TRACE_KEY/);
   assert.ok(!(r.stdout + r.stderr).includes('sekrit'));
-  assert.ok(!r.stdout.includes('FOREMAN_GATEWAY_KEY'));
+  const vars = (parsePlist(r.stdout) as Record<string, Record<string, PV>>)['EnvironmentVariables']!;
+  assert.ok(!('FOREMAN_GATEWAY_KEY' in vars) && !('FOREMAN_TRACE_KEY' in vars));
+  assert.equal(vars['FOREMAN_HOME'], process.env['FOREMAN_HOME'], 'the parsed plist is the real one');
 });
 
 test('a versioned Cellar node path is replaced by the stable one when it is the same binary; otherwise execPath is kept', () => {

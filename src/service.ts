@@ -17,7 +17,8 @@ export interface ServicePlistInput {
 
 // A name segment (split on _) that marks a secret. Segment, not substring: FOREMAN_COUNCIL_MAX_TOKENS is a count.
 // (src/debug.ts has a substring pattern for log fields; it lacks PASSWD/CREDENTIAL/AUTH and would catch the counts.)
-const SECRET_SEGMENT = /^(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)$/;
+// Plurals and APIKEY/AUTHORIZATION too; TOKENS stays a count.
+const SECRET_SEGMENT = /^(?:KEYS?|APIKEYS?|TOKEN|SECRETS?|PASSWORDS?|PASSWD|CREDENTIALS?|AUTH|AUTHORIZATION)$/;
 
 export function looksSecret(name: string): boolean {
   return name.toUpperCase().split('_').some((seg) => SECRET_SEGMENT.test(seg));
