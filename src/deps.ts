@@ -7,6 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config } from './config.ts';
 import { PINNED, pinnedEnv } from './isolate.ts';
+import { gitTimeoutOpts } from './gitTimeout.ts';
 import { sandboxMode } from './security/sandbox.ts';
 
 const exec = promisify(execFile);
@@ -74,7 +75,7 @@ export function installIsCurrent(repoDir: string): boolean {
 function isTracked(repoDir: string, rel: string): Promise<boolean | null> {
   return new Promise((resolve) => {
     const child = spawn('git', [...PINNED, 'ls-files', '--error-unmatch', '--', rel], {
-      cwd: repoDir, env: pinnedEnv(), stdio: 'ignore',
+      cwd: repoDir, env: pinnedEnv(), stdio: 'ignore', ...gitTimeoutOpts(),
     });
     child.on('error', () => resolve(null));
     child.on('close', (code) => resolve(code === 0 ? true : code === 1 ? false : null));
@@ -86,7 +87,7 @@ async function isIgnored(repoDir: string, rel: string): Promise<boolean> {
   try {
     // Pinned (isolate.ts): the repo's config is the one every jail can write, and `check-ignore` reads the index,
     // which runs the program `core.fsmonitor` names.
-    await exec('git', [...PINNED, 'check-ignore', '-q', rel], { cwd: repoDir, env: pinnedEnv() });
+    await exec('git', [...PINNED, 'check-ignore', '-q', rel], { cwd: repoDir, env: pinnedEnv(), ...gitTimeoutOpts() });
     return true;
   } catch {
     return false;

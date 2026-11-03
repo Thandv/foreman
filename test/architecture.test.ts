@@ -164,6 +164,7 @@ const ENV_READS: Record<string, string[]> = {
   'src/cli.ts': ['FOREMAN_MODEL_TIMEOUT_MS', 'FOREMAN_REVERIFY_WAIT_MS', 'FOREMAN_RUN_ID'],
   'src/deps.ts': ['FOREMAN_DEPS_MODE', 'FOREMAN_SANDBOX'],
   'src/gate.ts': ['FOREMAN_GATE', 'FOREMAN_GATE_BATCH'],
+  'src/gitTimeout.ts': ['FOREMAN_GIT_TIMEOUT_MS'],
   'src/improve.ts': ['FOREMAN_IMPROVE_BUDGET_USD', 'FOREMAN_IMPROVE_PRIORITY'],
   'src/localOnly.ts': ['FOREMAN_LOCAL_MAX_OUTPUT_TOKENS', 'FOREMAN_LOCAL_NUM_CTX', 'FOREMAN_LOCAL_ONLY'],
   'src/memory.ts': ['FOREMAN_OLLAMA_URL', 'FOREMAN_PAGING_ALLOWANCE_GB'],
@@ -212,7 +213,7 @@ test('src/security value imports stay inside config, types, localOnly, security 
   for (const [from, tos] of value) {
     if (!from.startsWith('src/security/')) continue;
     for (const to of tos) {
-      const ok = to.startsWith('src/security/') || ['src/config.ts', 'src/types.ts', 'src/localOnly.ts'].includes(to);
+      const ok = to.startsWith('src/security/') || ['src/config.ts', 'src/types.ts', 'src/localOnly.ts', 'src/gitTimeout.ts'].includes(to);
       if (!ok) stray.push(`${from} -> ${to}`);
     }
   }

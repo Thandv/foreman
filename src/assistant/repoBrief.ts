@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { redact } from '../align/redact.ts';
 import { PINNED, pinnedEnv } from '../isolate.ts';
+import { gitTimeoutOpts } from '../gitTimeout.ts';
 
 /**
  * A zero-token snapshot of the target repo for the planner and the plan critic.
@@ -75,7 +76,7 @@ function trackedFiles(root: string): string[] {
     const raw = execFileSync('git', ['-C', root, ...PINNED, 'ls-files', '-z'], {
       env: pinnedEnv(),
       encoding: 'utf8',
-      timeout: 5_000,
+      ...gitTimeoutOpts(),
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
