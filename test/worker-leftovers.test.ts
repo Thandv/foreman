@@ -1,5 +1,6 @@
 import './env.ts';
 import test from 'node:test';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -639,7 +640,7 @@ for (const sig of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) {
 
 test('the daemon (`serve`) ends in order on SIGHUP, as on SIGTERM: "stopping", exit 0, its lock released', async (t) => {
   const home = scratch();
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  removeAfterStops(t, home);
   const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
   // Nothing outside: no model pre-warm, no Claude CLI (local-only, and a binary that does not exist), port 0.
   const env = {
@@ -647,7 +648,7 @@ test('the daemon (`serve`) ends in order on SIGHUP, as on SIGTERM: "stopping", e
     FOREMAN_CLAUDE_BIN: path.join(home, 'no-claude'), FOREMAN_SANDBOX: 'off', FOREMAN_BACKUP: 'off',
   };
   const child = spawn(process.execPath, [cli, 'serve'], { env, stdio: ['ignore', 'pipe', 'pipe'], killSignal: 'SIGKILL' });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  stopsFirst(t, () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   let out = '';
   child.stdout.on('data', (d) => (out += d));
   child.stderr.on('data', (d) => (out += d));

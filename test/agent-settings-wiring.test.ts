@@ -20,9 +20,9 @@ const BASE = '{"permissions":{"deny":["Bash(rm:*)"]}}';
 const WIDE = '{"permissions":{"allow":["WebFetch"]}}';
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 
-function fixture(t: TestContext): { repo: string; seen: () => string[] } {
+/** `cleanup` removes the temp root; the test calls it only after the scheduler has stopped and the store is closed. */
+function fixture(t: TestContext): { repo: string; seen: () => string[]; cleanup: () => void } {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-agentcfg-w-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.claude'), { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');
@@ -48,7 +48,7 @@ function fixture(t: TestContext): { repo: string; seen: () => string[] } {
   ].join('\n'), { mode: 0o755 });
   process.env['FOREMAN_CLAUDE_BIN'] = bin;
   t.after(() => delete process.env['FOREMAN_CLAUDE_BIN']);
-  return { repo, seen: () => (fs.existsSync(seen) ? fs.readFileSync(seen, 'utf8').split('\n').filter(Boolean) : []) };
+  return { repo, cleanup: () => fs.rmSync(root, { recursive: true, force: true }), seen: () => (fs.existsSync(seen) ? fs.readFileSync(seen, 'utf8').split('\n').filter(Boolean) : []) };
 }
 
 test('a repair round starts on the base commit permission file, not the one the worker wrote', T, async (t) => {
@@ -70,6 +70,7 @@ test('a repair round starts on the base commit permission file, not the one the 
   t.after(async () => {
     await sched.stop();
     store.close();
+    f.cleanup();
   });
   const task = store.addTask({ title: 'ticket', kind: 'code', runner: 'claude-code', repo: f.repo, prompt: 'p' });
   const deadline = Date.now() + 240_000;

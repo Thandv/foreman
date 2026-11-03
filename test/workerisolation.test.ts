@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { probeTask } from '../src/types.ts';
@@ -41,8 +42,7 @@ function withEnv(t: TestContext, vars: Record<string, string | undefined>): void
 
 function tmp(t: TestContext, prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  return removeAfterStops(t, dir);
 }
 
 interface Call { argv: string[]; env: Record<string, string>; cwd: string }
@@ -519,7 +519,7 @@ async function schedRig(t: TestContext, done: (s: { store: Store; taskId: string
       return store.addVerdict({ runId, taskId: task.id, verdict: 'pass', disagreement: false, council: [] });
     },
   });
-  t.after(async () => {
+  stopsFirst(t, async () => {
     await sched.stop();
     store.close();
   });

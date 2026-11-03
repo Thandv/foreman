@@ -1,5 +1,6 @@
 import './env.ts';
 import test, { type TestContext } from 'node:test';
+import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,7 +21,7 @@ async function until(cond: () => boolean, ms: number): Promise<boolean> {
 
 function serveWith(t: TestContext, inject: 'reject' | 'throw') {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-guard-')));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  removeAfterStops(t, home);
   const dbPath = path.join(home, 'foreman.db');
   const portFile = path.join(home, 'port');
   const env = {
@@ -29,7 +30,7 @@ function serveWith(t: TestContext, inject: 'reject' | 'throw') {
     GUARD_INJECT: inject, GUARD_PORT_FILE: portFile,
   };
   const child = spawn(process.execPath, ['--import', fixture, cli, 'serve'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  stopsFirst(t, () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   const out = { text: '' };
   child.stdout.on('data', (d) => (out.text += d));
   child.stderr.on('data', (d) => (out.text += d));
