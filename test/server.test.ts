@@ -54,6 +54,40 @@ test('POST /api/tasks validates and GET /api/state reflects it', async () => {
   await h.close();
 });
 
+test('POST /api/tasks stores an acceptance list as "- item" lines and refuses non-text fields with a clear 400', async () => {
+  const h = await harness();
+  const post = (body: unknown) =>
+    fetch(`${h.base}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const base = { title: 'hello', prompt: 'world', runner: 'echo' };
+
+  const ok = await post({ ...base, acceptance: ['a', 'b'] });
+  assert.equal(ok.status, 201);
+  assert.equal((await ok.json()).acceptance, '- a\n- b');
+
+  const text = await post({ ...base, acceptance: 'plain' });
+  assert.equal((await text.json()).acceptance, 'plain');
+
+  for (const acceptance of [5, { a: 1 }, true, ['a', 2]]) {
+    const res = await post({ ...base, acceptance });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'acceptance must be text or a list of text');
+  }
+  for (const name of ['repo', 'agent', 'testCmd', 'role', 'playbook', 'kind', 'runner', 'sensitivity', 'assignee']) {
+    for (const value of [['x'], { a: 1 }, 7, true]) {
+      const res = await post({ ...base, [name]: value });
+      assert.equal(res.status, 400, name);
+      const err = (await res.json()).error as string;
+      assert.equal(err, `${name} must be text`);
+      assert.doesNotMatch(err, /SQLite/);
+    }
+  }
+  await h.close();
+});
+
 test('a mismatched Origin on a write is refused; a matching or absent Origin is not', async () => {
   const h = await harness();
 
