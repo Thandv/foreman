@@ -33,7 +33,11 @@ const RULES: Rule[] = [
   // teaches the operator to route around it.
   { severity: 'block', rule: 'privilege', pattern: /(^|\n|[;&|]\s*|`|\$\()\s*sudo\s+\S/i, message: 'runs a command as root' },
   { severity: 'warn', rule: 'privilege-mention', pattern: /\bsudo\b/i, message: 'mentions sudo' },
-  { severity: 'block', rule: 'persistence', pattern: /(LaunchAgents|LaunchDaemons|crontab\s+-|systemctl\s+enable)/i, message: 'installs a persistent background job' },
+  // Like sudo: installing or loading a job is a block, merely naming the folders or flags is a warning (a ticket
+  // that changes the code generating a plist installs nothing). Install forms: copy/write/redirect a file INTO a
+  // launchd folder, launchctl load/bootstrap/enable, a crontab edit/replace, systemctl enable.
+  { severity: 'block', rule: 'persistence', pattern: /(\b(cp|mv|ln|install|rsync|tee|copy|copies|copying|write|writes|writing|move|moves|moving|symlink|symlinks|save|saves|saving|drop|drops|place|places|put|puts)\b[^\n]*?\b(into|to|in|at)\b[^\n]*?Launch(Agents|Daemons)\b|\b(cp|mv|ln|install|rsync|tee)\b[^\n]*?Launch(Agents|Daemons)\b|>>?\s*\S*Launch(Agents|Daemons)\b|\blaunchctl\s+(\S+\s+)*?(load|bootstrap|enable)\b|\bcrontab\s+(-[a-z]*e[a-z]*\b|-(\s|$)|-[a-z]*r\b)|\bsystemctl\s+(--?\S+\s+)*enable\b)/i, message: 'installs a persistent background job' },
+  { severity: 'warn', rule: 'persistence-mention', pattern: /(LaunchAgents|LaunchDaemons|\bcrontab\s+-|\bsystemctl\s+enable|\blaunchctl\b)/i, message: 'mentions a launchd/cron/systemd job location or command' },
   { severity: 'block', rule: 'permission-bypass', pattern: /--dangerously-skip-permissions|--yolo\b/i, message: 'asks a runner to bypass its own permission gate' },
   { severity: 'block', rule: 'secret-exfil', pattern: /(\.ssh\/|\.aws\/credentials|\.env\b|security\s+find-generic-password|id_rsa)[\s\S]{0,200}?\b(curl\b|wget\b|nc\b|scp\b|http)/i, message: 'reads credentials and then sends them somewhere' },
   { severity: 'warn', rule: 'publish', pattern: /\b(npm\s+publish|git\s+push|gh\s+release\s+create|twine\s+upload)\b/i, message: 'publishes or pushes outward' },

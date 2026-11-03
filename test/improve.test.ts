@@ -323,6 +323,32 @@ test('the privilege rule blocks a sudo command but not prose about sudo', () => 
   }
 });
 
+test('the persistence rule blocks installing or loading a job but only warns on a bare mention', () => {
+  const base = probeTask({ kind: 'general', runner: 'shell' });
+  for (const prompt of [
+    'cp com.x.plist ~/Library/LaunchAgents/',
+    'write the plist into /Library/LaunchDaemons',
+    'echo "$PLIST" > ~/Library/LaunchAgents/com.x.plist',
+    'then launchctl load ~/x.plist',
+    'launchctl bootstrap gui/501 x.plist',
+    'launchctl enable gui/501/com.x',
+    'crontab -e and add a line',
+    'cat jobs | crontab -',
+    'systemctl --user enable foo.service',
+    'systemctl enable foo',
+  ]) {
+    assert.throws(() => admit({ ...base, prompt }), /persistence/, `should block: ${prompt}`);
+  }
+  for (const prompt of [
+    'Change the code that generates the plist that belongs in ~/Library/LaunchAgents; install nothing.',
+    'The per-user folder is ~/Library/LaunchAgents and the system one is /Library/LaunchDaemons.',
+  ]) {
+    const findings = admit({ ...base, prompt });
+    assert.equal(findings.filter((f) => f.severity === 'block').length, 0, `false positive on: ${prompt}`);
+    assert.ok(findings.some((f) => f.rule === 'persistence-mention' && f.severity === 'warn'), 'surfaced as a warning');
+  }
+});
+
 test('admission lets a self-task FORBID a core file by name unflagged, and warns on one that targets it', () => {
   // A whole self-improvement epic was refused because its brief said "Do NOT touch src/merge.ts, ...": naming a core
   // file to keep a worker away from it is not targeting it. The diff gate still enforces either way.
