@@ -33,7 +33,7 @@ import { computeLatencyReport, formatDuration } from './latency.ts';
 import { formatPlaybookWarning, getPlaybook, playbooksDir } from './playbooks.ts';
 import { planNoteHome } from './assistant/crewPlan.ts';
 import { crewAdvisories, formatDroppedIssues } from './verify/crewReview.ts';
-import { chairRuled } from './verify/council.ts';
+import { chairRuled, reviewLabel } from './verify/council.ts';
 import { auditDir, auditHasBans, formatAuditReport } from './prose/audit.ts';
 import { bookTitleFrom, docxToText, splitChapters } from './prose/ingest.ts';
 import type { Decision, Task } from './types.ts';
@@ -1003,7 +1003,7 @@ async function main(): Promise<number> {
               // before, which is precisely the value this command exists to
               // change. Believing that output would have meant re-reviewing
               // work that had already been judged.
-              verdict = String(d.verdicts[0]?.verdict ?? 'no verdict');
+              verdict = d.verdicts[0] ? reviewLabel(d.verdicts[0]) : 'no verdict';
               break;
             }
           }
@@ -1051,7 +1051,7 @@ async function main(): Promise<number> {
       }
       for (const v of d.verdicts ?? []) {
         process.stdout.write(
-          `\ncouncil ${v.verdict}${v.disagreement ? (chairRuled(v) ? ' (split → chair ruled)' : ' (split, no ruling)') : ''}  $${v.costUsd.toFixed(4)}\n`,
+          `\ncouncil ${reviewLabel(v)}${v.disagreement ? (chairRuled(v) ? ' (split → chair ruled)' : ' (split, no ruling)') : ''}  $${v.costUsd.toFixed(4)}\n`,
         );
         for (const o of v.council) {
           process.stdout.write(`  ${o.model}: ${o.error ? `unavailable — ${o.error}` : `${o.verdict} (${o.confidence.toFixed(2)}) ${o.critique.slice(0, 160)}`}\n`);
@@ -1995,7 +1995,7 @@ async function main(): Promise<number> {
         return 0;
       }
       for (const v of d.verdicts) {
-        process.stdout.write(`${new Date(v.createdAt).toLocaleString()}  ${v.verdict}${v.disagreement ? ' (split)' : ''}\n`);
+        process.stdout.write(`${new Date(v.createdAt).toLocaleString()}  ${reviewLabel(v)}${v.disagreement ? ' (split)' : ''}\n`);
         for (const o of v.council) {
           process.stdout.write(`  ${o.model}: ${o.error ?? `${o.verdict} (${o.confidence.toFixed(2)}) — ${o.critique}`}\n`);
         }

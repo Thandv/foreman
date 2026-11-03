@@ -17,6 +17,7 @@ import { modelForTask, tierModel } from './roles.ts';
 import { PROTECTED_PATHS } from './security/coreGuard.ts';
 import { loadSkills } from './skills.ts';
 import type { Decision, RunEvent, Sensitivity, Task } from './types.ts';
+import { countsAsPass, reviewLabel } from './verify/council.ts';
 import { crewAdvisories } from './verify/crewReview.ts';
 import { readRevertTests, revertTestsPath } from './verify/revertTests.ts';
 
@@ -948,7 +949,7 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
     const verdicts: DebriefVerdict[] = allVerdicts.map((v) => {
       const critique = v.critique ?? v.chairSummary ?? '';
       if (v.verdict === 'fail' && v.source === 'council') addFailure(v.createdAt, v.runId, critique, 'known');
-      say(v.createdAt, `${v.source} review: ${v.verdict}${v.provisional ? ' (provisional)' : ''}`);
+      say(v.createdAt, `${v.source} review: ${reviewLabel(v)}`);
       return {
         id: v.id, runId: v.runId, at: v.createdAt, source: v.source, verdict: v.verdict, provisional: v.provisional,
         costUsd: v.costUsd,
@@ -1238,7 +1239,7 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
       if (f.cause === 'run-deadline-old-wording' && f.runId !== null && endedKnown.has(f.runId)) failures.splice(i, 1);
     }
     decidedAt ??= (task.status === 'done' || task.status === 'rejected') ? task.updatedAt : null;
-    firstGateAt ??= verdicts.find((v) => v.verdict === 'pass')?.at ?? null;
+    firstGateAt ??= allVerdicts.find((v) => countsAsPass(v))?.createdAt ?? null;
 
     // ---- repairs before review
     const gapRuns = runs.filter((r) => r.preReviewGaps !== null && r.status === 'failed').length;
@@ -1262,7 +1263,7 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
 
     // ---- gate disagreement
     let disagreement = classifyGate(
-      operator, allVerdicts.map((v) => ({ at: v.createdAt, source: v.source, verdict: v.verdict })), landing, task.status,
+      operator, allVerdicts.map((v) => ({ at: v.createdAt, source: v.source, verdict: v.verdict === 'pass' && !countsAsPass(v) ? reviewLabel(v) : v.verdict })), landing, task.status,
       closing ? { corrected: closing.corrected, source: closing.correctedSource, reviewSource: closing.reviewSource, reviewedTree: closing.reviewedTree, landedTree: closing.landedTree } : null,
     );
     // Parked on a split with no decision yet: not "nothing on record" — the ledger says what it waits for.
@@ -1367,7 +1368,7 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
     const first = t.verdicts.find((v) => v.source === 'crew');
     if (first) {
       row.firstReviewed++;
-      if (first.verdict === 'pass') row.firstPassed++;
+      if (first.verdict === 'pass' && !first.provisional) row.firstPassed++;
     }
     row.firstPassRate = row.firstReviewed ? row.firstPassed / row.firstReviewed : null;
     row.reviewRepairs += t.reviewRepairs.rounds;

@@ -99,10 +99,27 @@ for (const [label, roster] of [['real bench', REAL_ROSTER], ['no bench', null]] 
   });
 }
 
-test('rung 0 for code still leads with the cheap seat', () => {
-  withBench(REAL_ROSTER, () => {
-    assert.equal(councilAliases('S1', 0, 'code').advisors[0], 'local-fast');
-  });
+test('the 2B fast model sits on no code-review council seat, advisor or chair, at any rung', () => {
+  const rosters = [REAL_ROSTER, { reason: 'local-reason', code: 'local-code', fast: 'local-fast' }];
+  for (const roster of rosters) {
+    withBench(roster, () => {
+      for (const sensitivity of ['S1', 'S2'] as const) {
+        for (const rung of [0, 1, 2]) {
+          for (const kind of ['code', 'general', undefined] as const) {
+            const { advisors, chair } = councilAliases(sensitivity, rung, kind);
+            for (const a of [...advisors, chair]) {
+              assert.notEqual(model(a), 'qwen3.5:2b', `${sensitivity} rung ${rung} ${kind}: seated ${a}`);
+            }
+          }
+        }
+      }
+    });
+  }
+  for (const a of councilAliases('S1', 0, 'code').advisors) assert.notEqual(model(a), 'qwen3.5:2b');
+});
+
+test('the fast model is still a registered, resolvable model for its other uses', () => {
+  assert.equal(model('local-fast'), 'qwen3.5:2b');
 });
 
 test('the top rung chair leaves the machine when allowed, and never for S2', () => {

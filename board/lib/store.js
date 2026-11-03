@@ -229,6 +229,25 @@ export function heldByReviewer(task, run) {
     && /\bthe reviewer (?:says|could not verify|gave no status for) acceptance items? \d/.test(task?.error ?? '');
 }
 
+/**
+ * The word for a card's review chip. A pass that only stepped-down models gave reads `provisional`, and a park
+ * whose note says nobody could read the work reads `not reviewed` — neither may wear a green `pass`.
+ * Mirrors src/verify/council.ts reviewLabel for the board's task-level data.
+ */
+export function cardReviewLabel(task, run) {
+  if (!run?.verdict) return null;
+  if (/\b(?:UNREVIEWED|NOT REVIEWED)\b/.test(task?.error ?? '')) return 'not reviewed';
+  if (task?.provisional) return `provisional ${run.verdict === 'split' ? 'no verdict' : run.verdict}`;
+  return null;
+}
+
+/** A verdict row's header word: the verdict, unless no reviewer read it or only stepped-down seats did. */
+export function verdictRowLabel(v) {
+  const read = (v?.council ?? []).some((o) => !o.error);
+  if (!read) return 'not reviewed';
+  return v.provisional ? `provisional ${v.verdict}` : v.verdict;
+}
+
 /** The heading over a verdict's chairSummary block. */
 export function summaryHeading(v) {
   if (!chairRuled(v)) return 'council note';
