@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { driverlessEnv } from '../isolate.ts';
+import { gitTimeoutOpts, timedGit } from '../gitTimeout.ts';
 import type { Task } from '../types.ts';
 
 const exec = promisify(execFile);
@@ -57,8 +58,6 @@ function plainGitEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-/** How long the identity lookup may take. Past it git is treated as unable to answer (the fallback comparison). */
-const IDENTITY_TIMEOUT_MS = 5_000;
 /** How long an identity that was found is reused. */
 const IDENTITY_TTL_MS = 60_000;
 /** How long "git could not answer here" is reused: short, so a repository that appears is noticed. */
@@ -112,7 +111,7 @@ function identityFrom(dir: string, out: string): string | null {
 function lookupIdentity(dir: string): string | null {
   try {
     const out = execFileSync('git', IDENTITY_ARGS, {
-      cwd: dir, encoding: 'utf8', timeout: IDENTITY_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], env: plainGitEnv(),
+      cwd: dir, encoding: 'utf8', ...gitTimeoutOpts(), stdio: ['ignore', 'pipe', 'ignore'], env: plainGitEnv(),
     });
     return identityFrom(dir, out);
   } catch {
@@ -124,7 +123,7 @@ function lookupIdentity(dir: string): string | null {
 async function lookupIdentityAsync(dir: string): Promise<string | null> {
   try {
     const { stdout } = await exec('git', IDENTITY_ARGS, {
-      cwd: dir, encoding: 'utf8', timeout: IDENTITY_TIMEOUT_MS, env: plainGitEnv(),
+      cwd: dir, encoding: 'utf8', ...gitTimeoutOpts(), env: plainGitEnv(),
     });
     return identityFrom(dir, stdout);
   } catch {
@@ -241,16 +240,17 @@ export async function changedPaths(cwd: string, from: string, to?: string): Prom
   // trees are compared without reading a file. No lazy fetch: a promisor
   // remote the config names ran its `uploadpack` program for a dropped object.
   const drivers = to ? {} : await driverlessEnv(cwd);
-  const { stdout } = await exec(
+  const args = [
+    '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
+    '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-relative',
+    '--ignore-submodules=none', '--name-only', '-z',
+    from, ...(to ? [to] : []), '--',
+  ];
+  const { stdout } = await timedGit(exec(
     'git',
-    [
-      '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
-      '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-relative',
-      '--ignore-submodules=none', '--name-only', '-z',
-      from, ...(to ? [to] : []), '--',
-    ],
-    { cwd, maxBuffer: 64 * 1024 * 1024, env: { ...plainGitEnv(), GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', ...drivers } },
-  );
+    args,
+    { cwd, maxBuffer: 64 * 1024 * 1024, ...gitTimeoutOpts(), env: { ...plainGitEnv(), GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', ...drivers } },
+  ), args);
   return stdout.split('\0').filter(Boolean);
 }
 

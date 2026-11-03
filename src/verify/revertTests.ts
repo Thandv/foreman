@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { config } from '../config.ts';
 import { provisionDeps } from '../deps.ts';
 import { checkoutWorktree } from '../isolate.ts';
+import { gitTimeoutOpts, timedGit } from '../gitTimeout.ts';
 import type { Store } from '../queue.ts';
 import type { Run } from '../types.ts';
 import { isTestPath } from './literals.ts';
@@ -148,7 +149,8 @@ async function writeFromTree(repo: string, tree: string, root: string, rel: stri
   if (!m) return;
   const [, mode, type, oid] = m;
   if (type !== 'blob') return;
-  const { stdout } = await execBuf('git', [...PINNED, 'cat-file', 'blob', oid!], { cwd: repo, env: pinnedEnv(), encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+  const catArgs = ['cat-file', 'blob', oid!];
+  const { stdout } = await timedGit(execBuf('git', [...PINNED, ...catArgs], { cwd: repo, env: pinnedEnv(), encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, ...gitTimeoutOpts() }), catArgs);
   await fsp.mkdir(path.dirname(target), { recursive: true });
   await fsp.rm(target, { recursive: true, force: true });
   if (mode === '120000') await fsp.symlink(stdout.toString('utf8'), target);

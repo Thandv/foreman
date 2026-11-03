@@ -6,6 +6,7 @@ import { ownerCall } from './assistant/ownerCall.ts';
 import { recordDecision } from './assistant/memory.ts';
 import { dailyCapUsd, subscriptionCapUsd } from './budget.ts';
 import { config } from './config.ts';
+import { gitTimeoutOpts } from './gitTimeout.ts';
 import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
 import { landingRefusal, mergeApproved, NOT_REVIEWED, type MergeResult } from './merge.ts';
@@ -200,7 +201,7 @@ const MAIN_WORKTREE_PREFIX = 'foreman-main-';
  * and is left alone. Returns the paths removed.
  */
 export async function pruneMainWorktrees(repo: string): Promise<string[]> {
-  const list = await execGit('git', ['worktree', 'list', '--porcelain'], { cwd: repo })
+  const list = await execGit('git', ['worktree', 'list', '--porcelain'], { cwd: repo, ...gitTimeoutOpts() })
     .then((r) => r.stdout)
     .catch(() => '');
   const removed: string[] = [];
@@ -212,11 +213,11 @@ export async function pruneMainWorktrees(repo: string): Promise<string[]> {
     // foreman-main-<pid>-…: another live daemon's (or CLI's) check in progress.
     const owner = Number(/^foreman-main-(\d+)-/.exec(name)?.[1]);
     if (owner && owner !== process.pid && pidAlive(owner)) continue;
-    await execGit('git', ['worktree', 'remove', '--force', dir], { cwd: repo }).catch(() => {});
+    await execGit('git', ['worktree', 'remove', '--force', dir], { cwd: repo, ...gitTimeoutOpts() }).catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
     removed.push(dir);
   }
-  await execGit('git', ['worktree', 'prune'], { cwd: repo }).catch(() => {});
+  await execGit('git', ['worktree', 'prune'], { cwd: repo, ...gitTimeoutOpts() }).catch(() => {});
   return removed;
 }
 

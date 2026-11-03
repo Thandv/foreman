@@ -108,6 +108,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_OLLAMA_KEEP_ALIVE_COLD` | `5m` | Keep-alive for any other local model | `src/budget.ts` |
 | `FOREMAN_PREWARM` | on | `off` skips loading the roster's models at start | `src/warm.ts` |
 | `FOREMAN_PREWARM_TIMEOUT_MS` | `120000` | Time allowed to load one model | `src/warm.ts` |
+| `FOREMAN_GIT_TIMEOUT_MS` | `120000` | Longest any daemon-side git process may run before it is killed with SIGKILL; the call then fails with `git <subcommand> timed out after <n>ms`. An empty, non-numeric or non-positive value keeps the default | `src/gitTimeout.ts` |
 | `FOREMAN_DOWNSHIFT` | on | `off` stops a local model stepping down to a smaller one that fits | `src/budget.ts` |
 | `FOREMAN_DOWNSHIFT_HOLD_MS` | `600000` (10 min) | How long a model that did not fit is skipped before it is tried again | `src/budget.ts` |
 | `FOREMAN_VRAM_GUARD` | on | `off` dispatches without the memory-fit check (single-model installs) | `src/budget.ts` |

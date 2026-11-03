@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { config } from './config.ts';
 import { changedPaths } from './security/coreGuard.ts';
+import { gitTimeoutOpts, timedGit } from './gitTimeout.ts';
 import type { Task } from './types.ts';
 
 const exec = promisify(execFile);
@@ -124,7 +125,7 @@ export async function driverlessEnv(cwd: string, extra: NodeJS.ProcessEnv = {}):
   const read = async (dir: string, depth: number): Promise<void> => {
     const run = async (args: string[], ok: number[] = []): Promise<string> => {
       const env = pinnedEnv(depth === 0 ? extra : {});
-      return (await exec('git', [...PINNED, ...args], { cwd: dir, env, maxBuffer: 64 * 1024 * 1024 }).catch((err: { code?: unknown; stdout?: unknown }) => {
+      return (await timedGit(exec('git', [...PINNED, ...args], { cwd: dir, env, maxBuffer: 64 * 1024 * 1024, ...gitTimeoutOpts() }), args).catch((err: { code?: unknown; stdout?: unknown }) => {
         if (typeof err.code === 'number' && ok.includes(err.code)) return { stdout: typeof err.stdout === 'string' ? err.stdout : '' };
         throw err;
       })).stdout;
@@ -189,7 +190,7 @@ export async function pinnedGit(cwd: string, args: string[], extra: NodeJS.Proce
 
 async function gitExec(cwd: string, args: string[], extra: NodeJS.ProcessEnv = {}): Promise<{ stdout: string; stderr: string }> {
   const drivers = runsNoDriver(args) ? {} : await driverlessEnv(cwd, extra);
-  return exec('git', [...PINNED, ...args], { cwd, env: pinnedEnv({ ...extra, ...drivers }), maxBuffer: 64 * 1024 * 1024 });
+  return timedGit(exec('git', [...PINNED, ...args], { cwd, env: pinnedEnv({ ...extra, ...drivers }), maxBuffer: 64 * 1024 * 1024, ...gitTimeoutOpts() }), args);
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -199,7 +200,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
 /** The same call with stdout as the bytes git wrote (a patch taken with --text is not all UTF-8). */
 async function gitBytes(cwd: string, args: string[]): Promise<Buffer> {
   const drivers = runsNoDriver(args) ? {} : await driverlessEnv(cwd);
-  const { stdout } = await exec('git', [...PINNED, ...args], { cwd, env: pinnedEnv(drivers), maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
+  const { stdout } = await timedGit(exec('git', [...PINNED, ...args], { cwd, env: pinnedEnv(drivers), maxBuffer: 64 * 1024 * 1024, encoding: 'buffer', ...gitTimeoutOpts() }), args);
   return stdout;
 }
 

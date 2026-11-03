@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { jailBase, type Jail } from '../isolate.ts';
+import { gitTimeoutOpts, timedGit } from '../gitTimeout.ts';
 import { isTestPath } from './literals.ts';
 import { FailingBlocks } from './suiteOutput.ts';
 import type { TestResult } from './tests.ts';
@@ -161,12 +162,12 @@ const NOT_INHERITED = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTOR
 async function repoGit(repo: string, args: string[]): Promise<string> {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) if (!NOT_INHERITED.test(key)) env[key] = value;
-  const { stdout } = await exec('git', [...PINNED, '--no-optional-locks', ...args], {
+  const { stdout } = await timedGit(exec('git', [...PINNED, '--no-optional-locks', ...args], {
     cwd: repo,
     env: { ...env, GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' },
     maxBuffer: 64 * 1024 * 1024,
-    timeout: 30_000,
-  });
+    ...gitTimeoutOpts(),
+  }), args);
   return stdout;
 }
 

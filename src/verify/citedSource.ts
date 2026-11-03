@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { config } from '../config.ts';
+import { gitTimeoutOpts } from '../gitTimeout.ts';
 import { readJailFile } from './jailRead.ts';
 import { isDocPath } from './revertCheck.ts';
 
@@ -120,7 +121,7 @@ function listedByGit(dir: string): string[] | null {
     const env: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(process.env)) if (!NOT_INHERITED.test(key)) env[key] = value;
     const raw = execFileSync('git', ['-C', dir, ...PINNED, '--no-optional-locks', 'ls-files', '-z'], {
-      encoding: 'utf8', timeout: 5_000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8', ...gitTimeoutOpts(), maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
       env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' },
     });
     return raw.split('\0').filter(Boolean);
