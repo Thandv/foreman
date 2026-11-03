@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 import assert from 'node:assert/strict';
@@ -39,7 +39,7 @@ async function until(cond: () => boolean, ms: number): Promise<boolean> {
 }
 
 function scratch(): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-left-')));
+  return fs.realpathSync(scratchDir('foreman-left-'));
 }
 
 function readPid(file: string): number {

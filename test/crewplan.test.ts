@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -79,7 +79,7 @@ You write the draft.
 `);
 
 function withPlaybooks(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crewpb-'));
+  const dir = scratchDir('foreman-crewpb-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
   return dir;
@@ -104,7 +104,7 @@ interface Stub {
  * real CLI, and FOREMAN_CLAUDE_BIN is the only seam it needs.
  */
 function stubClaude(body: string): Stub {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-stubcli-'));
+  const dir = scratchDir('foreman-stubcli-');
   const bin = path.join(dir, 'claude');
   const bodyFile = path.join(dir, 'body.json');
   const logFile = path.join(dir, 'argv.log');
@@ -751,7 +751,7 @@ test('every owner call settles a receipt, so planning spend is visible', async (
 // --------------------------------------------------------------- ownerCall
 
 test('ownerCall: a timeout kills the child rather than abandoning it', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slowcli-'));
+  const dir = scratchDir('foreman-slowcli-');
   const bin = path.join(dir, 'claude');
   const marker = path.join(dir, 'survived');
   fs.writeFileSync(bin, `#!/bin/sh\nsleep 1\ntouch "${marker}"\n`);
@@ -769,7 +769,7 @@ test('ownerCall: a timeout kills the child rather than abandoning it', async () 
 });
 
 test('ownerCall: the envelope decides, not the exit code', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-envcli-'));
+  const dir = scratchDir('foreman-envcli-');
   const bodyFile = path.join(dir, 'body.json');
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(bin, `#!/bin/sh\ncat "${bodyFile}"\nexit 3\n`);
@@ -883,7 +883,7 @@ test('crewPlan: with a repo, the planner prompt carries the repo snapshot and th
   const pbDir = withPlaybooks({ 'soft.md': SOFTWARE });
   const stub = stubClaude(envelope(PLAN_REPLY));
   const store = new Store(':memory:');
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-planrepo-'));
+  const repo = scratchDir('foreman-planrepo-');
   fs.writeFileSync(path.join(repo, 'SPEC.md'), 'BINDING-SPEC-MARKER: terminal over SSE');
   fs.mkdirSync(path.join(repo, 'ui'));
   fs.writeFileSync(path.join(repo, 'ui', 'vendored.js'), '//');
@@ -1081,7 +1081,7 @@ const DOC_REPLY = JSON.stringify({ epic: { title: 'Lock work', summary: 'docs an
 
 /** A repo with a README, a docs folder and source; `gated` gives it a suite of its own (package.json `test`). */
 function docRepo(gated: boolean): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-kindrepo-'));
+  const repo = scratchDir('foreman-kindrepo-');
   fs.writeFileSync(path.join(repo, 'README.md'), '# Demo\n');
   fs.mkdirSync(path.join(repo, 'docs'));
   fs.mkdirSync(path.join(repo, 'src'));

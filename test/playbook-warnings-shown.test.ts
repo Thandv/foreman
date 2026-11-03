@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,7 +25,7 @@ const PLAN = JSON.stringify({
 });
 
 async function world(fn: (port: number) => Promise<void>, skills: unknown[] = ['Bad Name!']): Promise<void> {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pb-warnings-')));
+  const base = fs.realpathSync(scratchDir('foreman-pb-warnings-'));
   const pbDir = path.join(base, 'playbooks');
   fs.mkdirSync(pbDir);
   const fm = {
@@ -73,7 +73,7 @@ async function world(fn: (port: number) => Promise<void>, skills: unknown[] = ['
 }
 
 async function cli(port: number, argv: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pb-warnings-cli-'));
+  const home = scratchDir('foreman-pb-warnings-cli-');
   try {
     const child = spawn(process.execPath, [CLI, ...argv], {
       env: { ...process.env, FOREMAN_HOME: home, FOREMAN_PORT: String(port), FOREMAN_HOST: '127.0.0.1' },

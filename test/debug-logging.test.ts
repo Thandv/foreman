@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -92,7 +92,7 @@ test('a failed model call logs an end line with status=error and the error type'
 test('a spawn logs argv0, the argument count, cwd and the exit code but not an argument', async (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
   const lines = captureStderr(t);
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debug-'));
+  const cwd = scratchDir('foreman-debug-');
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   const code = await spawnStreaming(process.execPath, ['-e', 'process.exit(3)', SENTINEL], { cwd, signal: new AbortController().signal, onLine() {} });
   assert.equal(code, 3);
@@ -132,7 +132,7 @@ test('a non-OK ollama version answer ends with one line, carrying its status', a
 test('a spawn that cannot start logs an end line with status=error and the code', async (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
   const lines = captureStderr(t);
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debug-'));
+  const cwd = scratchDir('foreman-debug-');
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   await assert.rejects(spawnStreaming(path.join(cwd, 'no-such-program'), [SENTINEL], { cwd, signal: new AbortController().signal, onLine() {} }), { code: 'ENOENT' });
   assert.match(lines.join(''), /spawn end argv0=no-such-program argc=2 .*status=error error=ENOENT ms=\d+/);
@@ -141,7 +141,7 @@ test('a spawn that cannot start logs an end line with status=error and the code'
 
 test('the claude -p path logs its spawn start and end (exit 0 and 1), never the prompt, the reply or the CLI output', async (t) => {
   setEnv(t, 'FOREMAN_DEBUG', '1');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-debug-'));
+  const dir = scratchDir('foreman-debug-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // A stand-in CLI: the prompt rides in argv after -p. It echoes every argument to stderr and the prompt back as
   // the reply; with FAKE_CLAUDE_FAIL set it exits 1, and execFile's error message then quotes the whole command line.

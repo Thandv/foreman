@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -67,7 +67,7 @@ test('test weakening: .only is hard, an added skip and a deleted test file are s
 });
 
 test('required content: a missing section is found in a changed markdown file, for the roles it names only', () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-'));
+  const tree = scratchDir('foreman-det-');
   fs.writeFileSync(path.join(tree, 'memo.md'), '# Thesis\n\nThis is research, not financial advice.\n\n## Exit criteria\n');
   const inv = pbOf('investment');
   const files = parseDiffFiles(diffOf('memo.md', ['# Thesis']));
@@ -96,7 +96,7 @@ test('the slider: generative drops the heuristic test findings but keeps the har
 });
 
 function playbookWith(patch: (fm: Record<string, unknown>) => void): { refused: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-pb-'));
+  const dir = scratchDir('foreman-det-pb-');
   const fm: Record<string, unknown> = {
     id: 'det', description: 'det', triggers: ['det'], roles: { dev: { tier: 'worker' }, senior: { tier: 'senior' } },
     reviewers: [{ role: 'senior', style: 'code-review' }], escalation: { chair: 'senior', afterFailures: 2 },
@@ -188,7 +188,7 @@ test('more credential shapes; a tracked .env edit is a soft note, a new one is h
 });
 
 test('required content is not read through a symlinked directory that leads out of the tree', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-ln-'));
+  const base = scratchDir('foreman-det-ln-');
   const tree = path.join(base, 'tree');
   const outside = path.join(base, 'outside');
   fs.mkdirSync(tree);
@@ -213,7 +213,7 @@ test('pre-review rounds: soft findings alone get one round, hard ones are always
 
 test('required content: an oversized file is a finding, not a silent skip; an empty roles list refuses the playbook', async () => {
   const { MAX_REQUIRED_BYTES } = await import('../src/verify/determinism.ts');
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-big-'));
+  const tree = scratchDir('foreman-det-big-');
   fs.writeFileSync(path.join(tree, 'memo.md'), 'x'.repeat(MAX_REQUIRED_BYTES + 1));
   const found = requiredContentFindings(pbOf('investment'), 'analyst', parseDiffFiles(diffOf('memo.md', ['x'])), tree);
   assert.equal(found.length, 1);
@@ -223,7 +223,7 @@ test('required content: an oversized file is a finding, not a silent skip; an em
 
 test('required content: a file exactly at the cap is checked, and the over-cap finding names every label', async () => {
   const { MAX_REQUIRED_BYTES } = await import('../src/verify/determinism.ts');
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-cap-'));
+  const tree = scratchDir('foreman-det-cap-');
   const head = '# Thesis\n\n## Bear case\n\nThis is research, not financial advice.\n';
   fs.writeFileSync(path.join(tree, 'memo.md'), head + 'x'.repeat(MAX_REQUIRED_BYTES - Buffer.byteLength(head)));
   const files = parseDiffFiles(diffOf('memo.md', ['x']));
@@ -237,7 +237,7 @@ test('required content: a file exactly at the cap is checked, and the over-cap f
 
 test('required content: a file swapped for a FIFO after the lstat does not hang the daemon on open', { skip: process.platform === 'win32' }, async () => {
   const { execFileSync, spawnSync } = await import('node:child_process');
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-det-fifo-'));
+  const tree = scratchDir('foreman-det-fifo-');
   execFileSync('mkfifo', [path.join(tree, 'notes.md')]);
   // In a child with a deadline: a blocking open stalls the event loop, so this process's own timers could not fire.
   // lstat is made to report a regular file, standing in for the swap between the lstat and the open.

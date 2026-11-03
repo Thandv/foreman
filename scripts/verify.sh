@@ -43,9 +43,14 @@ echo "tests…"
 # failing gate (and the post-merge check and re-check that run this) lost the
 # assertion that failed.
 out="$(mktemp "${TMPDIR:-/tmp}/foreman-verify.XXXXXX")" || { echo "verify: FAIL (could not create a temp file)"; exit 1; }
-trap 'rm -f "$out"' EXIT
+# The suite runs with a TMPDIR of its own, empty to start with, so what it leaves behind is countable whatever is
+# already in the operator's temp dir (58k stale foreman-* entries had piled up there). It is removed with the output file.
+# It is made under /tmp when that is writable (else under TMPDIR) with a very short name: unix socket paths under
+# the suite's TMPDIR are capped at 104 bytes on macOS, and the user's TMPDIR there is already 49 bytes long.
+fresh_tmp="$(mktemp -d /tmp/v.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/v.XXXXXX")" || { echo "verify: FAIL (could not create a temp dir for the suite)"; exit 1; }
+trap 'rm -f "$out"; rm -rf "$fresh_tmp"' EXIT
 status=0
-npm test >"$out" 2>&1 || status=$?
+TMPDIR="$fresh_tmp" npm test >"$out" 2>&1 || status=$?
 # The result is decided. Nothing printed below may change it, so errexit is off
 # from here: a grep that matches nothing must not turn a pass into a failure, nor
 # a failing suite's status into grep's.
@@ -117,6 +122,18 @@ for f in ${checks[@]+"${checks[@]}"}; do
     check_status=$c
   fi
 done
+# Temp-dir leaks: every foreman-* entry the suite left in its fresh TMPDIR is a test (or a src helper) that made a
+# temp dir and never removed it. Fails verify like a check does, naming the entries (capped at 20 lines).
+leaked=()
+shopt -s nullglob
+leaked=("$fresh_tmp"/foreman-*)
+shopt -u nullglob
+if [ "${#leaked[@]}" -gt 0 ]; then
+  echo "verify: the suite left ${#leaked[@]} foreman-* entries in its temp dir:"
+  printf '  %s\n' "${leaked[@]##*/}" | head -20
+  echo "verify: FAIL (${#leaked[@]} foreman-* temp entries left behind by the tests)"
+  [ "$check_status" -eq 0 ] && check_status=1
+fi
 if [ "$status" -eq 0 ]; then
   [ "$check_status" -eq 0 ] && echo "verify: PASS"
   exit "$check_status"

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -20,7 +20,7 @@ function run(
   checks: Record<string, string> = {},
   opts: { env?: Record<string, string>; noChecksDir?: boolean; timeoutMs?: number } = {},
 ): { status: number | null; out: string; ms: number } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-verifychecks-'));
+  const dir = scratchDir('foreman-verifychecks-');
   try {
     fs.mkdirSync(path.join(dir, 'scripts', opts.noChecksDir ? '' : 'checks'), { recursive: true });
     fs.copyFileSync(VERIFY, path.join(dir, 'scripts', 'verify.sh'));
@@ -167,7 +167,7 @@ test('with no override the per-check limit is generous: a check taking a few sec
 });
 
 test('Ctrl-C while a check runs stops that check and verify itself; later checks do not run', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-verifychecks-'));
+  const dir = scratchDir('foreman-verifychecks-');
   try {
     fs.mkdirSync(path.join(dir, 'scripts', 'checks'), { recursive: true });
     fs.copyFileSync(VERIFY, path.join(dir, 'scripts', 'verify.sh'));

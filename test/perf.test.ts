@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +13,7 @@ import type { Task } from '../src/types.ts';
 // --------------------------------------------------------------- fixtures
 
 function scratch(tag: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `foreman-perf-${tag}-`));
+  return scratchDir(`foreman-perf-${tag}-`);
 }
 
 /** A `claude` stand-in that records every invocation, so execs can be counted. */

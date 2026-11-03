@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { NEEDS_PS, procGuard, snapshotFrozen } from './helpers/procguard.ts';
 
 function fakeRealHome(t: test.TestContext): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-fakereal-'));
+  const dir = scratchDir('foreman-fakereal-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

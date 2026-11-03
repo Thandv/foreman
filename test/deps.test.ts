@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ import { copyTree, depsCacheRoot, installIsCurrent, lockHash, provisionDeps, pru
  * that silently failed the gate before dependency provisioning existed.
  */
 function npmRepo(opts: { ignoreModules?: boolean; withModules?: boolean; lock?: string } = {}): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-npm-'));
+  const dir = scratchDir('foreman-npm-');
   const git = (...a: string[]): void => { execFileSync('git', a, { cwd: dir, stdio: 'ignore' }); };
   git('init', '-q');
   git('config', 'user.email', 't@e.st');
@@ -42,7 +42,7 @@ function npmRepo(opts: { ignoreModules?: boolean; withModules?: boolean; lock?: 
 }
 
 function jailFrom(repo: string): string {
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
   execFileSync('git', ['worktree', 'add', '-q', '--detach', jail, 'HEAD'], { cwd: repo, stdio: 'ignore' });
   return jail;
 }
@@ -142,7 +142,7 @@ test('provisioning is skipped when it would be wrong to do it', async () => {
   assert.match((await provisionDeps(trackedJail, tracked)).reason, /tracked by git/);
 
   // A non-npm project.
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-plain-'));
+  const plain = scratchDir('foreman-plain-');
   assert.match((await provisionDeps(plain, plain)).reason, /not an npm project/);
 
   // A jail that already has a tree is left alone.
@@ -256,7 +256,7 @@ test("the repo's own tree is placed the same way: its .bin link is relative and 
 
 test('a link that leads out of the jail is dropped and named, never recreated or followed; one that stays inside the jail is kept', async () => {
   const f = cachedRepo();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-outside-'));
+  const outside = scratchDir('foreman-outside-');
   fs.writeFileSync(path.join(outside, 'secret'), 'OUTSIDE-CONTENT\n');
   const bin = path.join(f.cached, '.bin');
   // Absolute into the cache itself (what an older Foreman's copy made), absolute elsewhere, and relative but climbing out.
@@ -295,7 +295,7 @@ test('a link that leads out of the jail is dropped and named, never recreated or
 
 test("dropping links never reaches outside the jail or the jail's own files: a directory a dropped link pointed at keeps its own links, a link that leaves through the jail's own link is dropped, and past twenty the rest are counted", async () => {
   const f = cachedRepo();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-outside-'));
+  const outside = scratchDir('foreman-outside-');
   fs.mkdirSync(path.join(outside, 'deep'));
   fs.writeFileSync(path.join(outside, 'secret'), 'OUTSIDE-CONTENT\n');
   // The outside directory has links of its own that lead out of the jail: a walk that went THROUGH a link would remove them.
@@ -359,8 +359,8 @@ test('a jail whose .bin links lead out of it (placed by an older Foreman) is re-
 });
 
 test('copyTree, the copy an install takes into the cache across devices, keeps links as written', async () => {
-  const from = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-staging-'));
-  const to = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cachecopy-')), 'node_modules');
+  const from = scratchDir('foreman-staging-');
+  const to = path.join(scratchDir('foreman-cachecopy-'), 'node_modules');
   addTool(path.join(from, 'node_modules'));
   await copyTree(path.join(from, 'node_modules'), to);
   assert.equal(fs.readlinkSync(path.join(to, '.bin', 'tool')), '../tool/bin/tool');
@@ -451,7 +451,7 @@ test("what a run that died mid-copy left beside the jail is removed on the next 
 
 /** A stand-in for /bin/cp that copies part of the tree and then fails, the way a clone across volumes might. */
 function halfClone(): { bin: string; dir: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-halfclone-'));
+  const dir = scratchDir('foreman-halfclone-');
   const bin = path.join(dir, 'cp');
   fs.writeFileSync(bin, '#!/bin/sh\n# argv: -c -R <from> <to>\nmkdir -p "$4/HALF-CLONED"\nexit 1\n', { mode: 0o755 });
   return { bin, dir };
@@ -480,7 +480,7 @@ test('on macOS the tree is placed by the clone command, and the reason does not 
   const result = await provisionDeps(f.jail, f.repo, { allowInstall: false });
   assert.match(result.reason, /^cloned the cached install for lockfile \w+$/);
   const from = path.join(f.cached, 'tool');
-  const to = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-clonecopy-')), 'tool');
+  const to = path.join(scratchDir('foreman-clonecopy-'), 'tool');
   assert.equal(await copyTree(from, to), 'clone');
   assert.equal(await copyTree(from, `${to}-plain`, null), 'copy');
   // A clone is still a copy: writing to it does not reach the tree it was cloned from.
@@ -492,7 +492,7 @@ test('on macOS the tree is placed by the clone command, and the reason does not 
 
 test("a repo whose node_modules is a link to a tree elsewhere: the jail gets the tree itself, and the tree it points at loses nothing", async () => {
   const repo = npmRepo({ withModules: false });
-  const real = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-realmods-')), 'node_modules');
+  const real = path.join(scratchDir('foreman-realmods-'), 'node_modules');
   fs.mkdirSync(real, { recursive: true });
   addTool(real);
   fs.writeFileSync(path.join(real, '.package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
@@ -579,7 +579,7 @@ test('off macOS /bin/cp is never run: `cp -c` is another command there, and the 
   try {
     const result = await provisionDeps(f.jail, f.repo, { allowInstall: false });
     assert.match(result.reason, /^cloned the cached install for lockfile \w+ by plain copy \(no copy-on-write here\)$/);
-    const to = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-nolinuxclone-')), 'tool');
+    const to = path.join(scratchDir('foreman-nolinuxclone-'), 'tool');
     assert.equal(await copyTree(path.join(f.cached, 'tool'), to), 'copy');
     fs.rmSync(path.dirname(to), { recursive: true, force: true });
   } finally {

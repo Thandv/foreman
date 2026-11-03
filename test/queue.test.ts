@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -372,7 +372,7 @@ test('a retry without a note leaves the operator demands alone', () => {
 
 test('reopen puts a review-failed ticket back at the human gate with its work, and revives what the failure killed', () => {
   const s = store();
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-reopen-'));
+  const wt = scratchDir('foreman-reopen-');
   try {
     const a = s.addTask({ title: 'a', prompt: 'a', runner: 'echo' });
     const b = s.addTask({ title: 'b', prompt: 'b', runner: 'echo', deps: [a.id] });

@@ -1,4 +1,4 @@
-import { testHome } from './env.ts';
+import { testHome, scratchDir, privateTmpdir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,6 +15,8 @@ import { verifySlotStats } from '../src/verify/slots.ts';
 import { wrappableCommand } from '../src/verify/testSlot.ts';
 import { backgroundTestPending } from '../src/verify/backgroundRun.ts';
 import { resetPreflightCache } from '../src/runners/cliRunners.ts';
+
+privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
 
 const WRAPPER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'verify', 'testSlot.ts');
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -51,7 +53,7 @@ async function daemon(): Promise<{ port: number; close: () => Promise<void> }> {
  * are active at that moment (itself included), sleeps, then unmarks itself.
  */
 function stubSuite(): { dir: string; cmd: (sleepMs: number) => string; peak: () => number; started: () => number; activePids: () => number[] } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-suite-'));
+  const dir = scratchDir('foreman-suite-');
   const script = path.join(dir, 'suite.mjs');
   fs.writeFileSync(
     script,
@@ -230,7 +232,7 @@ test('backgroundTestPending: a test run left in the background is caught; a fini
 // --------------------------------------- D2: background run is resumed, not reviewed
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-bg-repo-'));
+  const dir = scratchDir('foreman-bg-repo-');
   const git = (...args: string[]): void => void execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 'test@example.com');
@@ -246,7 +248,7 @@ function fixtureRepo(): string {
  * a cold run ends with `firstMsg`, a --resume run with `resumedMsg`.
  */
 function stubClaude(firstMsg: string, resumedMsg: string, resumeFails = false): { dir: string; runs: () => string[][] } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-bg-cli-'));
+  const dir = scratchDir('foreman-bg-cli-');
   const log = path.join(dir, 'argv.log');
   fs.writeFileSync(path.join(dir, 'first'), JSON.stringify(firstMsg));
   fs.writeFileSync(path.join(dir, 'resumed'), JSON.stringify(resumedMsg));
@@ -353,7 +355,7 @@ test('with no session to resume, a background test run is requeued as a repair r
 
 /** A one-reviewer crew playbook 'solo' in FOREMAN_PLAYBOOKS_DIR; returns its dir. */
 function soloPlaybook(): string {
-  const pbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-bg-pb-'));
+  const pbDir = scratchDir('foreman-bg-pb-');
   fs.writeFileSync(path.join(pbDir, 'solo.md'), `---
 ${JSON.stringify({
     id: 'solo', description: 'One reviewer.', triggers: ['solo'],
@@ -461,7 +463,7 @@ test('the wrapper gives up past FOREMAN_SLOT_WAIT_MS without running the command
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slotwait-'));
+  const work = scratchDir('foreman-slotwait-');
   const marker = path.join(work, 'ran');
   try {
     let stderr = '';

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 // Starts a scratch serve with the given FOREMAN_HOME (cwd a scratch parent) and returns its stdout+stderr up to and
 // including the "foreman up" line: every startup line is written before it, so the whole startup output is in hand.
 async function startupOutput(t: test.TestContext, homeFor: (parent: string) => string): Promise<{ parent: string; out: string }> {
-  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-homeline-')));
+  const parent = fs.realpathSync(scratchDir('foreman-homeline-'));
   const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
   const env: NodeJS.ProcessEnv = {
     ...process.env, FOREMAN_HOME: homeFor(parent), FOREMAN_DB: path.join(parent, 'scratch.db'), FOREMAN_PORT: '0',

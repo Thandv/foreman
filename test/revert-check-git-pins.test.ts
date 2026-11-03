@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +21,7 @@ const sh = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd
 
 function fixture(t: TestContext): { root: string; repo: string; jail: string; workRoot: string; base: string; marker: string; payload: string } {
   genv = hermeticGitEnv(t);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revert-pins-')));
+  const root = fs.realpathSync(scratchDir('foreman-revert-pins-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   const jail = path.join(root, 'jail');

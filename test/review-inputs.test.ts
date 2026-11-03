@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -61,7 +61,7 @@ export interface Rig {
  * prints the canned reply.
  */
 export function rig(files: Record<string, string> = {}): Rig {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revin-'));
+  const dir = scratchDir('foreman-revin-');
   fs.writeFileSync(path.join(dir, 'solo.md'), SOLO);
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(
@@ -82,7 +82,7 @@ export function rig(files: Record<string, string> = {}): Rig {
   process.env['FOREMAN_CLAUDE_BIN'] = bin;
   process.env['FOREMAN_CREW_REVIEW'] = 'always';
   resetPreflightCache();
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revin-repo-'));
+  const repo = scratchDir('foreman-revin-repo-');
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: repo, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 't@example.com');
@@ -319,7 +319,7 @@ const proseDiff = (file: string, lines: string[]): string =>
 
 /** A committed git tree holding `files`; removed when the test ends. */
 function gitTree(t: { after: (fn: () => void) => void }, files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-cited-'));
+  const dir = scratchDir('foreman-cited-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
   git('init', '-q');

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ import { Scheduler } from '../src/scheduler.ts';
 
 /** Point FOREMAN_PLAYBOOKS_DIR at a fresh temp dir and write one file into it. */
 function withPlaybookDir(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-playbooks-'));
+  const dir = scratchDir('foreman-playbooks-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, contents] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, name), contents);
@@ -181,7 +181,7 @@ test('loadPlaybooks: caches the parsed catalog by reference until the directory 
 
 test('loadPlaybooks: a missing playbooks dir is cached too, and still reflects the dir appearing later', () => {
   clearPlaybookCache();
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-playbooks-missing-'));
+  const parent = scratchDir('foreman-playbooks-missing-');
   const dir = path.join(parent, 'does-not-exist-yet');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   try {
@@ -319,7 +319,7 @@ test('the repo publishing.md, investment.md, and research.md seeds all load vali
 // ------------------------------------------------------- checks in test stage
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-playbook-repo-'));
+  const dir = scratchDir('foreman-playbook-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };

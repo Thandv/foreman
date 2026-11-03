@@ -1,4 +1,4 @@
-import { realHomes } from './env.ts';
+import { realHomes, scratchDir, privateTmpdir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,6 +9,8 @@ import { config } from '../src/config.ts';
 import { sandboxAvailable, wrap } from '../src/security/sandbox.ts';
 import { installProcessRecorder } from '../src/runners/freezeInstall.ts';
 import { resetFreezeRecorderForTest, type FreezeRecord } from '../src/runners/freezeRecord.ts';
+
+privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
 import { foreignPids, frozenChanges, NEEDS_PS as PS, ownFrozenChanges, procGuard, processParents, recordPids, snapshotFrozen, type FrozenSnapshot, type ProcGuard } from './helpers/procguard.ts';
 
 // Where the freeze recorder is installed (src/cli.ts, src/verify/testSlot.ts) and what that does to a home. Every
@@ -139,7 +141,7 @@ test('serve sweeps before it installs its recorder: its marker is absent during 
 
 test('testSlot.ts: the suite\'s detached leftover group is recorded under the home while it is frozen, and nothing is left after', NEEDS_PS, async (t) => {
   const g = procGuard(t);
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slotwire-'));
+  const work = scratchDir('foreman-slotwire-');
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   fs.writeFileSync(
     path.join(work, 'leftover.cjs'),
@@ -186,7 +188,7 @@ setTimeout(() => {}, 700);\n`,
 
 test('a suite run under testSlot records nothing in the live home while its tests run, even when they start the CLI', NEEDS_PS, async (t) => {
   const g = procGuard(t); // g.home stands for the daemon's absolute home, the one testSlot is given
-  const ctrl = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slotiso-'));
+  const ctrl = scratchDir('foreman-slotiso-');
   t.after(() => fs.rmSync(ctrl, { recursive: true, force: true }));
   const live = liveFrozen();
   const env = { ...g.env, FOREMAN_WORKER_TEST_CMD: `node ${INNER} ${ctrl}`, FOREMAN_PORT: '1', FOREMAN_SANDBOX: 'off' };
@@ -249,7 +251,7 @@ const SANDBOX_SKIP = sandboxAnswer === 'ok' ? false : `the sandbox cannot be exe
 
 test('a worker\'s testSlot inside the worker sandbox cannot write the home: it says so, writes nothing, and the suite still passes', { skip: SANDBOX_SKIP, timeout: 170_000 }, async (t) => {
   const g = procGuard(t);
-  const area = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slotbox-')));
+  const area = fs.realpathSync(scratchDir('foreman-slotbox-'));
   t.after(() => fs.rmSync(area, { recursive: true, force: true }));
   const dirs = Object.fromEntries(['jail', 'tmp', 'home', 'cfg'].map((n) => [n, path.join(area, n)]));
   for (const d of Object.values(dirs)) fs.mkdirSync(d);
@@ -280,7 +282,7 @@ test('a worker\'s testSlot inside the worker sandbox cannot write the home: it s
 // so the guard sees no frozen/ at all, before and after, where a listing would throw EPERM in every guarded test.
 test('inside the suite sandbox the recorder writes only under the run\'s own home, and the guard cannot see Foreman\'s home', { skip: SANDBOX_SKIP, timeout: 170_000 }, async (t) => {
   const g = procGuard(t);
-  const area = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-slotbox-')));
+  const area = fs.realpathSync(scratchDir('foreman-slotbox-'));
   t.after(() => fs.rmSync(area, { recursive: true, force: true }));
   const dirs = Object.fromEntries(['jail', 'tmp', 'home', 'cfg'].map((n) => [n, path.join(area, n)]));
   for (const d of Object.values(dirs)) fs.mkdirSync(d);

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { after, before, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -30,7 +30,7 @@ function setEnv(t: TestContext, name: string, value: string): void {
 }
 
 test('a persona server that cannot be spawned resolves not-serving at once and removes its pid file', async (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-persona-spawn-'));
+  const home = scratchDir('foreman-persona-spawn-');
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const emptyBin = path.join(home, 'bin');
   fs.mkdirSync(emptyBin);

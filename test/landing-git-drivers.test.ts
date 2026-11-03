@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -34,7 +34,7 @@ interface Fx { root: string; repo: string; marks: string; prog: string }
 
 function fixture(t: TestContext, files: Record<string, string> = { 'a.txt': 'one\n' }): Fx {
   genv = hermeticGitEnv(t);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-landdrv-')));
+  const root = fs.realpathSync(scratchDir('foreman-landdrv-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(repo);

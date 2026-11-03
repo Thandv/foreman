@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -54,7 +54,7 @@ test('modelForTask: no agent and no role returns null (runner default applies)',
 });
 
 test('modelForTask: an explicit agent model wins over the role tier', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crew-agents-'));
+  const dir = scratchDir('foreman-crew-agents-');
   process.env['FOREMAN_AGENTS_DIR'] = dir;
   fs.writeFileSync(path.join(dir, 'dev.json'), JSON.stringify({
     id: 'dev', description: 'pinned worker', systemPrompt: 'You write code.', model: 'sonnet-1m',
@@ -69,7 +69,7 @@ test('modelForTask: an explicit agent model wins over the role tier', async () =
 });
 
 test('modelForTask: an agent without a model falls back to the role tier', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crew-agents2-'));
+  const dir = scratchDir('foreman-crew-agents2-');
   process.env['FOREMAN_AGENTS_DIR'] = dir;
   fs.writeFileSync(path.join(dir, 'plain.json'), JSON.stringify({
     id: 'plain', description: 'no pinned model', systemPrompt: 'You write code.',
@@ -247,7 +247,7 @@ test('the resumed brief is the critique alone — no role prompt, no ticket, no 
 // ------------------------------------------------- resume, end to end
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crew-repo-'));
+  const dir = scratchDir('foreman-crew-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };
@@ -275,7 +275,7 @@ interface CliStub {
  * non-zero WITHOUT an init line, exactly as the CLI does on an unknown --resume.
  */
 function stubClaudeCli(failRound: number | null = null): CliStub {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-crew-cli-'));
+  const dir = scratchDir('foreman-crew-cli-');
   const log = path.join(dir, 'argv.log');
   const count = path.join(dir, 'count');
   const bin = path.join(dir, 'claude');

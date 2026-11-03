@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -18,7 +18,7 @@ import type { AddressInfo } from 'node:net';
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
 function repo(files: Record<string, string>): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-landing-')));
+  const dir = fs.realpathSync(scratchDir('foreman-landing-'));
   git(dir, 'init', '-q'); git(dir, 'config', 'user.email', 't@e.x'); git(dir, 'config', 'user.name', 'T');
   for (const [f, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), body);
   git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
@@ -122,7 +122,7 @@ function flakyRepo(counter: string, failFirst: number): string {
     `if [ "$n" -le ${failFirst} ]; then echo "FAIL-RUN-$n"; exit 1; fi; echo "PASS-RUN-$n"`;
   return repo({ 'package.json': JSON.stringify({ name: 'x', version: '1.0.0', scripts: { test: script } }) });
 }
-const counterFile = (): string => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-flake-')), 'runs');
+const counterFile = (): string => path.join(scratchDir('foreman-flake-'), 'runs');
 const runsIn = (counter: string): number => (fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8').split('\n').filter(Boolean).length : 0);
 const eventText = (store: Store, id: string): string => store.eventsForTask(id).map((e) => e.message).join('\n---\n');
 
@@ -411,7 +411,7 @@ test('a file written between the check and the commit is caught on the commit it
 
 test('config the jail can write neither changes the tree nor runs anything while it is computed', async () => {
   const f = await reviewed();
-  const markers = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-markers-'));
+  const markers = scratchDir('foreman-markers-');
   try {
     const before = await jailTree(f.jail);
     assert.equal(before, f.run.reviewedTree, 'the tree the scheduler recorded is the tree of the parked worktree');
@@ -532,7 +532,7 @@ test('the approve endpoint takes the tree to land as-is from a person, and refus
 });
 
 test('a worktree that changes while its diff is being collected is not parked: there is no one tree to review', async () => {
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-collect-'));
+  const out = scratchDir('foreman-collect-');
   const pid = path.join(out, 'pid');
   // The worker leaves a process behind that goes on writing to the worktree. (A post-index-change hook under
   // the worker's own core.hooksPath used to stand in for it here; Foreman's git no longer runs one — phase2.)
@@ -554,7 +554,7 @@ test('a worktree that changes while its diff is being collected is not parked: t
 });
 
 test('a DB created without runs.reviewed_tree migrates, reads null, and opens again unchanged', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-tree-db-'));
+  const dir = scratchDir('foreman-tree-db-');
   const file = path.join(dir, 'f.db');
   const columns = (): string[] => {
     const raw = new DatabaseSync(file);

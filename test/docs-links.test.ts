@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -99,7 +99,7 @@ test('every relative link and #anchor in the root and docs/ markdown points at s
 });
 
 test('a broken relative link and a broken #anchor in a planted tree are reported', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-doclinks-'));
+  const dir = scratchDir('foreman-doclinks-');
   try {
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'README.md'), '# Top\n\n[ok](docs/a.md#the-sandbox-foreman_sandbox) [gone](docs/missing.md) [bad](docs/a.md#nope)\n');

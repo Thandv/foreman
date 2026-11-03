@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -36,7 +36,7 @@ interface Fixture {
 
 /** A repo with one commit, and a jail (a detached worktree at that commit) for the work to be done in. */
 function fixture(t: TestContext, baseFiles: Record<string, string> = BASE_FILES, prepare?: (repo: string, root: string) => void): Fixture {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revert-')));
+  const root = fs.realpathSync(scratchDir('foreman-revert-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
   const jail = path.join(root, 'jail');
@@ -824,7 +824,7 @@ test('the runner is required: a call wired without one is a type error and throw
 // ---------------------------------------------------------- perFileTestCmd
 
 test('perFileTestCmd keeps the node flags of the test script and aims it at one file', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revert-cmd-'));
+  const dir = scratchDir('foreman-revert-cmd-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const withScript = (script: string | null): string | null => {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(script === null ? {} : { scripts: { test: script } }));
@@ -913,7 +913,7 @@ test('appliesOnMain: HEAD still at the base is same-base', async (t) => {
 // ------------------------------------------------------------ typecheckCmd
 
 test('typecheckCmd: tsc when there is a tsconfig and the gate does not already typecheck', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-revert-tsc-'));
+  const dir = scratchDir('foreman-revert-tsc-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   assert.equal(typecheckCmd(dir, 'npm test --silent'), null, 'no tsconfig.json');
   fs.writeFileSync(path.join(dir, 'tsconfig.json'), '{}');

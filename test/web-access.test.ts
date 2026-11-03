@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -51,7 +51,7 @@ test('the shell brief tells a research worker it may search and fetch; the opera
 
 test('web must name its hosts: open fetch, a bad host or an empty list refuses the playbook; a valid grant loads', () => {
   const load = (web: unknown): { ok: boolean; refused: string } => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-'));
+    const dir = scratchDir('foreman-web-');
     const fm = {
       id: 'webtest', description: 'w', triggers: ['webtest'], roles: { dev: { tier: 'worker' }, senior: { tier: 'senior' } },
       reviewers: [{ role: 'senior', style: 'code-review' }], escalation: { chair: 'senior', afterFailures: 2 },
@@ -91,7 +91,7 @@ test('evidence before claims: a constraint in research and investment; in publis
 });
 
 test('a ticket whose playbook is gone or opts out gets no web tools', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-off-'));
+  const dir = scratchDir('foreman-web-off-');
   const before = process.env['FOREMAN_PLAYBOOKS_DIR'];
   fs.copyFileSync(path.resolve('playbooks/research.md'), path.join(dir, 'research.md'));
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
@@ -147,7 +147,7 @@ test('a worker limited to its hosts is denied the hosts the CLI would fetch with
 });
 
 test('search is granted only when asked for, S0 is granted like S1, and the host list is bounded', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-web-search-'));
+  const dir = scratchDir('foreman-web-search-');
   const before = process.env['FOREMAN_PLAYBOOKS_DIR'];
   const text = fs.readFileSync(path.resolve('playbooks/research.md'), 'utf8');
   const withWeb = (web: string): void => {

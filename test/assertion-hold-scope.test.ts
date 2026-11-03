@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ import { assertionHold, assertionNote, changedAssertions, recordAssertionChanges
  */
 
 function gitDiff(t: { after: (fn: () => void) => void }, before: Record<string, string>, after: Record<string, string | null>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-hold-scope-'));
+  const dir = scratchDir('foreman-hold-scope-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): string => execFileSync('git', a, { cwd: dir, encoding: 'utf8' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T'); git('config', 'diff.renames', 'false');

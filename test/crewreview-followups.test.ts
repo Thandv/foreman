@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -34,7 +34,7 @@ async function filed(
   parentSkills: string[] | null,
   fn: (store: Store, parentId: string) => void,
 ): Promise<void> {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-followups-')));
+  const base = fs.realpathSync(scratchDir('foreman-followups-'));
   const saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   const pbDir = path.join(base, 'playbooks');
   const root = path.join(base, 'repo');

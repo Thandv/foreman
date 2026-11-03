@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ import { resolveSpec } from '../src/models.ts';
  * refuse it on the *real* path, for reads and for not-yet-created writes alike.
  */
 test('safePath refuses a read through a symlink that points out of the jail', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const base = scratchDir('foreman-jail-');
   const jail = path.join(base, 'jail');
   fs.mkdirSync(jail);
   const secret = path.join(base, 'secret');
@@ -33,7 +33,7 @@ test('safePath refuses a read through a symlink that points out of the jail', ()
 });
 
 test('safePath refuses a write to a new file underneath an escaping symlink', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const base = scratchDir('foreman-jail-');
   const jail = path.join(base, 'jail');
   fs.mkdirSync(jail);
   const outside = path.join(base, 'outside');
@@ -49,7 +49,7 @@ test('safePath refuses a write to a new file underneath an escaping symlink', ()
 test('safePath refuses a write through a dangling symlink whose target is outside the jail', () => {
   // existsSync follows the link, so a link to a file that does not exist yet
   // looked like a new file in the jail, and writeFileSync created its target.
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const base = scratchDir('foreman-jail-');
   const jail = path.join(base, 'jail');
   fs.mkdirSync(jail);
   const target = path.join(base, 'outside-profile');
@@ -64,7 +64,7 @@ test('safePath refuses a write through a dangling symlink whose target is outsid
 });
 
 test('safePath refuses absolute paths and .. traversal', () => {
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
   assert.throws(() => safePath(jail, '/etc/passwd'), /escapes the jail/);
   assert.throws(() => safePath(jail, '../../etc/passwd'), /escapes the jail/);
   assert.throws(() => safePath(jail, 'a/b/../../../etc/passwd'), /escapes the jail/);
@@ -72,7 +72,7 @@ test('safePath refuses absolute paths and .. traversal', () => {
 });
 
 test('safePath still allows ordinary paths, new files, and in-jail symlinks', () => {
-  const jail = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-')));
+  const jail = fs.realpathSync(scratchDir('foreman-jail-'));
   fs.mkdirSync(path.join(jail, 'src'), { recursive: true });
   fs.writeFileSync(path.join(jail, 'src', 'f.txt'), 'hi');
   fs.symlinkSync(path.join(jail, 'src'), path.join(jail, 'inlink')); // stays inside

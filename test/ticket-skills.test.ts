@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -91,7 +91,7 @@ interface World {
  * `unlisted` is a loaded dev skill the loadout does not offer.
  */
 async function world(fn: (w: World) => void | Promise<void>): Promise<void> {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ticket-skills-')));
+  const base = fs.realpathSync(scratchDir('foreman-ticket-skills-'));
   const root = path.join(base, 'repo');
   const pbDir = path.join(base, 'playbooks');
   for (const d of [path.join(root, 'skills'), pbDir]) fs.mkdirSync(d, { recursive: true });
@@ -159,7 +159,7 @@ const taskColumns = (file: string): string[] => {
 const BEFORE = '4288cb5';
 
 test('migration: a database created by the previous schema (its own db.ts) gains tasks.skills, and its rows read as the role default', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-olddb-'));
+  const dir = scratchDir('foreman-olddb-');
   try {
     let oldSource: string;
     try {
@@ -201,7 +201,7 @@ test('migration: a database created by the previous schema (its own db.ts) gains
 });
 
 test('migration: a database with every column but tasks.skills gains it on open, rows intact', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-olddb-'));
+  const dir = scratchDir('foreman-olddb-');
   try {
     const file = path.join(dir, 'foreman.db');
     const db = openDb(file);
@@ -799,7 +799,7 @@ const CLI = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
 
 /** Run the CLI as a child against the daemon on `port`; never the operator's. */
 async function cli(port: number, argv: string[], env: Record<string, string | undefined> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ticket-skills-cli-'));
+  const home = scratchDir('foreman-ticket-skills-cli-');
   try {
     const child = spawn(process.execPath, [CLI, ...argv], {
       env: { ...process.env, FOREMAN_HOME: home, FOREMAN_PORT: String(port), FOREMAN_HOST: '127.0.0.1', ...env },

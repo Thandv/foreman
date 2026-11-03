@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -69,7 +69,7 @@ test('a live run records its child pid on the run row and clears it on exit', as
 // ------------------------------------------------------------ pidfile locking
 
 test('the pidfile lock refuses a second daemon while the holder is alive', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-lock-'));
+  const home = scratchDir('foreman-lock-');
   const release = acquireDaemonLock(home); // holder = this (live) process
   assert.equal(fs.readFileSync(path.join(home, 'daemon.pid'), 'utf8').trim(), String(process.pid));
   assert.throws(() => acquireDaemonLock(home, process.pid + 1), DaemonLockError);
@@ -80,7 +80,7 @@ test('the pidfile lock refuses a second daemon while the holder is alive', () =>
 });
 
 test('a stale lock from a dead pid is reclaimed, and garbage is treated as stale', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-lock-'));
+  const home = scratchDir('foreman-lock-');
   const file = path.join(home, 'daemon.pid');
 
   const dead = spawn('sleep', ['0']);

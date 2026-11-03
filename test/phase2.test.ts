@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ import { probeTask } from '../src/types.ts';
 import type { AdvisorOpinion, Task } from '../src/types.ts';
 
 function repo(files: Record<string, string> = { 'README.md': 'base\n' }): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-p2-'));
+  const dir = scratchDir('foreman-p2-');
   const git = (...a: string[]): void => { execFileSync('git', a, { cwd: dir, stdio: 'ignore' }); };
   git('init', '-q');
   git('config', 'user.email', 't@e.st');
@@ -331,7 +331,7 @@ test('council prompts share a byte-identical static prefix across different task
 // ------------------------------------------------------------------ tests
 
 test('test command detection recognises common projects', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-detect-'));
+  const dir = scratchDir('foreman-detect-');
   assert.equal(detectTestCmd(dir), null);
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest' } }));
   assert.match(detectTestCmd(dir)!, /npm test/);
@@ -738,7 +738,7 @@ test('prune keeps an approved branch until its work has landed, then reclaims it
 // ------------------------------------------------------------------ agents
 
 test('the agent catalog loads json and markdown, and refuses blocked defs', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-agents-'));
+  const dir = scratchDir('foreman-agents-');
   process.env['FOREMAN_AGENTS_DIR'] = dir;
   fs.writeFileSync(path.join(dir, 'reviewer.json'), JSON.stringify({
     id: 'reviewer', description: 'reviews code', systemPrompt: 'You review code carefully.', model: 'local-code',
@@ -929,7 +929,7 @@ test('diffJail shows a file\'s real lines whatever the jail wrote into .git/info
 test('diffJail shows what would land in an ordinary repo, not what a textconv program the jail configured prints, and never runs it', async () => {
   const dir = repo({ 'run.sh': 'echo safe\n' });
   const jail = await createJail(probeTask({ id: 'tc1', repo: dir, kind: 'code' }), 'r_tc1');
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-p2-tc-'));
+  const out = scratchDir('foreman-p2-tc-');
   const ran = path.join(out, 'textconv-ran');
   fs.writeFileSync(path.join(out, 'conv.sh'), `#!/bin/sh\ntouch '${ran}'\necho 'echo hello world'\n`);
   fs.chmodSync(path.join(out, 'conv.sh'), 0o755);
@@ -958,7 +958,7 @@ test('diffJail shows what would land in an ordinary repo, not what a textconv pr
 test('no program the jail names in the repo config runs when Foreman reads the jail: fsmonitor, a post-index-change hook', async () => {
   const dir = repo();
   const jail = await createJail(probeTask({ id: 'pins1', repo: dir, kind: 'code' }), 'r_pins1');
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-p2-pins-'));
+  const out = scratchDir('foreman-p2-pins-');
   const ran = { fsmonitor: path.join(out, 'fsmonitor-ran'), hook: path.join(out, 'hook-ran') };
   const script = (file: string, marker: string): void => { fs.writeFileSync(file, `#!/bin/sh\ntouch '${marker}'\n`); fs.chmodSync(file, 0o755); };
   fs.mkdirSync(path.join(out, 'hooks'));
@@ -1073,7 +1073,7 @@ test('diffJail puts one line where a binary file\'s bytes would be, by content a
 test('jailChanges, the listing the core guard decides on, runs no fsmonitor program and is not blinded by a git replace', async () => {
   const dir = repo({ 'README.md': 'base\n', 'src/core.ts': 'core v1\n' });
   const jail = await createJail(probeTask({ id: 'jc1', repo: dir, kind: 'code' }), 'r_jc1');
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-p2-jc-'));
+  const out = scratchDir('foreman-p2-jc-');
   const ran = path.join(out, 'fsmonitor-ran');
   fs.writeFileSync(path.join(out, 'fsmon.sh'), `#!/bin/sh\ntouch '${ran}'\n`);
   fs.chmodSync(path.join(out, 'fsmon.sh'), 0o755);

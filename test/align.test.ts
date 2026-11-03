@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,7 +33,7 @@ const assistantTurn = (blocks: unknown[], extra: Record<string, unknown> = {}) =
 });
 
 function corpus(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-sessions-'));
+  const dir = scratchDir('foreman-sessions-');
   sessionFile(dir, 'a.jsonl', [
     { type: 'system', content: 'ignored' },
     userTurn('Refactor the scheduler so the worker pool cannot overrun maxWorkers, and add a test for it.'),
@@ -79,7 +79,7 @@ test('samples pair a user request with the reply, dropping noise and shorts', ()
 });
 
 test('duplicate exchanges are collapsed', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-dupes-'));
+  const dir = scratchDir('foreman-dupes-');
   const pair = [
     userTurn('Explain the difference between an episode and a semantic fact in the memory store.'),
     assistantTurn([{ type: 'text', text: 'An episode records one run; a semantic fact is what repeats across many of them.' }]),
@@ -93,7 +93,7 @@ test('duplicate exchanges are collapsed', () => {
 });
 
 test('secrets planted in a session never reach a sample', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-secret-session-'));
+  const dir = scratchDir('foreman-secret-session-');
   sessionFile(dir, 'a.jsonl', [
     userTurn('Here is my key sk-ant-api03-PlantedSecret0123456789abcdef, use it to call the API for me please.'),
     assistantTurn([{ type: 'text', text: 'Stored ghp_PlantedGithubToken0123456789abcd and emailed me@example.com about it.' }]),
@@ -416,8 +416,8 @@ test('council pairs reach train and valid balanced by direction', () => {
     store.decide(ruled(store, [{ verdict: 'pass', chairSummary: `PASS-${i}: misread the diff` }]), true);
     store.decide(ruled(store, [{ verdict: 'fail', chairSummary: `FAIL-${i}: the guard really was removed` }]), false, 'guard missing');
   }
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ds-bal-'));
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ds-empty-'));
+  const out = scratchDir('foreman-ds-bal-');
+  const empty = scratchDir('foreman-ds-empty-');
   const built = buildDatasets({ dir: empty, outDir: out, store });
   const read = (f: string): Array<{ chosen: string }> =>
     fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -462,7 +462,7 @@ test('a split nobody ruled on is not a DPO pair — its note is an error string,
 
 test('building writes redacted, deterministically split jsonl files', () => {
   const dir = corpus();
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-ds-'));
+  const out = scratchDir('foreman-ds-');
   const store = new Store(':memory:');
   const built = buildDatasets({ dir, outDir: out, store });
   assert.equal(built.files.length, 4);
@@ -604,7 +604,7 @@ test('an adapter is adopted only when it wins every gate', async () => {
 });
 
 test('a losing candidate is never registered as a servable alias', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-models-'));
+  const dir = scratchDir('foreman-models-');
   const modelsFile = path.join(dir, 'models.json');
   registerAdapter('local-reason-persona', { base: 'mlx-community/Qwen', adapterDir: '/adapters/x', modelsFile });
   const written = JSON.parse(fs.readFileSync(modelsFile, 'utf8')) as { models: Array<Record<string, unknown>> };
@@ -620,7 +620,7 @@ test('a losing candidate is never registered as a servable alias', () => {
 });
 
 test('a sample that survives redaction with a key shape intact is dropped, not shipped', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-drop-'));
+  const dir = scratchDir('foreman-drop-');
   sessionFile(dir, 'a.jsonl', [
     userTurn('This is a perfectly ordinary request about refactoring the queue module and its tests.'),
     assistantTurn([{ type: 'text', text: 'Here is a clean explanation of how the queue module works and what to change.' }]),

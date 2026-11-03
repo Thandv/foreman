@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -71,7 +71,7 @@ interface Leftover {
  * (setpgid), whose pid is `other`.
  */
 async function leftover(t: TestContext, g: ProcGuard, opts: { extra?: number; ownGroup?: boolean } = {}): Promise<Leftover & { other?: number }> {
-  const work = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-frz-')));
+  const work = fs.realpathSync(scratchDir('foreman-frz-'));
   const pidFile = path.join(work, 'left.pid');
   const otherFile = path.join(work, 'other.pid');
   const loop = path.join(work, 'loop.sh');

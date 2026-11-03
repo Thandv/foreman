@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -31,7 +31,7 @@ const hunk = (file: string, added: string): string =>
   `diff --git a/${file} b/${file}\nindex 111..222 100644\n--- a/${file}\n+++ b/${file}\n@@ -10,2 +10,3 @@\n context\n+${added}\n context\n`;
 
 function tree(t: { after: (fn: () => void) => void }, files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-tree-'));
+  const dir = scratchDir('foreman-r1-tree-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const [rel, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
@@ -205,8 +205,8 @@ test('the owner gate prompt keeps the report\'s end, where the acceptance map is
 // ------------------------------------------------------------------ what the daemon reads from a worker's tree
 
 test('a hard link in the tree is not read, and listing the tree does not run the program its git config names', (t) => {
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-out-'));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-jail-'));
+  const outside = scratchDir('foreman-r1-out-');
+  const dir = scratchDir('foreman-r1-jail-');
   t.after(() => { fs.rmSync(outside, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); });
   fs.writeFileSync(path.join(outside, 'secret.json'), '{"key":"OUTSIDE-SECRET"}\n');
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
@@ -237,7 +237,7 @@ test('a hard link in the tree is not read, and listing the tree does not run the
 });
 
 test('the files a document cites keep their room when the worker\'s report names forty more, and citations past the cap are counted, not dropped', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-cited-'));
+  const dir = scratchDir('foreman-r1-cited-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
@@ -261,7 +261,7 @@ test('the files a document cites keep their room when the worker\'s report names
 // ------------------------------------------------------------------ which changed test lines hold the gate (F35)
 
 function gitDiff(t: { after: (fn: () => void) => void }, before: Record<string, string>, after: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-diff-'));
+  const dir = scratchDir('foreman-r1-diff-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): string => execFileSync('git', a, { cwd: dir, encoding: 'utf8' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
@@ -335,7 +335,7 @@ interface Rig {
 
 /** The stand-in of test/review-inputs.test.ts: one `claude` script that is the worker, the reviewer and the owner model. */
 function rig(files: Record<string, string> = {}): Rig {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-'));
+  const dir = scratchDir('foreman-r1-');
   fs.writeFileSync(path.join(dir, 'solo.md'), SOLO);
   const bin = path.join(dir, 'claude');
   fs.writeFileSync(
@@ -357,7 +357,7 @@ function rig(files: Record<string, string> = {}): Rig {
   process.env['FOREMAN_CLAUDE_BIN'] = bin;
   process.env['FOREMAN_CREW_REVIEW'] = 'always';
   resetPreflightCache();
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-r1-repo-'));
+  const repo = scratchDir('foreman-r1-repo-');
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: repo, stdio: 'ignore' });
   git('init', '-q');
   git('config', 'user.email', 't@example.com');

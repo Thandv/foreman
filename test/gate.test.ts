@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -65,7 +65,7 @@ const MANUAL = pbText({
 }, ROLES);
 
 function withPlaybooks(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-gate-pb-'));
+  const dir = scratchDir('foreman-gate-pb-');
   process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
   clearPlaybookCache();
@@ -90,7 +90,7 @@ interface Stub {
 
 /** The claude CLI stand-in from the crew tests, plus an optional stall. */
 function stubClaude(bodies: string[], opts: { sleep?: string; exitCode?: number } = {}): Stub {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-gate-cli-'));
+  const dir = scratchDir('foreman-gate-cli-');
   const bin = path.join(dir, 'claude');
   const logFile = path.join(dir, 'argv.log');
   const countFile = path.join(dir, 'count');
@@ -193,7 +193,7 @@ async function settle(sched: Scheduler, until: () => boolean, ms = 20_000): Prom
 }
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-gate-repo-'));
+  const dir = scratchDir('foreman-gate-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };
@@ -359,7 +359,7 @@ test('the gate prompt carries the ticket, the verdict chain, the diff stats and 
   const pbDir = withPlaybooks({ 'auto.md': AUTO });
   const stub = stubClaude([gateReply('hold', 'I want a person on this')]);
   const store = new Store(':memory:');
-  const artDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-gate-art-'));
+  const artDir = scratchDir('foreman-gate-art-');
   try {
     const { task, run } = parked(store);
     const diffPath = path.join(artDir, 'run.diff');
@@ -1107,7 +1107,7 @@ test('an approval decided on the operator\'s own desk lands nothing: no run was 
   try {
     const { task, run } = parked(store, { mergeOnApprove: true });
     // Its worktree is still on disk — but it was turned down, so it is not "left over".
-    const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rejected-'));
+    const tree = scratchDir('foreman-rejected-');
     store.db.prepare("UPDATE runs SET branch = 'foreman/t-rejected', worktree_path = ? WHERE id = ?").run(tree, run.id);
     // Rejected at the gate, retried, given to the operator, marked done by hand.
     applyRejection(store, task.id, 'not this');
@@ -1141,7 +1141,7 @@ test('a desk close of an ordinary ticket is not an error: nothing to register, n
 
 test("a desk close points at an interrupted run's work still on disk — and only that", async () => {
   const store = new Store(':memory:');
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-left-'));
+  const tree = scratchDir('foreman-left-');
   try {
     // Interrupted (canceled) and sent to the operator's desk, nobody ruled on
     // it, its worktree still there: say where.

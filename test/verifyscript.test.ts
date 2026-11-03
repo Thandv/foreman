@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +17,7 @@ const VERIFY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 
  * `tsc` and `npx` are always there and always exit 0: nothing may reach them.
  */
 function runVerify(suite: string, opts: { npm?: string; tscStatus?: number; tsgo?: boolean; tmpdir?: string; env?: Record<string, string> } = {}): { status: number | null; out: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-verifysh-'));
+  const dir = scratchDir('foreman-verifysh-');
   try {
     fs.mkdirSync(path.join(dir, 'scripts'));
     fs.copyFileSync(VERIFY, path.join(dir, 'scripts', 'verify.sh'));
@@ -68,6 +68,26 @@ test('verify.sh on a passing suite exits 0 with its counts and ends on "verify: 
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /pass 1/);
   assert.equal(lastLine(r.out), 'verify: PASS');
+});
+
+test('verify.sh fails a passing suite that leaves a foreman-* entry in its temp dir, naming it, and leaves the operator\'s own entries alone', () => {
+  const operator = scratchDir('ft-operator-');
+  fs.mkdirSync(path.join(operator, 'foreman-old-entry'));
+  const r = runVerify('', { npm: 'mkdir "$TMPDIR/foreman-leaky-entry"\necho "ℹ pass 1"\nexit 0', tmpdir: operator });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /foreman-leaky-entry/);
+  assert.equal(lastLine(r.out), 'verify: FAIL (1 foreman-* temp entries left behind by the tests)');
+  assert.doesNotMatch(r.out, /foreman-old-entry/, 'only the suite\'s own temp dir is counted');
+  assert.deepEqual(fs.readdirSync(operator), ['foreman-old-entry'], 'the operator\'s entry stays, and the run\'s temp dir is gone');
+});
+
+test('verify.sh passes a suite that cleans up after itself, with foreman-* entries already in the operator\'s temp dir', () => {
+  const operator = scratchDir('ft-operator-');
+  fs.mkdirSync(path.join(operator, 'foreman-old-entry'));
+  const r = runVerify('', { npm: 'mkdir "$TMPDIR/foreman-tidy"\nrmdir "$TMPDIR/foreman-tidy"\necho "ℹ pass 1"\nexit 0', tmpdir: operator });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(lastLine(r.out), 'verify: PASS');
+  assert.deepEqual(fs.readdirSync(operator), ['foreman-old-entry']);
 });
 
 test('verify.sh on a passing suite with a failing TODO test says PASS and does not end on that test\'s assertion', () => {

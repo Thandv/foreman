@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -32,7 +32,7 @@ const SRC_AFTER = 'export const double = (n) => n + n;\nexport const triple = (n
 const MIXED = `${HEAD}test('triples', () => assert.equal(x.triple?.(2), 6));\ntest('still doubles', () => assert.equal(x.double(2), 4));\n`;
 
 function fixtureRepo(t: TestContext): string {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rtw-repo-')));
+  const repo = fs.realpathSync(scratchDir('foreman-rtw-repo-'));
   removeAfterStops(t, repo);
   git(repo, 'init', '-q', '-b', 'main');
   git(repo, 'config', 'user.email', 't@example.com');
@@ -102,7 +102,7 @@ function rig(t: TestContext, repo: string, revertTests: boolean | undefined): Ri
 
 /** The owner model, as a stand-in CLI that keeps the prompt it was given and holds. */
 function ownerStub(t: TestContext): { prompt: () => string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-rtw-cli-'));
+  const dir = scratchDir('foreman-rtw-cli-');
   const bin = path.join(dir, 'claude');
   const promptFile = path.join(dir, 'prompt');
   const reply = JSON.stringify({

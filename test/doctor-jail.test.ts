@@ -1,4 +1,4 @@
-import { testHome } from './env.ts';
+import { testHome, scratchDir, privateTmpdir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,6 +13,8 @@ import { provisionDeps } from '../src/deps.ts';
 import { workerSuiteInJail } from '../src/doctorJail.ts';
 import { sandboxAvailable } from '../src/security/sandbox.ts';
 
+privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
+
 // `foreman doctor`'s "worker suite in a jail" line. Every test runs against the scratch home test/env.ts made
 // (never the live daemon's or .foreman/), and cuts its jail from a clean clone of this checkout, which the
 // working tree being edited is not.
@@ -20,7 +22,7 @@ import { sandboxAvailable } from '../src/security/sandbox.ts';
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratchDirs: string[] = [];
 function scratch(name: string): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `foreman-doctorjail-${name}-`)));
+  const dir = fs.realpathSync(scratchDir(`foreman-doctorjail-${name}-`));
   scratchDirs.push(dir);
   return dir;
 }

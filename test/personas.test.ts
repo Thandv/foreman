@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ import { personaServerPid, servePersona, stopPersonaServer } from '../src/align/
 import { reloadSpecs, specs } from '../src/models.ts';
 
 function scratch(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-persona-'));
+  const dir = scratchDir('foreman-persona-');
   process.env['FOREMAN_PERSONAS_DIR'] = path.join(dir, 'personas');
   process.env['FOREMAN_ALIGN_DIR'] = path.join(dir, 'align');
   return dir;

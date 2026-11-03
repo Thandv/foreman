@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -43,7 +43,7 @@ function doc(opts: { extra?: string; taskStates?: string; runStates?: string } =
 }
 
 function tree(docText: string, bigLines = 0): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-archtruth-'));
+  const dir = scratchDir('foreman-archtruth-');
   const put = (rel: string, text: string): void => {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), text);

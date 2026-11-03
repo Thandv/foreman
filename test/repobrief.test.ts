@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { repoBrief } from '../src/assistant/repoBrief.ts';
 
 function repoWith(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-brief-'));
+  const dir = scratchDir('foreman-brief-');
   for (const [rel, body] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), body);
@@ -38,7 +38,7 @@ test('repoBrief: lists tracked files, includes the README and docs the ask names
 });
 
 test('repoBrief: a named doc that is a symlink out of the repo is never read', () => {
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-brief-out-'));
+  const outside = scratchDir('foreman-brief-out-');
   fs.writeFileSync(path.join(outside, 'secret.txt'), 'OUTSIDE-THE-REPO');
   const dir = repoWith({ 'README.md': 'r' });
   fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(dir, 'SPEC.md'));

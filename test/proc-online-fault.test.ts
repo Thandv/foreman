@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnStreaming } from '../src/runners/proc.ts';
 
 function scratch(t: test.TestContext): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-online-fault-'));
+  const dir = scratchDir('foreman-online-fault-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

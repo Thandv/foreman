@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +17,7 @@ const SRC = `const a = process.env.FOREMAN_FIX_A;\nconst b = envNum('FOREMAN_FIX
 
 /** Runs the check on a temp tree holding `files`, then removes the tree. */
 function check(files: Record<string, string>): ReturnType<typeof run> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-configtruth-'));
+  const dir = scratchDir('foreman-configtruth-');
   try {
     for (const [rel, text] of Object.entries(files)) {
       fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { numberedItems, parseAcceptanceMap, checkAcceptanceMap, formatMapGaps, namesFile } from '../src/acceptanceMap.ts';
@@ -202,7 +202,7 @@ test('namesFile: a code file is named only by its base name or path, never by it
 
 /** A work tree holding `files`; removed when the test ends. */
 function tree(t: { after: (fn: () => void) => void }, files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-map-tree-'));
+  const dir = scratchDir('foreman-map-tree-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const [rel, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });

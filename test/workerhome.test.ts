@@ -1,4 +1,4 @@
-import { testHome } from './env.ts';
+import { testHome, scratchDir, privateTmpdir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,6 +13,8 @@ import { claudeWorkerEnv } from '../src/runners/claudeIsolation.ts';
 import { workerEnv } from '../src/runners/cliRunners.ts';
 import { sandboxAvailable } from '../src/security/sandbox.ts';
 
+privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
+
 // FOREMAN_HOME=.foreman is what the daemon passes its workers: resolved against the worker's own cwd (its jail) it names
 // a different directory than the daemon's, and the sandbox then refuses the jail as "containing Foreman's home".
 // Each test runs the code under test in a child with the relative home, from a cwd that is not the daemon's.
@@ -24,7 +26,7 @@ const href = (rel: string): string => JSON.stringify(path.join(SRC, rel));
 
 const scratchDirs: string[] = [];
 function scratch(name: string): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `foreman-workerhome-${name}-`)));
+  const dir = fs.realpathSync(scratchDir(`foreman-workerhome-${name}-`));
   scratchDirs.push(dir);
   return dir;
 }

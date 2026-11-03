@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -36,7 +36,7 @@ function writeSkill(root: string, name: string, roles: string[]): void {
  * for soft.dev that soft.lead's loadout does not offer.
  */
 function load(reviewer: Record<string, unknown>, skillsOn = true): PlaybookCatalog {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-reviewer-skills-')));
+  const base = fs.realpathSync(scratchDir('foreman-reviewer-skills-'));
   const saved = process.env['FOREMAN_SKILLS_DIR'];
   try {
     const root = path.join(base, 'repo');

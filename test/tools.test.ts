@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,14 +17,14 @@ import { checkBuiltTool, registerApprovedTool, toolTestCommand } from '../src/to
 import { describe, validate, type Schema } from '../src/tools/schema.ts';
 
 function freshCatalog(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-tools-'));
+  const dir = scratchDir('foreman-tools-');
   process.env['FOREMAN_TOOLS_DIR'] = dir;
   return dir;
 }
 
 /** A working tool source tree: manifest, entry, and a real end-to-end test. */
 function sourceTree(over: { name?: string; body?: string; manifest?: Record<string, unknown>; withTests?: boolean } = {}): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-src-'));
+  const dir = scratchDir('foreman-src-');
   const name = over.name ?? 'sum-numbers';
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
     name,
@@ -133,7 +133,7 @@ test('the scan reads the entry whatever its extension, .mts sources, and refuses
 
 test('malformed and unsafe manifests are refused', () => {
   freshCatalog();
-  const noManifest = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-empty-'));
+  const noManifest = scratchDir('foreman-empty-');
   assert.throws(() => registerTool({ sourceDir: noManifest }), /no manifest.json/);
 
   const bad = sourceTree();
@@ -164,7 +164,7 @@ test('search ranks name matches above description matches', () => {
 test('a registered tool runs, validates its args, and returns parsed output', async () => {
   freshCatalog();
   const tool = registerTool({ sourceDir: sourceTree() });
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
 
   const ok = await runTool(tool, { nums: [1, 2, 3] }, { cwd: jail });
   assert.equal(ok.ok, true, ok.error ?? '');
@@ -181,7 +181,7 @@ test('a tool that breaks its output contract fails rather than passing junk on',
   const tool = registerTool({
     sourceDir: sourceTree({ body: 'process.stdout.write(JSON.stringify({ wrong: true }));' }),
   });
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
   const result = await runTool(tool, { nums: [1] }, { cwd: jail });
   assert.equal(result.ok, false);
   assert.match(result.error!, /output does not match/);
@@ -189,7 +189,7 @@ test('a tool that breaks its output contract fails rather than passing junk on',
 
 test('non-JSON stdout, non-zero exit and timeouts are all reported, not thrown', async () => {
   freshCatalog();
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
 
   const chatty = registerTool({ sourceDir: sourceTree({ name: 'chatty', body: 'process.stdout.write("hello there");' }) });
   assert.match((await runTool(chatty, { nums: [] }, { cwd: jail })).error!, /not JSON/);
@@ -216,7 +216,7 @@ test('a tool cannot see credential-shaped environment variables', async () => {
       body: 'process.stdout.write(JSON.stringify({ keys: Object.keys(process.env) }));',
     }),
   });
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
   const result = await runTool(tool, { nums: [] }, { cwd: jail });
   const keys = (result.output as { keys: string[] }).keys;
   assert.equal(keys.includes('MY_SECRET_API_KEY'), false, 'a forged tool must never see secrets');
@@ -231,7 +231,7 @@ test('a tool cannot see credential-shaped environment variables', async () => {
 test('three consecutive failures quarantine a tool, and a success resets the count', async () => {
   freshCatalog();
   const tool = registerTool({ sourceDir: sourceTree({ name: 'flaky', body: 'process.exit(1);' }) });
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
 
   await runTool(tool, { nums: [] }, { cwd: jail });
   await runTool(getTool('flaky')!, { nums: [] }, { cwd: jail });
@@ -290,7 +290,7 @@ test('the catalog defaults to the repo toolbox, resolved from source not cwd', (
 });
 
 test('FOREMAN_TOOLBOX overrides the default catalog location', () => {
-  const custom = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-tb-'));
+  const custom = scratchDir('foreman-tb-');
   withEnv({ FOREMAN_TOOLS_DIR: undefined, FOREMAN_TOOLBOX: custom }, () => {
     assert.equal(toolsDir(), custom);
   });
@@ -331,7 +331,7 @@ test('a legacy ~/.foreman/tools catalog is migrated once into the toolbox, leavi
   }));
   fs.writeFileSync(path.join(legacyTool, 'tool.js'), 'process.stdout.write("{}");');
 
-  const toolbox = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-tbmig-'));
+  const toolbox = scratchDir('foreman-tbmig-');
   fs.rmSync(toolbox, { recursive: true, force: true }); // start absent, as a fresh repo would
   withEnv({ FOREMAN_TOOLS_DIR: undefined, FOREMAN_TOOLBOX: toolbox }, () => {
     const migrated = migrateLegacyToolbox();
@@ -354,7 +354,7 @@ test('a legacy ~/.foreman/tools catalog is migrated once into the toolbox, leavi
 // ------------------------------------------------------- build → gate → use
 
 test('a tool build is refused at the gate unless it delivers the full layout', () => {
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
   assert.match(checkBuiltTool(jail).reason, /no tool\/manifest.json/);
 
   fs.mkdirSync(path.join(jail, 'tool'), { recursive: true });
@@ -515,7 +515,7 @@ test('build_tool queues a gated child task rather than building inline', async (
 test('refusing a quarantined tool does not count as another failure by it', async () => {
   freshCatalog();
   const tool = registerTool({ sourceDir: sourceTree({ name: 'broken', body: 'process.exit(1);' }) });
-  const jail = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-jail-'));
+  const jail = scratchDir('foreman-jail-');
   for (let i = 0; i < 3; i++) await runTool(getTool('broken')!, { nums: [] }, { cwd: jail });
   const atQuarantine = getTool('broken')!;
   assert.equal(atQuarantine.quarantined, true);

@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -15,7 +15,7 @@ import { createServer } from '../src/server.ts';
 // latest:false, and pruneJails then force-removes the worktree and -D's the
 // branch that the latest row was just kept for.
 test('POST /api/prune keeps approved, unlanded work when an earlier run row names the same branch', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-pr1-'));
+  const dir = scratchDir('foreman-pr1-');
   const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' });
   git(dir, 'init', '-q'); git(dir, 'config', 'user.email', 't@e.st'); git(dir, 'config', 'user.name', 'T');
   fs.writeFileSync(path.join(dir, 'README.md'), 'base\n'); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');

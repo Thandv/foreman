@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ function scheduler(store: Store, opts: SchedulerOptions = {}): Scheduler {
 }
 
 function fixtureRepo(dirty: boolean): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-repo-'));
+  const dir = scratchDir('foreman-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };

@@ -1,5 +1,5 @@
 // What a run's deadline counts, and how a run that reaches it ends (plan item FA4; trial findings F2 and F28).
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -31,7 +31,7 @@ async function until(cond: () => boolean, what: string, ms = 120_000): Promise<v
 }
 
 function fixtureRepo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-repo-'));
+  const dir = scratchDir('foreman-repo-');
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };

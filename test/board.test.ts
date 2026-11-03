@@ -1,4 +1,4 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -568,7 +568,7 @@ test('an approval whose merge was aborted reports the abort, not "Approved"', as
     rejectionOutcome: (result: unknown, label?: string) => Outcome;
   };
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-gate-'));
+  const dir = scratchDir('foreman-gate-');
   const git = (...a: string[]): void => { execFileSync('git', a, { cwd: dir, stdio: 'ignore' }); };
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@e.st');
