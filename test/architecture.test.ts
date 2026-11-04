@@ -140,7 +140,7 @@ const SECURITY_EDGES: Record<string, string> = {
 
 // (c) The modules queue.ts imports as values.
 const QUEUE_IMPORTS = [
-  'src/archive.ts', 'src/assign.ts', 'src/assistant/retro.ts', 'src/db.ts', 'src/runners/proctree.ts',
+  'src/archive.ts', 'src/assign.ts', 'src/assistant/retro.ts', 'src/db.ts', 'src/isolate.ts', 'src/runners/proctree.ts',
   'src/schedule.ts', 'src/skills.ts', 'src/types.ts', 'src/verify/followUpChain.ts',
 ];
 

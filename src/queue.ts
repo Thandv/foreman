@@ -19,8 +19,9 @@ import {
 import { nextRunAt, parseSpec } from './schedule.ts';
 import { assertTicketSkills } from './skills.ts';
 import type {
-  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, GateMode, MemoryFact, Run, RunEvent, Stage, Task, TaskStatus, Verdict,
+  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Run, RunEvent, Stage, Task, TaskStatus, Verdict,
 } from './types.ts';
+import { pinnedGit, removeJail } from './isolate.ts';
 import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
 
 /** The most of a decision's note the ledger keeps, in UTF-8 bytes, marker included. */
@@ -1508,6 +1509,91 @@ export class Store extends EventEmitter {
     // Parent first: the container is already terminal when its children close,
     // so closeEpicIfComplete cannot overwrite the cancel with a 'failed'.
     this.cancelDescendants(taskId, `parent ${taskId} was canceled`, new Set([taskId]));
+    return this.getTask(taskId)!;
+  }
+
+  /**
+   * Record work a person landed by hand. Accepted from awaiting-approval, failed, blocked, and canceled where the
+   * ticket has its OWN 'cancel' decision (an epic-cascade cancel is Foreman's, not the person's). Everything else is
+   * refused, and rejected is among them on purpose: a rejection is a ruling on the work, and landing it by hand
+   * contradicts that ruling — retry it, or cancel it and land it as a new ticket. A refusal writes nothing.
+   *
+   * The base branch is the branch checked out in the task's repo. `commit` must resolve to a commit that is an
+   * ancestor of it and NOT an ancestor of the latest run's base_commit (that would be work that was already there).
+   * With no run or base_commit that last check is skipped, and the decision note says so.
+   * One transaction: a 'landed' decision (landed_tree = <commit>^{tree}), status done, dependents revived through
+   * reviveDependents. The jail is then removed as the scheduler removes a canceled run's; artifacts stay.
+   */
+  async markLanded(taskId: string, opts: { commit: string; by?: string | null; note?: string | null; actor: DecisionActor }): Promise<Task> {
+    const refusal = (why: string): Error => new Error(`cannot mark ${taskId} landed: ${why}`);
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`task not found: ${taskId}`);
+    const eligible = (): string | null => {
+      const now = this.getTask(taskId);
+      if (!now) return 'task not found';
+      if (now.status === 'canceled') {
+        const own = this.decisionsForTask(taskId).some((d) => d.action === 'cancel' && d.actor !== 'system');
+        return own ? null : 'it was canceled by its parent epic, not by a person';
+      }
+      return ['awaiting-approval', 'failed', 'blocked'].includes(now.status) ? null : `it is ${now.status}`;
+    };
+    const why = eligible();
+    if (why) throw refusal(why);
+    if (!DECISION_ACTORS.includes(opts.actor)) throw new Error(`unknown decision actor: ${String(opts.actor)}`);
+    const wanted = String(opts.commit ?? '').trim();
+    if (!wanted || wanted.startsWith('-')) throw refusal('no commit given');
+    if (!task.repo) throw refusal('the task has no repo');
+
+    const repo = (await pinnedGit(task.repo, ['rev-parse', '--show-toplevel']).then((r) => r.stdout.trim(), () => '')) || '';
+    if (!repo) throw refusal(`${task.repo} is not a git repo`);
+    const ok = (args: string[]): Promise<boolean> => pinnedGit(repo, args).then(() => true, () => false);
+    const out = (args: string[]): Promise<string> => pinnedGit(repo, args).then((r) => r.stdout.trim(), () => '');
+    const sha = await out(['rev-parse', '--verify', '--end-of-options', `${wanted}^{commit}`]);
+    if (!sha) throw refusal(`${wanted} is not a commit in ${repo}`);
+    const baseBranch = await out(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (!baseBranch || !(await ok(['rev-parse', '--verify', '--quiet', `refs/heads/${baseBranch}^{commit}`]))) {
+      throw refusal('the base branch is missing (no branch is checked out in the repo)');
+    }
+    if (!(await ok(['merge-base', '--is-ancestor', sha, `refs/heads/${baseBranch}`]))) {
+      throw refusal(`${sha} is not reachable from the base branch ${baseBranch}`);
+    }
+    const run = this.latestRun(taskId);
+    let jailNote: string;
+    if (run?.baseCommit) {
+      if (await ok(['merge-base', '--is-ancestor', sha, run.baseCommit])) {
+        throw refusal(`${sha} is an ancestor of the run's base ${run.baseCommit}: it is not work from this ticket`);
+      }
+      jailNote = `checked that it is not an ancestor of the run base ${run.baseCommit.slice(0, 12)}`;
+    } else {
+      jailNote = 'no run base_commit, so the jail-base ancestor check was skipped';
+    }
+    const tree = await out(['rev-parse', '--verify', '--end-of-options', `${sha}^{tree}`]);
+    if (!tree) throw refusal(`${sha} has no tree`);
+
+    const by = opts.by?.trim() || null;
+    const extra = opts.note?.trim();
+    const note = `landed by hand: commit ${sha}${by ? ` --by ${by}` : ''}; ${jailNote}${extra ? `; ${extra}` : ''}`;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      // The state may have moved during the git calls; decide again inside the lock.
+      const late = eligible();
+      if (late) throw refusal(late);
+      this.addDecision({
+        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, note, statusAfter: 'done', landedTree: tree,
+        extra: { statusBefore: task.status, commit: sha, ...(by ? { by } : {}) },
+      });
+      this.setStatus(taskId, 'done', null);
+      this.reviveDependents(taskId);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw err;
+    }
+    // After the commit, and never undoing it: removeJail swallows its own errors. Artifacts are rows and files
+    // outside the jail, and stay.
+    if (run?.worktreePath && path.resolve(run.worktreePath) !== path.resolve(repo)) {
+      await removeJail({ dir: run.worktreePath, repo, branch: run.branch ?? null }).catch(() => {});
+    }
     return this.getTask(taskId)!;
   }
 
