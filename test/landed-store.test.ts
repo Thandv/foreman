@@ -1,11 +1,12 @@
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { config } from '../src/config.ts';
 import { Store } from '../src/queue.ts';
 import type { TaskStatus } from '../src/types.ts';
-import { scratchDir } from './env.ts';
 import { hermeticGitEnv } from './helpers/git.ts';
 
 interface Fixture {
@@ -57,7 +58,7 @@ function ticket(f: Fixture, status: TaskStatus, o: { run?: boolean; jail?: boole
     const run = f.store.startRun(task.id);
     const meta: Parameters<Store['setRunMeta']>[1] = { baseCommit: f.base };
     if (o.jail) {
-      const dir = path.join(scratchDir('foreman-landed-jail-'), 'jail');
+      const dir = path.join(config.workRoot, `r_jail_${task.id}`);
       f.git('worktree', 'add', '-q', '-b', `foreman/${task.id}`, dir, f.base);
       meta.worktreePath = dir;
       meta.branch = `foreman/${task.id}`;
@@ -73,7 +74,8 @@ const land = (f: Fixture, id: string, commit = f.landed): Promise<unknown> =>
 
 test('markLanded refuses an unknown sha, an unreachable sha, a jail-base ancestor and a missing base branch, changing nothing', async (t) => {
   const f = fixture(t);
-  const id = ticket(f, 'awaiting-approval', { run: true });
+  const id = ticket(f, 'awaiting-approval', { run: true, jail: true });
+  const jail = f.store.latestRun(id)!.worktreePath!;
   const before = snapshot(f.store);
   await assert.rejects(land(f, id, 'deadbeef'.repeat(5)), /not a commit/);
   await assert.rejects(land(f, id, f.side), /not reachable from the base branch/);
@@ -82,6 +84,43 @@ test('markLanded refuses an unknown sha, an unreachable sha, a jail-base ancesto
   f.git('checkout', '-q', '--detach');
   await assert.rejects(land(f, id), /base branch is missing/);
   assert.equal(snapshot(f.store), before);
+  assert.ok(fs.existsSync(path.join(jail, 'a.txt')), 'a refusal leaves the jail');
+});
+
+test('markLanded refuses a run base the repo cannot compare with, instead of passing the check', async (t) => {
+  const f = fixture(t);
+  const id = ticket(f, 'awaiting-approval', { run: true });
+  f.store.setRunMeta(f.store.latestRun(id)!.id, { baseCommit: 'f'.repeat(40) });
+  const before = snapshot(f.store);
+  await assert.rejects(land(f, id, f.base), /could not compare/);
+  assert.equal(snapshot(f.store), before);
+});
+
+test('markLanded goes by the latest cancel: an epic cascade after an own cancel and a retry is refused', async (t) => {
+  const f = fixture(t);
+  const epic = f.store.addTask({ title: 'e', prompt: 'p', repo: f.repo, isEpic: true });
+  const child = f.store.addTask({ title: 'c', prompt: 'p', repo: f.repo, parentId: epic.id });
+  f.store.cancel(child.id, 'mine');
+  f.store.retry(child.id);
+  f.store.cancel(epic.id);
+  assert.equal(f.store.getTask(child.id)!.status, 'canceled');
+  await assert.rejects(land(f, child.id), /canceled by its parent epic/);
+});
+
+test('markLanded deletes nothing outside the work root, even when a run row names such a path', async (t) => {
+  const f = fixture(t);
+  const outside = scratchDir('foreman-landed-outside-');
+  fs.writeFileSync(path.join(outside, 'keep.txt'), 'k\n');
+  fs.mkdirSync(path.join(f.repo, 'sub'));
+  fs.writeFileSync(path.join(f.repo, 'sub', 'keep.txt'), 'k\n');
+  for (const dir of [outside, path.join(f.repo, 'sub')]) {
+    const id = ticket(f, 'awaiting-approval', { run: true });
+    f.store.setRunMeta(f.store.latestRun(id)!.id, { worktreePath: dir, branch: 'main' });
+    await land(f, id);
+    assert.equal(f.store.getTask(id)!.status, 'done');
+    assert.ok(fs.existsSync(path.join(dir, 'keep.txt')), dir);
+  }
+  assert.equal(f.git('rev-parse', '--abbrev-ref', 'HEAD'), 'main');
 });
 
 test('markLanded refuses every state it does not accept, changing nothing, and landing twice leaves one landed row', async (t) => {

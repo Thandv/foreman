@@ -330,6 +330,11 @@ function isOwnTree(dir: string, workRoot: string): boolean {
   }
 }
 
+/** `dir` is a run's own tree under the work root, so removing it by path cannot reach anything else (Store.markLanded). */
+export function isOwnJail(dir: string, workRoot = config.workRoot): boolean {
+  return insideWorkRoot(dir, workRoot) && isOwnTree(dir, workRoot);
+}
+
 /** A diff artifact's file as something the work could be recovered from: a regular file with something in it. */
 function diffOnDisk(file: string): boolean {
   try {

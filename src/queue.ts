@@ -13,7 +13,7 @@ import { dropRetrospective, writeRetrospective } from './assistant/retro.ts';
 import { effectiveAssignee, readyStatus } from './assign.ts';
 import type { ShadowPair } from './agreement.ts';
 import {
-  archiveTerms, DEFAULT_ARCHIVE_AFTER_DAYS, estimateFrom,
+  archiveTerms, DEFAULT_ARCHIVE_AFTER_DAYS, estimateFrom, isOwnJail,
   type ArchiveRecord, type Estimate,
 } from './archive.ts';
 import { nextRunAt, parseSpec } from './schedule.ts';
@@ -1532,8 +1532,8 @@ export class Store extends EventEmitter {
       const now = this.getTask(taskId);
       if (!now) return 'task not found';
       if (now.status === 'canceled') {
-        const own = this.decisionsForTask(taskId).some((d) => d.action === 'cancel' && d.actor !== 'system');
-        return own ? null : 'it was canceled by its parent epic, not by a person';
+        const last = this.decisionsForTask(taskId).filter((d) => d.action === 'cancel').at(-1);
+        return last && last.actor !== 'system' ? null : 'it was canceled by its parent epic, not by a person';
       }
       return ['awaiting-approval', 'failed', 'blocked'].includes(now.status) ? null : `it is ${now.status}`;
     };
@@ -1560,9 +1560,10 @@ export class Store extends EventEmitter {
     const run = this.latestRun(taskId);
     let jailNote: string;
     if (run?.baseCommit) {
-      if (await ok(['merge-base', '--is-ancestor', sha, run.baseCommit])) {
-        throw refusal(`${sha} is an ancestor of the run's base ${run.baseCommit}: it is not work from this ticket`);
-      }
+      // Exit 1 is "not an ancestor"; any other failure (a base the repo does not have) answers nothing, so it refuses.
+      const code = await pinnedGit(repo, ['merge-base', '--is-ancestor', sha, run.baseCommit]).then(() => 0, (e: { code?: unknown }) => e.code);
+      if (code === 0) throw refusal(`${sha} is an ancestor of the run's base ${run.baseCommit}: it is not work from this ticket`);
+      if (code !== 1) throw refusal(`git could not compare ${sha} with the run's base ${run.baseCommit}`);
       jailNote = `checked that it is not an ancestor of the run base ${run.baseCommit.slice(0, 12)}`;
     } else {
       jailNote = 'no run base_commit, so the jail-base ancestor check was skipped';
@@ -1591,7 +1592,7 @@ export class Store extends EventEmitter {
     }
     // After the commit, and never undoing it: removeJail swallows its own errors. Artifacts are rows and files
     // outside the jail, and stay.
-    if (run?.worktreePath && path.resolve(run.worktreePath) !== path.resolve(repo)) {
+    if (run?.worktreePath && path.resolve(run.worktreePath) !== path.resolve(repo) && isOwnJail(path.resolve(run.worktreePath))) {
       await removeJail({ dir: run.worktreePath, repo, branch: run.branch ?? null }).catch(() => {});
     }
     return this.getTask(taskId)!;
