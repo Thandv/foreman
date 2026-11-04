@@ -22,7 +22,7 @@ import type { Store } from './queue.ts';
 import { registerApprovedTool, type RegisterResult } from './tools/forge.ts';
 import { checkMain, postMergeCheckEnabled, repoHead, type MainCheck } from './postMerge.ts';
 import type { Decision, GateMode, Run, Task } from './types.ts';
-import { chairRuled } from './verify/council.ts';
+import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
 import { storedRevertTestsNote } from './verify/revertTests.ts';
 import { cutMiddle, storedReport } from './verify/report.ts';
@@ -670,7 +670,7 @@ export function verdictChain(store: Store, task: Task, run: Run | null): string 
   if (!verdicts.length) return dropped ? `(no review ran)\n${dropped}` : '(no review ran)';
   const lines: string[] = [];
   for (const v of verdicts) {
-    lines.push(`- ${v.source} review → ${v.verdict}${v.disagreement ? ' (advisors disagreed)' : ''}`);
+    lines.push(`- ${v.source} review → ${reviewLabel(v)}${v.disagreement ? ' (advisors disagreed)' : ''}`);
     if (v.critique) lines.push(`  critique: ${v.critique.slice(0, MAX_CRITIQUE)}`);
     if (v.chairSummary) {
       // A status line in the chair field (a lost seat, an unreachable chair) is

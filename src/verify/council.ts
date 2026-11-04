@@ -265,25 +265,17 @@ export const MAX_ISSUES_PER_OPINION = 6;
  * reads as *reviewers looked and disagreed* when in fact nothing looked at it.
  * Three chapters shipped to the gate that way.
  */
-export function wasReviewed(verdict: { council: AdvisorOpinion[] } | null): boolean {
-  if (!verdict) return false;
-  return verdict.council.some((opinion) => !opinion.error);
-}
+export { wasReviewed } from '../types.ts'; // defined beside Verdict so the store can use it without importing the council
 
 /**
  * Whether a verdict row may be shown or counted as a PASS: some reviewer read the work
  * and the seats were not stepped down because memory was short. A provisional pass is
  * not one until the full council re-checks it; a row nobody read is no review at all.
  */
-export function countsAsPass(v: { verdict: string; provisional?: boolean; council: AdvisorOpinion[] } | null | undefined): boolean {
-  return v?.verdict === 'pass' && !v.provisional && wasReviewed(v);
-}
+export { countsAsPass } from '../types.ts';
 
 /** How to word a verdict row to a person: its verdict, or `not reviewed` / `provisional <verdict>` where that is the truth. */
-export function reviewLabel(v: { verdict: string; provisional?: boolean; council: AdvisorOpinion[] }): string {
-  if (!wasReviewed(v)) return 'not reviewed';
-  return v.provisional ? `provisional ${v.verdict}` : v.verdict;
-}
+export { reviewLabel } from '../types.ts';
 
 export function parseOpinion(text: string): { verdict: 'pass' | 'fail'; confidence: number; critique: string } | null {
   const parsed = extractJson<{ verdict?: string; confidence?: number; issues?: unknown; critique?: unknown; reason?: unknown }>(text);
