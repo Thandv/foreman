@@ -130,7 +130,12 @@ test('systemDescribe reads a FOREMAN_HOME that contains a space', async (t) => {
   await new Promise((r) => child.once('spawn', r));
   // Under the test sandbox (FOREMAN_SANDBOX=tests) ps shows no process environment at all; `foreman stop` itself never
   // runs sandboxed, so there the case cannot be observed rather than failing.
-  const shown = execFileSync('ps', ['eww', '-o', 'command=', '-p', String(child.pid)], { encoding: 'utf8' });
+  let shown = '';
+  try {
+    shown = execFileSync('ps', ['eww', '-o', 'command=', '-p', String(child.pid)], { encoding: 'utf8' });
+  } catch {
+    /* the sandbox may refuse to run ps at all (EPERM): same as showing no environment */
+  }
   if (process.platform === 'darwin' && !shown.includes('FOREMAN_HOME=')) {
     t.skip('ps shows no process environment here (sandboxed)');
     return;
