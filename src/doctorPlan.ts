@@ -28,21 +28,33 @@ function same(a: string, b: string): boolean {
 }
 
 /**
- * The doctor's memory line. When Ollama (/api/ps) holds a model other than the
- * one being judged, the slowness is Ollama swapping models, not a shortage:
- * say which model holds the memory and that the other must be swapped in.
- * Otherwise it is the plain memory warning.
+ * The swap note, or null. Only when Ollama (/api/ps, read before doctor's own pings load anything) holds other
+ * models and evicting them makes room for `target`; with no room even then it is a real shortage.
  */
+export function swapNote(
+  mem: MemoryState | null,
+  target: { name: string; sizeGb: number } | null,
+  resident: ResidentModel[],
+): string | null {
+  if (!mem || !target?.sizeGb || resident.length === 0 || resident.some((m) => same(m.name, target.name))) return null;
+  if (mem.reclaimableGb + resident.reduce((n, m) => n + m.sizeGb, 0) < target.sizeGb + 0.5) return null;
+  const holder = resident.map((m) => `${m.name} (${m.sizeGb.toFixed(1)} GB)`).join(', ');
+  return `Ollama has ${holder} resident, so ${target.name} must be swapped in before it can answer — ` +
+    'the first ping after a swap is slow; this is model swapping, not a memory shortage. Re-run doctor, or unload the resident model';
+}
+
+/** The doctor's memory line: the plain memory warning, or the swap note where that is the truth. */
 export function doctorMemoryNote(
   mem: MemoryState | null,
   target: { name: string; sizeGb: number } | null,
   resident: ResidentModel[],
 ): string | null {
   const warning = memoryWarning(mem, target?.sizeGb || undefined);
-  if (!warning || !target) return warning;
-  const other = resident.filter((m) => !same(m.name, target.name));
-  if (other.length === 0 || resident.some((m) => same(m.name, target.name))) return warning;
-  const holder = other.map((m) => `${m.name} (${m.sizeGb.toFixed(1)} GB)`).join(', ');
-  return `Ollama has ${holder} resident, so ${target.name} must be swapped in before it can answer — ` +
-    'the first ping after a swap is slow; this is model swapping, not a memory shortage. Re-run doctor, or unload the resident model';
+  return warning && (swapNote(mem, target, resident) ?? warning);
+}
+
+/** A local ping's stall error names a memory shortage (models.ts); where the doctor sees a swap, it says that instead. */
+export function pingError(message: string, swap: string | null): string {
+  const cut = message.indexOf(' — the machine is short of memory');
+  return swap && cut >= 0 ? `${message.slice(0, cut)} — ${swap}` : message;
 }

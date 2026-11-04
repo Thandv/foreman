@@ -38,7 +38,7 @@ import { auditHasBans, formatAuditReport, type ProseAuditResult } from './prose/
 import { auditDirAsync, AUDIT_TIMEOUT_MS } from './prose/auditWorker.ts';
 import { claudeSpecs, probeCloud, reloadSpecs, specs } from './models.ts';
 import { modelSizeGb, readMemory, residentModels } from './memory.ts';
-import { doctorMemoryNote, pingRoster } from './doctorPlan.ts';
+import { doctorMemoryNote, pingError, pingRoster, swapNote } from './doctorPlan.ts';
 import { getRunner, runnerIds } from './runners/index.ts';
 import { modelForTask } from './roles.ts';
 import { setTicketSkills } from './skills.ts';
@@ -1001,6 +1001,8 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       const left = (): number => deadline - Date.now();
       await probeCloud().catch(() => null);
       const { chat, TruncatedReply } = await import('./models.ts');
+      // Before the pings, which load models: read after them it names doctor's own last load as the resident one.
+      const resident = await residentModels().catch(() => []);
       type Spec = ReturnType<typeof specs> extends Map<string, infer V> ? V : never;
       const skipped = (spec: Spec) => ({
         ...spec, ok: false, latencyMs: 0,
@@ -1021,7 +1023,11 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           // never counts as a verdict; a liveness probe is not a verdict, and
           // reading it as one reported every working local model as DOWN.
           if (err instanceof TruncatedReply) return { ...spec, ok: true, latencyMs: Date.now() - started, error: null };
-          return { ...spec, ok: false, latencyMs: Date.now() - started, error: (err as Error).message.slice(0, 200) };
+          const message = (err as Error).message;
+          const swap = /short of memory/.test(message)
+            ? swapNote(await readMemory(), { name: spec.model, sizeGb: (await modelSizeGb(spec.model)) ?? 0 }, resident)
+            : null;
+          return { ...spec, ok: false, latencyMs: Date.now() - started, error: pingError(message, swap).slice(0, 200) };
         }
       };
       const all = [...specs().values()];
@@ -1052,7 +1058,6 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       const sizes = await Promise.all(all.filter((s) => s.provider === 'ollama').map((s) => modelSizeGb(s.model)));
       const largest = Math.max(0, ...sizes.filter((n): n is number => n !== null));
       const largestSpec = all.filter((s) => s.provider === 'ollama').find((_, i) => sizes[i] === largest && largest > 0);
-      const resident = await residentModels().catch(() => []);
       const runners = await Promise.all(
         runnerIds().map(async (id) => {
           const reason = await getRunner(id).preflight(probeTask({ prompt: 'probe', runner: id }));
