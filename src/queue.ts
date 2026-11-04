@@ -21,7 +21,7 @@ import { assertTicketSkills } from './skills.ts';
 import type {
   AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, GateMode, MemoryFact, Run, RunEvent, Stage, Task, TaskStatus, Verdict,
 } from './types.ts';
-import { chairRuled, DECISION_ACTIONS, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
+import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
 
 /** The most of a decision's note the ledger keeps, in UTF-8 bytes, marker included. */
 export const DECISION_NOTE_MAX_BYTES = 16 * 1024;
@@ -1911,7 +1911,7 @@ export class Store extends EventEmitter {
       stage: 'verify',
       // "split" is the advisors disagreeing; whether a chair then ruled is a
       // separate fact (a conflicted chair hands the split up uncalled).
-      message: `${source}: ${v.verdict}${v.disagreement ? (chairRuled({ ...v, chairSummary: v.chairSummary ?? null, source }) ? ' (split, chair ruled)' : ' (split, no ruling)') : ''}`,
+      message: `${source}: ${reviewLabel({ verdict: v.verdict, provisional: v.provisional, council: v.council })}${v.disagreement ? (chairRuled({ ...v, chairSummary: v.chairSummary ?? null, source }) ? ' (split, chair ruled)' : ' (split, no ruling)') : ''}`,
     });
     return this.db.prepare('SELECT * FROM verdicts WHERE id = ?').all(verdictId).map(rowToVerdict)[0]!;
   }

@@ -340,6 +340,22 @@ export function probeTask(over: Partial<Task> = {}): Task {
  * the two are held equal by test/board.test.ts. Lives here, beside Verdict, so
  * the store can label rows without importing the council.
  */
+export function wasReviewed(verdict: { council: AdvisorOpinion[] } | null): boolean {
+  if (!verdict) return false;
+  return verdict.council.some((opinion) => !opinion.error);
+}
+
+/** Whether a verdict row may be shown or counted as a PASS: some reviewer read it and the seats were not stepped down. */
+export function countsAsPass(v: { verdict: string; provisional?: boolean; council: AdvisorOpinion[] } | null | undefined): boolean {
+  return v?.verdict === 'pass' && !v.provisional && wasReviewed(v);
+}
+
+/** How to word a verdict row to a person: its verdict, or `not reviewed` / `provisional <verdict>` where that is the truth. */
+export function reviewLabel(v: { verdict: string; provisional?: boolean; council: AdvisorOpinion[] }): string {
+  if (!wasReviewed(v)) return 'not reviewed';
+  return v.provisional ? `provisional ${v.verdict}` : v.verdict;
+}
+
 export function chairRuled(v: Pick<Verdict, 'chairSummary' | 'source' | 'disagreement' | 'verdict'> | null): boolean {
   if (!v?.chairSummary) return false;
   if (v.source === 'crew') return true;

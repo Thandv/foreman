@@ -38,7 +38,7 @@ import { getPlaybook } from './playbooks.ts';
 import { resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
 import { checkBuiltTool, toolEvidence, toolTestCommand } from './tools/forge.ts';
 import { migrateLegacyToolbox } from './tools/catalog.ts';
-import { buildPrompt, councilAliases, councilNumCtx, MAX_RUNG, rungFor, runCouncil, wasReviewed, type Evidence } from './verify/council.ts';
+import { buildPrompt, councilAliases, councilNumCtx, MAX_RUNG, rungFor, reviewLabel, runCouncil, wasReviewed, type Evidence } from './verify/council.ts';
 import { crewLeadsVerify, crewReview, DROPPED_ISSUE_PREFIX, droppedSinceLastPark, heldReason, isPartialPassNote, type CrewVerdict } from './verify/crewReview.ts';
 import { storeReport, storedReport } from './verify/report.ts';
 import { recordAssertionChanges, storedAssertionNote } from './verify/assertionCheck.ts';
@@ -2855,7 +2855,7 @@ export class Scheduler {
         // fresh verdict is a fresh decision to make: whatever the owner gate or
         // a person concluded about the old one no longer applies.
         this.store.clearGateDecision(taskId);
-        this.store.record({ taskId, type: 'verdict', message: `re-review: ${verdict.verdict}` });
+        this.store.record({ taskId, type: 'verdict', message: `re-review: ${reviewLabel(verdict)}`});
       }
       return verdict;
     } finally {
