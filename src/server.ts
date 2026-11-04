@@ -37,7 +37,8 @@ import { traceTask } from './trace.ts';
 import { auditHasBans, formatAuditReport, type ProseAuditResult } from './prose/audit.ts';
 import { auditDirAsync, AUDIT_TIMEOUT_MS } from './prose/auditWorker.ts';
 import { claudeSpecs, probeCloud, reloadSpecs, specs } from './models.ts';
-import { memoryWarning, modelSizeGb, readMemory } from './memory.ts';
+import { modelSizeGb, readMemory, residentModels } from './memory.ts';
+import { doctorMemoryNote, pingRoster } from './doctorPlan.ts';
 import { getRunner, runnerIds } from './runners/index.ts';
 import { modelForTask } from './roles.ts';
 import { setTicketSkills } from './skills.ts';
@@ -1024,19 +1025,21 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         }
       };
       const all = [...specs().values()];
-      const models: Awaited<ReturnType<typeof ping>>[] = [];
-      // Local pings run one at a time: this machine holds one roster model at
-      // once, so parallel loads only evict each other and time out.
-      for (const spec of all.filter((s) => s.local)) models.push(await ping(spec));
+      // Local pings run one at a time (this machine holds one roster model at
+      // once, so parallel loads only evict each other and time out) — but
+      // alongside the remote pings, not before them: a slow local sequence must
+      // never use up the budget the claude-cli and cloud models need.
       // Only the Claude CLI's aliases share its sign-in; a gateway or an
       // OpenAI-compatible models.json entry is pinged on its own merits. All
       // remote pings run together — they do not compete for local memory.
       const reason = cloudDown();
-      const remote = all.filter((s) => !s.local);
-      models.push(...await Promise.all(remote.map((spec) =>
-        spec.provider === 'claude-cli' && reason
+      const models = await pingRoster(
+        all,
+        ping,
+        (spec) => spec.provider === 'claude-cli' && reason
           ? Promise.resolve({ ...spec, ok: false, latencyMs: 0, error: reason })
-          : ping(spec))));
+          : ping(spec),
+      );
       // Unregistered while the fallback holds — still named, so the operator
       // sees what is missing rather than a shorter list.
       if (cloudFallback()) {
@@ -1048,6 +1051,8 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       // ladder will eventually have to load.
       const sizes = await Promise.all(all.filter((s) => s.provider === 'ollama').map((s) => modelSizeGb(s.model)));
       const largest = Math.max(0, ...sizes.filter((n): n is number => n !== null));
+      const largestSpec = all.filter((s) => s.provider === 'ollama').find((_, i) => sizes[i] === largest && largest > 0);
+      const resident = await residentModels().catch(() => []);
       const runners = await Promise.all(
         runnerIds().map(async (id) => {
           const reason = await getRunner(id).preflight(probeTask({ prompt: 'probe', runner: id }));
@@ -1073,7 +1078,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       return json(res, 200, {
         localOnly: localOnly(),
         mode: modeSummary(),
-        memory: memoryWarning(await readMemory(), largest || undefined),
+        memory: doctorMemoryNote(await readMemory(), largestSpec ? { name: largestSpec.model, sizeGb: largest } : null, resident),
         tiers: {
           owner: tierModel('owner'),
           senior: tierModel('senior'),
