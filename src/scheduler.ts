@@ -2433,7 +2433,9 @@ export class Scheduler {
       } else if (global === 'home-disk') {
         h = { kind: 'disk-home', message: 'held: low disk under the Foreman home (below FOREMAN_MIN_FREE_MB); new work waits until space is freed' };
       } else if (red) {
-        h = { kind: 'red', message: `held: main of ${t.repo} is red since ${red.head.slice(0, 10)} (${red.reason}); new work waits until HEAD moves and its tests pass` };
+        // A failed check's reason is the last lines of its test output (control codes included): named, not printed.
+        const why = /[\u0000-\u001f\u007f]/.test(red.reason) || red.reason.length > 120 ? `its tests failed; output in foreman show ${red.taskId}` : red.reason;
+        h = { kind: 'red', message: `held: main of ${t.repo} is red since ${red.head.slice(0, 10)} (${why}); new work waits until HEAD moves and its tests pass` };
       } else if (dirty) {
         h = { kind: 'dirty', message: `held: ${t.repo} has uncommitted changes (${dirty.files}); new work waits until the checkout is clean` };
       } else if (t.repo && this.diskLow(path.resolve(t.repo))) {

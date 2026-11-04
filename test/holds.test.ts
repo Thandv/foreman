@@ -45,7 +45,13 @@ test('a queued ticket on a red main gets one held event per episode, and show/ls
       server.close();
     }
 
-    // Released, then held again: a new episode, a second event.
+    // A real post-merge reason is the test output's tail: the hold names where to read it instead of printing it.
+    store.markRepoRed(repo, { head: 'fedcba9876543', taskId: 't_x', testCmd: 'npm run verify', reason: '\u001b[32m✔ ok\u001b[39m\n✖ broke\nverify: FAIL', since: Date.now(), nextCheckAt: Date.now() + 3_600_000 });
+    await s.tick();
+    assert.equal(heldEvents(store, t.id).length, 1, 'the same hold at a new HEAD is no new episode');
+    assert.match(store.holdOf(t.id) ?? '', /^held: main of \S+ is red since fedcba9876 \(its tests failed; output in foreman show t_x\); new work waits/);
+    assert.doesNotMatch(store.holdOf(t.id) ?? '', /[\u0000-\u001f]/);
+
     store.clearRepoRed(repo);
     await s.tick();
     assert.equal(store.holdOf(t.id), null);

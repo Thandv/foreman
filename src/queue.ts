@@ -738,9 +738,9 @@ export class Store extends EventEmitter {
   syncHolds(now: Map<string, { kind: string; message: string }>): void {
     for (const id of [...this.taskHolds.keys()]) if (!now.has(id)) this.taskHolds.delete(id);
     for (const [id, h] of now) {
-      if (this.taskHolds.get(id)?.kind === h.kind) continue;
-      this.taskHolds.set(id, h);
-      this.record({ taskId: id, type: 'warning', message: h.message });
+      const same = this.taskHolds.get(id)?.kind === h.kind;
+      this.taskHolds.set(id, h); // the same hold keeps its current wording (a new red HEAD, a later limit) without a new event
+      if (!same) this.record({ taskId: id, type: 'warning', message: h.message });
     }
   }
 
