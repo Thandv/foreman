@@ -166,7 +166,8 @@ function card(task) {
     bar.appendChild(fill);
     node.appendChild(bar);
   }
-  if (task.error) node.appendChild(el('div', 'lastlog', task.errorTruncated ? `${task.error}…` : task.error));
+  if (task.hold && task.status === 'queued') node.appendChild(el('div', 'lastlog', task.hold));
+  else if (task.error) node.appendChild(el('div', 'lastlog', task.errorTruncated ? `${task.error}…` : task.error));
   else if (run?.summary && task.status !== 'running') node.appendChild(el('div', 'lastlog', run.summary.split('\n')[0]));
   return node;
 }

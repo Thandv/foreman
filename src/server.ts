@@ -287,6 +287,7 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       // Reviewed on stepped-down models; the scheduler re-checks it when the
       // full council fits (scheduler.ts:runDueRechecks).
       provisional: provisional.has(task.id),
+      hold: store.holdOf(task.id),
       artifacts: artifacts.get(task.id) ?? [],
     };
   });
@@ -741,7 +742,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         const task = store.getTask(taskId);
         if (!task) return json(res, 404, { error: 'task not found' });
         return json(res, 200, {
-          task,
+          task: { ...task, hold: store.holdOf(taskId) },
           runs: store.runsForTask(taskId),
           // Dropped review issues are merged in even when later events pushed them out of the window.
           events: withDroppedIssues(store, taskId, store.eventsForTask(taskId, 800)),

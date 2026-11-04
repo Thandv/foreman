@@ -407,11 +407,11 @@ const REVERIFY_POLL_MS = Number(process.env['FOREMAN_REVERIFY_WAIT_MS'] ?? 900_0
 
 const PAD = { id: 14, status: 18, runner: 12, who: 6 };
 function taskLine(
-  t: Task & { run?: { stage?: string; progress?: number; costUsd?: number } | null; resolvedAssignee?: string },
+  t: Task & { run?: { stage?: string; progress?: number; costUsd?: number } | null; resolvedAssignee?: string; hold?: string | null },
 ): string {
   const run = t.run;
   const pct = run && ['running', 'verifying'].includes(t.status) ? ` ${Math.round((run.progress ?? 0) * 100)}%` : '';
-  const stage = run && ['running', 'verifying'].includes(t.status) ? ` ${run.stage}` : '';
+  const stage = run && ['running', 'verifying'].includes(t.status) ? ` ${run.stage}` : t.hold ? ' HELD' : '';
   // The snapshot resolves the assignee (playbook + env are server-side state);
   // the raw column is only the explicit per-task override, so it is the
   // fallback, not the answer.
@@ -1037,6 +1037,7 @@ async function main(): Promise<number> {
       if (!taskId) throw new Error('usage: foreman show <taskId>');
       const d = await apiCall(`/api/tasks/${taskId}`);
       process.stdout.write(`${d.task.title}\n${d.task.id}  ${d.task.status}  ${d.task.runner}  ${d.task.kind}\n${skillsLine(d.task)}\n`);
+      if (d.task.hold) process.stdout.write(`${d.task.hold}\n`);
       if (d.task.error) process.stdout.write(`error: ${d.task.error}\n\n`);
       for (const a of d.artifacts) {
         process.stdout.write(`artifact ${a.type}: ${a.path}${a.summary ? ` (${a.summary})` : ''}\n`);
