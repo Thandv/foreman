@@ -977,13 +977,13 @@ export class Scheduler {
       // up 33 GB into swap — the exact collision the lock was created for after
       // it happened once for real. Work already running is left alone; only
       // dispatch pauses, so the queue drains the moment the lock frees.
-      if (this.deferForLocalModelLock()) return;
+      if (this.deferForLocalModelLock()) { this.refreshHolds('local-lock'); return; }
       // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
       this.diskVolumeCache.clear();
-      if (this.diskLow(config.home)) return;
+      if (this.diskLow(config.home)) { this.refreshHolds('home-disk'); return; }
       // Only the work lane consumes worker slots.
       const free = this.maxWorkers - this.laneCount('work');
-      if (free <= 0) return;
+      if (free <= 0) { this.refreshHolds(null); return; }
       // While auto mode has fallen back, claude-code tickets are HELD — left
       // queued, attempts untouched — rather than claimed and failed: a lapsed
       // sign-in is not a defect in the ticket, and a retry budget burnt in
@@ -1010,6 +1010,7 @@ export class Scheduler {
         if (!this.store.claim(task.id)) continue; // lost the race
         this.launch({ ...task, attempts: task.attempts + 1 });
       }
+      this.refreshHolds(null);
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
       // (It is also never reached while the training lock defers dispatch, or
@@ -2411,6 +2412,40 @@ export class Scheduler {
         }
       })();
     }
+  }
+
+  /**
+   * Make every hold on a queued ticket visible (Store.syncHolds records one event per episode). Mirrors the
+   * conditions dispatch applies; it changes none of them.
+   */
+  private refreshHolds(global: 'local-lock' | 'home-disk' | null): void {
+    const now = new Map<string, { kind: string; message: string }>();
+    const limited = this.limitHoldUntil > Date.now();
+    const fallback = cloudFallback();
+    for (const t of this.store.queuedForHolds()) {
+      if (this.active.has(t.id)) continue;
+      let h: { kind: string; message: string } | null = null;
+      const red = this.store.repoRed(t.repo);
+      const dirty = t.repo ? this.dirtyHolds.get(path.resolve(t.repo)) : undefined;
+      if (global === 'local-lock') {
+        const holder = localModelLockHolder();
+        h = { kind: 'local-lock', message: `held: ${holder ? `${holder.label} (pid ${holder.pid})` : 'a trainer or adoption gate'} holds the local-model lock; new work waits until it releases the lock` };
+      } else if (global === 'home-disk') {
+        h = { kind: 'disk-home', message: 'held: low disk under the Foreman home (below FOREMAN_MIN_FREE_MB); new work waits until space is freed' };
+      } else if (red) {
+        h = { kind: 'red', message: `held: main of ${t.repo} is red since ${red.head.slice(0, 10)} (${red.reason}); new work waits until HEAD moves and its tests pass` };
+      } else if (dirty) {
+        h = { kind: 'dirty', message: `held: ${t.repo} has uncommitted changes (${dirty.files}); new work waits until the checkout is clean` };
+      } else if (t.repo && this.diskLow(path.resolve(t.repo))) {
+        h = { kind: 'disk', message: `held: low disk under ${t.repo} (below FOREMAN_MIN_FREE_MB); new work waits until space is freed` };
+      } else if (t.runner === 'claude-code' && limited) {
+        h = { kind: 'limit', message: `held: claude-code provider usage limit; waits until ${new Date(this.limitHoldUntil).toISOString()}` };
+      } else if (t.runner === 'claude-code' && fallback) {
+        h = { kind: 'auth', message: 'held: Claude CLI sign-in lapsed (auth fallback); claude-code tickets wait until the CLI is signed in again' };
+      }
+      if (h) now.set(t.id, h);
+    }
+    this.store.syncHolds(now);
   }
 
   private holdDirtyRepo(repo: string, files: string): void {

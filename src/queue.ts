@@ -727,6 +727,32 @@ export class Store extends EventEmitter {
     this.setStatus(taskId, 'queued', note);
   }
 
+  /**
+   * Why a queued ticket is not being claimed (the scheduler's holds: red main, dirty checkout, low disk, local-model
+   * lock, claude-code auth/limit). In memory — the scheduler re-derives it every tick — and the visible record is one
+   * 'warning' event per hold episode, not one per tick. Only visibility: nothing here decides what is held.
+   */
+  private readonly taskHolds = new Map<string, { kind: string; message: string }>();
+
+  /** Replace the set of held tickets: new or changed holds record one event, tickets no longer held are forgotten. */
+  syncHolds(now: Map<string, { kind: string; message: string }>): void {
+    for (const id of [...this.taskHolds.keys()]) if (!now.has(id)) this.taskHolds.delete(id);
+    for (const [id, h] of now) {
+      if (this.taskHolds.get(id)?.kind === h.kind) continue;
+      this.taskHolds.set(id, h);
+      this.record({ taskId: id, type: 'warning', message: h.message });
+    }
+  }
+
+  holdOf(taskId: string): string | null {
+    return this.taskHolds.get(taskId)?.message ?? null;
+  }
+
+  /** Queued tickets with the fields a hold decision needs. */
+  queuedForHolds(): Array<{ id: string; repo: string | null; runner: string }> {
+    return this.db.prepare("SELECT id, repo, runner FROM tasks WHERE status = 'queued'").all() as Array<{ id: string; repo: string | null; runner: string }>;
+  }
+
   repoRed(repo: string | null | undefined): RedRepo | null {
     return repo ? this.redRepos.get(path.resolve(repo)) ?? null : null;
   }
