@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
 import { config } from '../src/config.ts';
 import { councilShareOf, finishedRound, Scheduler, type SchedulerOptions } from '../src/scheduler.ts';
+import { echoRunner } from '../src/runners/echo.ts';
 
 /** Scheduler with the council stubbed, so pipeline tests need no model server. */
 function scheduler(store: Store, opts: SchedulerOptions = {}): Scheduler {
@@ -304,6 +305,7 @@ test('a 200,000-line shell ticket caps its runner events, keeps the whole run lo
   assert.equal(run.summary, 'shell command succeeded (200000 lines)');
   const runnerEvents = events.filter((e) => e.type === 'log' && (/^\d+$/.test(e.message) || /further output|lines in total/.test(e.message)));
   assert.ok(runnerEvents.length <= 2 * 2000 + 2, `runner log events: ${runnerEvents.length}`);
+  assert.equal(runnerEvents.filter((e) => /^\d+$/.test(e.message)).length, 2 * 2000, 'exactly twice FOREMAN_LOG_LINES runner lines');
   assert.ok(events.some((e) => e.message.startsWith('further output is in the run log')));
   assert.ok(events.some((e) => e.message === 'runner output: 200000 lines in total, all in the run log'));
   const prog = events.filter((e) => e.type === 'progress');
@@ -317,4 +319,29 @@ test('a 200,000-line shell ticket caps its runner events, keeps the whole run lo
   assert.equal(numbered.length, 200_000, 'the run log holds every runner line');
   assert.ok(numbered.at(-1)!.endsWith(' 200000'));
   store.close();
+});
+
+test('progress is written only when it changes, after 1 s or a move of 0.01, and the last value at run end', async () => {
+  let now = 1_700_000_000_000;
+  const store = new Store(':memory:');
+  const sched = scheduler(store, { maxWorkers: 1, now: () => now });
+  const real = echoRunner.run;
+  echoRunner.run = async (ctx) => {
+    ctx.progress(0.5); // first value: written
+    now += 5000;
+    ctx.progress(0.5); // unchanged, however long ago: not written
+    ctx.progress(0.503); // a small move after 1 s: written
+    ctx.progress(0.506); // a small move within 1 s: held
+    return { ok: true, exitCode: 0, summary: 'done' };
+  };
+  try {
+    const t = store.addTask({ title: 'progress', prompt: 'ok', runner: 'echo' });
+    await sched.drain(20_000);
+    const prog = store.eventsForTask(t.id).filter((e) => e.type === 'progress').map((e) => e.message);
+    assert.deepEqual(prog, ['0.500', '0.503', '0.506'], 'the held value is written when the run ends');
+    assert.equal(store.latestRun(t.id)!.progress, 0.506);
+  } finally {
+    echoRunner.run = real;
+    store.close();
+  }
 });
