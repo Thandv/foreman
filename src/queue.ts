@@ -1380,9 +1380,9 @@ export class Store extends EventEmitter {
   }
 
   /** One dependent that failed by cascade comes back to `blocked`, and so does whatever failed by cascade from it. */
-  private reviveOne(id: string, taskId: string, seen: Set<string>): void {
+  private reviveOne(id: string, taskId: string, seen: Set<string>, how = 'retried'): void {
     this.db.prepare('UPDATE tasks SET attempts = 0, stop_requeues = 0 WHERE id = ?').run(id);
-    this.setStatus(id, 'blocked', `revived: dependency ${taskId} was retried`);
+    this.setStatus(id, 'blocked', `revived: dependency ${taskId} was ${how}`);
     this.reviveDependents(id, seen);
   }
 
@@ -1414,7 +1414,7 @@ export class Store extends EventEmitter {
         note: `dropped dependency ${dep}${failedByThisEdge ? '; the ticket had failed by cascade from it and is revived' : ''}`,
         extra: { dep, statusBefore: task.status },
       });
-      if (failedByThisEdge) this.reviveOne(taskId, dep, new Set([dep]));
+      if (failedByThisEdge) this.reviveOne(taskId, dep, new Set([dep]), 'dropped');
       this.db.exec('COMMIT');
     } catch (err) {
       try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }

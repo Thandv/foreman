@@ -83,7 +83,8 @@ writes one `deps-drop` row in `decisions` (actor `human`) whose note names the d
 edge that does not exist; and a terminal ticket (`done`, `failed`, `rejected`, `canceled`), with one exception. A
 dependent this edge failed by cascade (status `failed`, error `dependency <depId> ended as failed|rejected|canceled`, and
 the edge exists) is accepted: it is revived through the same path as a retry of its dependency, goes to `blocked`, and
-the next reconcile queues it. A ticket that does not exist answers 404; a `dep` that is not a ticket id answers 400.
+the next reconcile queues it once its other dependencies are done (or fails it again if one of them ended). A ticket
+that does not exist answers 404; a `dep` that is not a ticket id answers 400.
 
 **There is no `--add`.** `reconcileBlocked` relies on an invariant: only ticket creation writes edges, so an edge on a
 reviewer's follow-up is either the real dependency or an order written by the filing rule. Adding an edge later breaks

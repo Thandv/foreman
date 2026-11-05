@@ -42,6 +42,7 @@ test('a dependent failed by "dependency X ended as failed" is blocked, then queu
 
   const after = store.dropDependency(b, a, 'human');
   assert.equal(after.status, 'blocked');
+  assert.equal(after.error, `revived: dependency ${a} was dropped`);
   assert.deepEqual(store.getTask(b)!.deps, [c]);
   store.reconcileBlocked();
   assert.equal(store.getTask(b)!.status, 'queued');
@@ -122,7 +123,7 @@ test('there is no --add flag on foreman deps', async () => {
     child.stderr.on('data', (c) => (stderr += c));
     child.on('close', (code) => resolve({ stderr, code }));
   });
-  const r = await run(['deps', 't_aaaa', '--add', 't_bbbb']);
+  const r = await run(['deps', 't_aaaa', '--add', 't_bbbb', '--drop', 't_cccc']);
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, /no --add/);
   assert.ok(!/--add\b/.test(fs.readFileSync(CLI, 'utf8').split('\n').filter((l) => /flags\[['"]add['"]\]/.test(l) && !/throw/.test(l)).join('\n')));
@@ -173,6 +174,7 @@ test('the deps-drop route refuses a foreign Origin and a rebinding Host, and acc
   const ok = await post(port, url, { dep: a });
   assert.equal(ok.status, 200, JSON.stringify(ok.json));
   assert.equal(ok.json.decision.action, 'deps-drop');
+  assert.equal(ok.json.decision.actor, 'human');
   const again = await post(port, url, { dep: a });
   assert.equal(again.status, 409);
 });
