@@ -14,7 +14,8 @@ import { Scheduler, shellBrief } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { testSlotCommand, workerEnv } from '../src/runners/cliRunners.ts';
 import { acquireVerifySlot, claimRunLease, verifySlotStats } from '../src/verify/slots.ts';
-import { FailingBlocks, FAILING_LINES_MAX, OUTPUT_DIR_NAME, savedOutputs } from '../src/verify/suiteOutput.ts';
+import { FailingBlocks, FAILING_LINES_MAX, OUTPUT_DIR_NAME, resultFileFor, savedOutputs } from '../src/verify/suiteOutput.ts';
+import { readWorkerSuite } from '../src/verify/workerSuite.ts';
 
 const WRAPPER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'verify', 'testSlot.ts');
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -361,6 +362,21 @@ test('the whole output is saved outside the working tree, owner-only, and the la
     }
   }));
 
+test('the daemon reads PASSED or FAILED from what a real wrapper run left (workerSuite.ts)', { timeout: 300_000 }, () =>
+  withCap('2', async () => {
+    const d = await daemon();
+    const s = scratch();
+    try {
+      for (const [exit, outcome] of [[0, 'PASSED'], [1, 'FAILED']] as const) {
+        const w = wrapper(s, d.port, s.cmd({ lines: 3, exit }), { runId: `r_ws${exit}` });
+        assert.equal(await exitOf(w, 'the wrapper'), exit, w.stderr());
+        assert.equal(readWorkerSuite(s.outDir, `r_ws${exit}`, null).status, outcome);
+      }
+    } finally {
+      await cleanup(d, s);
+    }
+  }));
+
 test('a temp dir inside the working tree is not used: the saved output never becomes part of the ticket\'s diff', { timeout: 300_000 }, () =>
   withCap('2', async () => {
     const d = await daemon();
@@ -466,6 +482,7 @@ test('only the newest three outputs of a run are kept, another run\'s are left a
       // r_keep-99-1.log is this run's by its name (an older one, by its stamp): it counts, and is the one pruned first.
       assert.deepEqual(kept, [files[4], files[3], files[2]], 'the newest three, newest first');
       assert.ok(!fs.existsSync(files[0]!) && !fs.existsSync(files[1]!) && !fs.existsSync(others[1]!));
+      assert.ok(!fs.existsSync(resultFileFor(files[0]!)) && fs.existsSync(resultFileFor(files[4]!)), 'result files go with their outputs');
       assert.ok(fs.existsSync(others[0]!), 'a run whose id merely starts the same keeps its own');
       const startsBefore = s.starts().length;
       const show = wrapper(s, d.port, s.cmd({ lines: 1 }), { runId: 'r_keep', args: ['--saved'] });

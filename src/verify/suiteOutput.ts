@@ -96,10 +96,13 @@ export function savedOutputs(dir: string, runId: string | null | undefined): str
   return mine.map((f) => path.join(dir, f.name));
 }
 
+/** Beside a saved output: the wrapper's closing `testSlot: <cmd> PASSED|FAILED` line, written once the suite has ended. */
+export const resultFileFor = (output: string): string => output.replace(/\.log$/, '.result');
+
 /** Keep the newest KEEP_PER_RUN of this run's outputs (always `keep`), and drop anything in the folder past its age. */
 function prune(dir: string, runId: string | null | undefined, keep: string, now: number): void {
   const mine = savedOutputs(dir, runId).filter((f) => f !== keep);
-  for (const old of mine.slice(KEEP_PER_RUN - 1)) fs.rmSync(old, { force: true });
+  for (const old of mine.slice(KEEP_PER_RUN - 1)) for (const f of [old, resultFileFor(old)]) fs.rmSync(f, { force: true });
   let names: string[] = [];
   try {
     names = fs.readdirSync(dir);

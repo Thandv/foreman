@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { OUTPUT_DIR_NAME, savedOutputs } from './suiteOutput.ts';
+import { OUTPUT_DIR_NAME, resultFileFor, savedOutputs } from './suiteOutput.ts';
 import type { Store } from '../queue.ts';
 import type { Run } from '../types.ts';
 
@@ -28,9 +28,19 @@ export interface WorkerSuiteResult {
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 const WALK_MAX = 50_000;
 
-/** Newest mtime of any file in the jail (not .git, not node_modules), or 0. Bounded; a single unreadable entry is skipped. */
+/**
+ * Newest mtime of any file or directory in the jail (not .git, not node_modules), or 0. Directories count because a
+ * file deleted or renamed changes only its directory's mtime. Bounded; a single unreadable entry is skipped.
+ */
 export function newestJailMtime(dir: string): number {
-  let newest = 0;
+  const mtime = (p: string): number => {
+    try {
+      return fs.lstatSync(p).mtimeMs;
+    } catch {
+      return 0; /* gone */
+    }
+  };
+  let newest = mtime(dir);
   let seen = 0;
   const stack = [dir];
   while (stack.length && seen < WALK_MAX) {
@@ -43,14 +53,12 @@ export function newestJailMtime(dir: string): number {
     }
     for (const e of ents) {
       if (++seen > WALK_MAX) break;
-      if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name)) stack.push(path.join(d, e.name));
+      const p = path.join(d, e.name);
+      if (e.isDirectory() && !SKIP_DIRS.has(e.name)) {
+        stack.push(p);
+        newest = Math.max(newest, mtime(p));
       } else if (e.isFile()) {
-        try {
-          newest = Math.max(newest, fs.lstatSync(path.join(d, e.name)).mtimeMs);
-        } catch {
-          /* gone */
-        }
+        newest = Math.max(newest, mtime(p));
       }
     }
   }
@@ -73,23 +81,19 @@ export function existingOutputDir(): string | null {
   return null;
 }
 
-/** PASSED/FAILED from the end of a saved log (`testSlot: <cmd> PASSED|FAILED`), or null. */
+/**
+ * PASSED/FAILED from the wrapper's result file beside a saved log (`testSlot: <cmd> PASSED|FAILED`), or null when it
+ * wrote none (a run cut short). Never from the log itself: that is the suite's own output, whatever it printed.
+ */
 export function outcomeOfLog(file: string): 'PASSED' | 'FAILED' | null {
-  const size = fs.statSync(file).size;
-  const len = Math.min(size, 8192);
-  const fd = fs.openSync(file, 'r');
+  let text: string;
   try {
-    const buf = Buffer.alloc(len);
-    fs.readSync(fd, buf, 0, len, size - len);
-    const lines = buf.toString('utf8').split('\n').map((l) => l.trim()).filter(Boolean);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const m = /^testSlot: .* (PASSED|FAILED)\b/.exec(lines[i]!);
-      if (m) return m[1] as 'PASSED' | 'FAILED';
-    }
-    return null;
-  } finally {
-    fs.closeSync(fd);
+    text = fs.readFileSync(resultFileFor(file), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
   }
+  return /^testSlot: .* (PASSED|FAILED)\n?$/.exec(text.slice(0, 8192))?.[1] as 'PASSED' | 'FAILED' | undefined ?? null;
 }
 
 /** Never throws: a read error is a result with a visible line. */

@@ -39,7 +39,7 @@ What the gate recorded before: only its own test stage, plus timeline lines whil
 
 At collection (before the gate's own tests touch the jail) the daemon reads `savedOutputs(outputDir, runId)` — the run key matched exactly, so output under `r_1-2` does not count for `r_1` — and writes one `worker-suite` event, a `worker-suite` artifact (its summary is the line, so it shows in `foreman show` and `/api/state`) and a line (on the run's timeline and as that artifact's summary; it is not put in the reviewers' input):
 
-- `worker suite: PASSED|FAILED at <time> (advisory, written by worker-side code)`, with `; changed after the worker's suite` when a file in the jail (not `.git`, not `node_modules`) has a newer mtime than the last saved output;
+- `worker suite: PASSED|FAILED at <time> (advisory, written by worker-side code)`, read from the `.result` file the wrapper writes beside the output once the suite has ended (a run cut short has none and says `no result line`), with `; changed after the worker's suite` when a file or folder in the jail (not `.git`, not `node_modules`) has a newer mtime than the last saved output (a folder's changes when a file in it is deleted or renamed);
 - `the worker never ran the suite` when there is no saved output;
 - `worker suite: could not read its saved output (<reason>)` when the output folder cannot be read. Collection goes on.
 

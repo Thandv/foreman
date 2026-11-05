@@ -31,7 +31,7 @@ import { pathToFileURL } from 'node:url';
 import { config, daemonUrl } from '../config.ts';
 import { installProcessRecorder } from '../runners/freezeInstall.ts';
 import { OUTPUT_HEADER, RUN_HEADER, WRAPPER_PID_HEADER } from './slots.ts';
-import { outputDir, savedOutputs, SuiteLog } from './suiteOutput.ts';
+import { outputDir, resultFileFor, savedOutputs, SuiteLog } from './suiteOutput.ts';
 import { detectTestCmd, runTests } from './tests.ts';
 
 /** The ticket's test command, handed to the worker session by the CLI runner. */
@@ -284,7 +284,10 @@ async function main(argv: string[]): Promise<number> {
       out(`--- failing tests ---\n${log.failing.lines.join('\n')}\n`);
       if (log.failing.dropped) out(`(${log.failing.dropped} more lines of failing tests are in the saved output)\n`);
     }
-    process.stderr.write(`testSlot: ${cmd} ${result.passed ? 'PASSED' : 'FAILED'}\n`);
+    const verdict = `testSlot: ${cmd} ${result.passed ? 'PASSED' : 'FAILED'}\n`;
+    // For the daemon (workerSuite.ts), beside the output, which stays exactly the suite's. A run cut short writes none.
+    if (log.file && !log.problem) try { fs.writeFileSync(resultFileFor(log.file), verdict, { flag: 'wx', mode: 0o600 }); } catch { /* stderr has it */ }
+    process.stderr.write(verdict);
     out(
       log.file && !log.problem
         ? `testSlot: full output saved to ${log.file} (${log.lines} lines)\n`

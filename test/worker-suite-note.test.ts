@@ -18,9 +18,12 @@ function setup(t: test.TestContext) {
     const when = new Date(Date.now() - ageSec * 1000);
     fs.utimesSync(file, when, when);
   };
+  age(jail, 120); // the folder's own mtime counts too (a delete or rename changes only it)
+  // The wrapper's closing line goes in the result file beside the output, never in the suite's own output.
   const save = (name: string, last: string, ageSec: number): string => {
     const f = path.join(out, name);
-    fs.writeFileSync(f, `some output\n${last}\n`);
+    fs.writeFileSync(f, 'some output\n');
+    fs.writeFileSync(f.replace(/\.log$/, '.result'), `${last}\n`);
     age(f, ageSec);
     return f;
   };
@@ -89,4 +92,27 @@ test('an unreadable output folder gives a visible line and does not throw', (t) 
   const r = readWorkerSuite(notADir, 'r_1', s.jail);
   assert.equal(r.status, 'unreadable');
   assert.match(r.line, /^worker suite: could not read its saved output \(/);
+});
+
+test('a suite whose own output prints a PASSED line, with no result file from the wrapper (cut short), is not PASSED', (t) => {
+  const s = setup(t);
+  const f = path.join(s.out, 'r_1-1000-1.log');
+  fs.writeFileSync(f, 'testSlot: npm test PASSED\n'); // a nested wrapper's line in the suite's output
+  assert.doesNotMatch(readWorkerSuite(s.out, 'r_1', s.jail).line, /PASSED|FAILED/);
+});
+
+test('a file deleted or renamed after the last suite run counts as changed after it', (t) => {
+  for (const edit of ['rm', 'mv', 'rm at the top'] as const) {
+    const s = setup(t);
+    fs.mkdirSync(path.join(s.jail, 'src'));
+    fs.writeFileSync(path.join(s.jail, 'src', 'b.txt'), 'b');
+    for (const p of ['a.txt', 'src/b.txt', 'src']) s.age(path.join(s.jail, p), 120);
+    s.age(s.jail, 120);
+    s.save('r_1-1000-1.log', 'testSlot: npm test PASSED', 60);
+    assert.doesNotMatch(readWorkerSuite(s.out, 'r_1', s.jail).line, /changed after/);
+    if (edit === 'rm') fs.rmSync(path.join(s.jail, 'src', 'b.txt'));
+    else if (edit === 'rm at the top') fs.rmSync(path.join(s.jail, 'a.txt'));
+    else fs.renameSync(path.join(s.jail, 'src', 'b.txt'), path.join(s.jail, 'src', 'c.txt'));
+    assert.match(readWorkerSuite(s.out, 'r_1', s.jail).line, /; changed after the worker's suite$/, edit);
+  }
 });
