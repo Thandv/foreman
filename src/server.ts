@@ -166,7 +166,7 @@ async function readDecisionBody(req: http.IncomingMessage): Promise<{
  * answered 400 with the worker still running. A body that is absent or empty is no note; one that cannot be read
  * (not JSON, not an object, over the limit, a note that is not text) is dropped and `problem` says why.
  */
-async function readCancelNote(req: http.IncomingMessage, limit = 1_000_000): Promise<{ note: string | null; problem: string | null }> {
+async function readCancelNote(req: http.IncomingMessage, limit = 1_000_000): Promise<{ note: string | null; problem: string | null; cascade: boolean }> {
   // Not readJsonBody: leaving its loop early destroys the request, and with it the socket the answer goes out on.
   // Past the limit the rest is drained unread, so a cancel with an over-long body is still answered.
   const text = await new Promise<string | null>((resolve) => {
@@ -187,19 +187,21 @@ async function readCancelNote(req: http.IncomingMessage, limit = 1_000_000): Pro
     req.once('error', () => resolve(null));
     req.once('close', () => resolve(null));
   });
-  if (text === null) return { note: null, problem: `the request body could not be read (too large, over ${limit} bytes, or cut off)` };
-  if (!text.trim()) return { note: null, problem: null };
+  if (text === null) return { note: null, problem: `the request body could not be read (too large, over ${limit} bytes, or cut off)`, cascade: false };
+  if (!text.trim()) return { note: null, problem: null, cascade: false };
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    return { note: null, problem: `the request body is not JSON (${(err as Error).message.slice(0, 120)})` };
+    return { note: null, problem: `the request body is not JSON (${(err as Error).message.slice(0, 120)})`, cascade: false };
   }
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { note: null, problem: 'the request body is not a JSON object' };
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { note: null, problem: 'the request body is not a JSON object', cascade: false };
+  // `cascade: true` asks for the old behaviour (dependents fail); anything else leaves them waiting.
+  const cascade = (raw as Record<string, unknown>)['cascade'] === true;
   const note = (raw as Record<string, unknown>)['note'];
-  if (note === undefined || note === null) return { note: null, problem: null };
-  if (typeof note !== 'string') return { note: null, problem: 'note is not text' };
-  return { note, problem: null };
+  if (note === undefined || note === null) return { note: null, problem: null, cascade };
+  if (typeof note !== 'string') return { note: null, problem: 'note is not text', cascade };
+  return { note, problem: null, cascade };
 }
 
 /**
@@ -914,9 +916,9 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         }
         if (action === 'cancel') {
           // Never refused over its note (readCancelNote): whatever came with it, the cancel goes ahead.
-          const { note, problem } = await readCancelNote(req);
+          const { note, problem, cascade } = await readCancelNote(req);
           const asked = Date.now();
-          const canceled = store.cancel(taskId, note);
+          const canceled = store.cancel(taskId, note, { cascade });
           return json(res, 200, {
             ...canceled,
             decision: justRecorded(store, taskId, 'cancel', asked),

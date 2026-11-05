@@ -702,7 +702,7 @@ test('reconcileBlocked settles epics the setStatus hook never saw', async () => 
     const other = await openEpic(store);
     const dead = store.addTask({ title: 'dead', prompt: 'x', runner: 'echo' });
     store.db.prepare('INSERT INTO task_deps (task_id, depends_on) VALUES (?,?)').run(other.epic.id, dead.id);
-    store.cancel(dead.id);
+    store.cancel(dead.id, undefined, { cascade: true });
     store.reconcileBlocked();
     const failed = store.getTask(other.epic.id)!;
     assert.equal(failed.status, 'failed');

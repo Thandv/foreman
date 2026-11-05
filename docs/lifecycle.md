@@ -33,6 +33,22 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
 7. **merge** — approving a code task merges its branch `--no-ff`. It refuses on a dirty repo and
    aborts cleanly on conflict; your checkout is never left mid-merge.
 
+### A dependent waiting on a canceled ticket
+
+When a person cancels a ticket (`foreman cancel <id>`, no `--cascade`), tickets that depend on it do not fail. Each stays
+`blocked` with the note `waiting: dependency <id> was canceled - foreman deps <dependent> --drop <id>, foreman landed <id>,
+or foreman retry <id>`, written once and not rewritten on later ticks. The scheduler decides this from the canceled
+ticket's own `cancel` row in `decisions`, never from a status or note. Three exits:
+
+1. `foreman deps <dependent> --drop <id>` removes the edge for that one dependent; it is released once its other
+   dependencies are done.
+2. `foreman landed <id> --commit <sha>` closes the canceled ticket as `done` (work landed by hand); every waiting
+   dependent is released.
+3. `foreman retry <id>` requeues it; its dependents are released when it lands as `done`.
+
+Not waiting, still failed with `dependency <id> ended as <status>`: dependents of a ticket canceled with `--cascade`, of one
+canceled by its parent epic (a `system` row), of one with no `cancel` row, and of one that ended `failed` or `rejected`.
+
 ### The worker's own suite run (advisory)
 
 What the gate recorded before: only its own test stage, plus timeline lines while the worker's suite waited for a test slot. The worker's in-jail runs through `src/verify/testSlot.ts` were not read back.

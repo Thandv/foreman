@@ -78,7 +78,10 @@ const USAGE = `foreman — parallel agent mission control
         [--review-source <text>]          for the record only: who verified it, at most 200 characters
                                           (e.g. "independent reviewer, verify 3040/0/1")
   foreman reject <taskId> [--note <text>] reject them
-  foreman cancel <taskId> [--note <text>] stop a queued or running task; the note says why, for the record
+  foreman cancel <taskId> [--note <text>] [--cascade]
+                                          stop a queued or running task; the note says why, for the record.
+                                          Its dependents wait (blocked) for you to drop, land or retry it;
+                                          --cascade fails them instead.
                                           Every approve, reject, cancel, retry and reopen is one row in the ledger's
                                           \`decisions\` table (never changed afterwards); each prints what was recorded.
   foreman retry <taskId> [--note <text>]  requeue an ended task; the note is binding on the worker and every reviewer
@@ -1099,8 +1102,11 @@ async function main(): Promise<number> {
     }
     case 'approve':
     case 'cancel': {
-      const taskId = args._[1];
-      if (!taskId) throw new Error(`usage: foreman ${cmd} <taskId>${cmd === 'approve' ? ' [--note <text>] [--as-is <tree sha>] [--corrected | --clean] [--review-source <text>]' : ' [--note <text>]'}`);
+      // --cascade takes no value, but the parser hands it the next word: `cancel --cascade t_x` names the ticket.
+      const cascadeFlag = cmd === 'cancel' ? args.flags['cascade'] : undefined;
+      const taskId = args._[1] ?? (typeof cascadeFlag === 'string' ? cascadeFlag : undefined);
+      if (cmd !== 'cancel' && args.flags['cascade'] !== undefined) throw new Error('--cascade goes with cancel');
+      if (!taskId) throw new Error(`usage: foreman ${cmd} <taskId>${cmd === 'approve' ? ' [--note <text>] [--as-is <tree sha>] [--corrected | --clean] [--review-source <text>]' : ' [--note <text>] [--cascade]'}`);
       const note = flagStr(args, 'note');
       if (args.flags['note'] === true) throw new Error('--note needs its text');
       const corrected = correctedFlag(args);
@@ -1123,7 +1129,10 @@ async function main(): Promise<number> {
           ...(corrected === undefined ? {} : { corrected }),
           ...(reviewSource === undefined ? {} : { reviewSource }),
         })
-        : await apiCall(`/api/tasks/${taskId}/${cmd}`, { method: 'POST', ...(note === undefined ? {} : { body: JSON.stringify({ note }) }) });
+        : await apiCall(`/api/tasks/${taskId}/${cmd}`, {
+          method: 'POST',
+          ...(note === undefined && cascadeFlag === undefined ? {} : { body: JSON.stringify({ ...(note === undefined ? {} : { note }), ...(cascadeFlag === undefined ? {} : { cascade: true }) }) }),
+        });
       process.stdout.write(`${t.id} → ${t.status}\n`);
       if (t.merge?.branch) process.stdout.write(`merge: ${t.merge.reason}\n`);
       if (t.registration && t.registration.reason !== 'not a tool task') {

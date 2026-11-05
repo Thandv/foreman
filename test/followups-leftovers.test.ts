@@ -331,7 +331,7 @@ test('F20: an operator\'s own --after is a dependency as on main: it ends cancel
       const planned = add('planned ticket', { parentId: epic.id, deps: [first.id] });
       // An operator's ticket whose prompt happens to open like a reviewer's follow-up, but which was filed on nothing.
       const lookalike = add('lookalike', { prompt: 'Filed by me, by hand', deps: [first.id] });
-      if (how === 'canceled') store.cancel(first.id);
+      if (how === 'canceled') store.cancel(first.id, undefined, { cascade: true });
       else store.setStatus(first.id, how, 'no');
       store.reconcileBlocked();
       for (const t of [plain, planned, lookalike]) {
@@ -1257,7 +1257,7 @@ test('F20: a planned ticket whose prompt opens "Filed by " keeps its plan\'s dep
       const underEpic = store.addTask({ title: 'under an epic', prompt: 'Filed by nobody', runner: 'echo', parentId: epic.id, deps: [epic.id, one!.id] });
       const container = store.addTask({ title: 'a container', prompt: 'Filed by nobody', runner: 'echo', isEpic: true, parentId: work.id, deps: [work.id, one!.id] });
       store.addTask({ title: 'its ticket', prompt: 'p', runner: 'echo', parentId: container.id });
-      if (how === 'canceled') store.cancel(one!.id);
+      if (how === 'canceled') store.cancel(one!.id, undefined, { cascade: true });
       else store.setStatus(one!.id, how, 'no');
       store.reconcileBlocked();
       for (const t of [two!, odd, plain, underEpic, container]) {

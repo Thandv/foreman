@@ -73,6 +73,22 @@ part appears only when `--by` was given. `GET /api/state` carries the same facts
 `landed: { commit, landedTree, by, actor, at }` (null when the ticket was not landed by hand), and
 `GET /api/tasks/:id` lists the full row under `decisions`.
 
+### `foreman cancel <taskId> [--note <text>] [--cascade]`
+
+Stops a queued or running ticket (`POST /api/tasks/:id/cancel`, body `{ note?, cascade? }`; a body that cannot be read
+never refuses the cancel). It writes a `cancel` row in `decisions` and an epic's tickets under it are canceled too.
+
+**Dependents wait.** A ticket that depends on the canceled one is not failed. It stays `blocked` with the note
+`waiting: dependency <id> was canceled - foreman deps <dependent> --drop <id>, foreman landed <id>, or foreman retry <id>`
+(its `error` field: `GET /api/state` and `foreman show` carry it). See
+[the waiting state](lifecycle.md#a-dependent-waiting-on-a-canceled-ticket) for the three exits. Whether a dependent waits is
+read from the `decisions` table: the canceled ticket must have its OWN `cancel` row from a person.
+
+**`--cascade`** keeps the earlier behaviour: the cancel's row is marked `cascade` in `extra`, and every dependent fails
+with `dependency <id> ended as canceled` on the next reconcile. A ticket canceled by its parent epic (a `system` row) also
+fails its dependents this way, and so does one with no `cancel` row at all. Dependencies that ended `failed` or `rejected`
+always fail their dependents.
+
 ### `foreman deps <taskId> --drop <depId>`
 
 Drops one dependency edge (`--after`) from a ticket. It posts to `POST /api/tasks/:id/deps-drop` with `{ dep }`, behind
