@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { config } from './config.ts';
 import { changedPaths } from './security/coreGuard.ts';
 import { gitTimeoutOpts, timedGit } from './gitTimeout.ts';
+import { recordBaseline } from './gitTripwire.ts';
 import type { Task } from './types.ts';
 
 const exec = promisify(execFile);
@@ -285,6 +286,8 @@ export async function createJail(task: Task, runId: string): Promise<Jail> {
   // Resolved once and cut from the commit, so what is recorded is what was cut.
   const baseCommit = (await git(top, ['rev-parse', '--verify', `${base}^{commit}`])).trim();
   await checkoutWorktree(top, dir, ['-b', branch], baseCommit);
+  // The real .git as the run begins (gitTripwire.ts): detection only, stored outside the jail, never throws.
+  await recordBaseline(top, runId, pinnedGit);
   return { dir, repo: top, branch, base, baseCommit, ...(merged ? { baseMerged: true } : {}) };
 }
 

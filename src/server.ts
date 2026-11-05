@@ -46,6 +46,8 @@ import { setTicketSkills } from './skills.ts';
 import { withDroppedIssues } from './verify/crewReview.ts';
 import { acquireVerifySlot, claimRunLease, slotsAhead, VerifyWaitAborted } from './verify/slots.ts';
 import { testTimeoutMs } from './verify/tests.ts';
+import { checkRepo } from './gitTripwire.ts';
+import { pinnedGit } from './isolate.ts';
 import { probeTask, STAGES } from './types.ts';
 import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
 
@@ -830,6 +832,13 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           }
           if (note !== null && note.length > LANDED_NOTE_MAX) {
             return json(res, 400, { error: `note is ${note.length} characters; at most ${LANDED_NOTE_MAX} are kept, so nothing was done` });
+          }
+          // The real .git against the run's baseline (gitTripwire.ts): a change refuses, naming each file or ref.
+          const asked = store.getTask(taskId);
+          const asRun = asked?.repo ? store.latestRun(taskId) : null;
+          if (asked?.repo && asRun) {
+            const tripwire = await checkRepo(asked.repo, asRun.id, { requireBaseline: false, git: pinnedGit });
+            if (!tripwire.ok) return json(res, 409, { error: `cannot mark ${taskId} landed: ${tripwire.reason}` });
           }
           try {
             const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human' });

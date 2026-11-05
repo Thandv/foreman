@@ -23,9 +23,40 @@
   passes named variables through for a suite that needs one.
 - The `worker suite:` line (docs/lifecycle.md) is advisory: it reads output saved by worker-side code and
   compares file mtimes, so an unsandboxed worker (it runs as the user) can forge both. Nothing is held on
-  it; the gate's own test run is the one that counts. No tripwire baseline exists in this tree; any such
-  baseline kept in a file the worker can write has the same limit.
+  it; the gate's own test run is the one that counts. The git tripwire's baseline (next section) is a file
+  the worker can write too, and has the same limit.
 - Admission BLOCK is non-overridable by config, by design.
+
+## The git tripwire (`src/gitTripwire.ts`)
+
+Until workers are sandboxed, a worker runs as you and can write the real repo's `.git` by path: its
+`config`, `hooks/`, `info/`, or a `refs/replace/*` or `refs/notes/*` ref. Git then acts on that the next time
+you use the repo. The tripwire **only detects and holds**: it reads, hashes and compares; it never restores
+anything and writes nothing in the real `.git`.
+
+- **Hashed:** the bytes of `.git/config`; every file under `hooks/` and `info/` (a symlink by its target);
+  and the refs as `git for-each-ref` lists them (pinned git, so `packed-refs` counts and `git pack-refs` hides
+  nothing). In a linked worktree, the common git directory is the one hashed.
+- **Excluded, and why:** `refs/heads`, `refs/remotes`, `refs/tags` and `refs/stash` are your own work (commits,
+  branches, tags, stashes). `info/refs` is rewritten by `git gc`. Foreman's own git writes (`worktree add` and
+  `prune`, `ORIG_HEAD`/`MERGE_HEAD`, the `foreman-main-*` worktrees, deleting its own branches) fall in
+  `worktrees/`, `refs/heads` or top-level files, outside the set. Every other ref is flagged.
+- **When:** the baseline is taken when a jail is created (and when a repair round reuses one), and stored at
+  `<home>/artifacts/<runId>/git-tripwire.json` (mode 0600, written to a temp file, then renamed): outside the
+  jail, and not in the database, so it survives a restart and event pruning. It is compared at collection (a
+  change parks the run for a person, with no reviewer called and the tests not run, since a tampered config or
+  hook could run in them), when you approve (refused before anything is merged; the ticket stays at the gate),
+  and on `foreman landed` (refused).
+- **The reason** names each changed file (`.git/hooks/post-commit was added`) or ref (`ref refs/replace/<sha>
+  was created`). A snapshot that cannot be taken (an unreadable `hooks/`) holds with that error; it never
+  crashes the run. After you have looked, delete the named baseline file to accept the change; a run with no
+  baseline passes at landing (it began before the tripwire), but is held at collection.
+- **Limit:** the baseline file is in `<home>`, which an unsandboxed worker running as you can also write. A worker
+  that rewrites both `.git` and the baseline defeats the check (the same is true of the `worker suite:` line's
+  mtimes). Detection is for mistakes and unsubtle tampering; the sandbox is what closes this. A run whose
+  worker failed is not parked, so it is not checked at collection; a later retry takes a fresh baseline.
+- Operator changes to `.git/config` during a run (adding a remote, say) are flagged too; look at the reason and
+  accept as above.
 
 ## The revert check, per test (`FOREMAN_REVERT_TESTS`)
 

@@ -18,6 +18,7 @@ import {
   ownerGateBatch, quotedPathsInDiff, type GateBatchItem,
 } from './gate.ts';
 import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { checkRepo, recordBaseline } from './gitTripwire.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
 import { factDrift } from './prose/linecheck.ts';
@@ -1309,6 +1310,8 @@ export class Scheduler {
         // In the timeline, not just the log: "which tree did this round edit"
         // is the first question a rejected repair round raises.
         emit(`reusing the previous round's worktree ${jail.dir}`);
+        // This run's own baseline of the real .git (createJail takes it for a new jail).
+        if (jail.repo) await recordBaseline(jail.repo, runId, pinnedGit);
       } else {
         // Missing, pruned, never recorded, or no longer this repo's: cold is
         // safe, but cold WITH the session is not — that session lives in a
@@ -1585,6 +1588,16 @@ export class Scheduler {
       const nothingToChange = task.kind === 'code' && !!jail.repo && result.ok && !diff.trim() && !isConflictRepair(task);
       // Set when the run parks for a person with no reviewer called and no repair round spent: the gate note.
       let personHold: string | null = nothingToChange ? nothingToChangeNote(result.summary) : null;
+      // The real repo's .git against the baseline taken when the jail was made (gitTripwire.ts). A change parks the run
+      // for a person with the files and refs named, and the tests do not run: a tampered config or hook would run in them.
+      if (jail.repo && result.ok) {
+        const tripwire = await checkRepo(jail.repo, runId, { requireBaseline: true, git: pinnedGit });
+        if (!tripwire.ok) {
+          personHold = tripwire.reason.slice(0, PARK_NOTE_MAX);
+          this.store.record({ taskId: task.id, runId, type: 'warning', message: tripwire.reason.slice(0, 4000) });
+          emit(tripwire.reason);
+        }
+      }
       if (nothingToChange) emit('no change produced: skipping the tests and the reviewers; a person closes it or says what is missing');
       // How far main has moved past this jail's base, when its test files changed on the way (verify/gateOutcome.ts).
       let behind: BehindMain | null = null;
@@ -1600,7 +1613,7 @@ export class Scheduler {
       // string the manuscript playbooks want in the critique.
       let proseCritique: string | null = null;
       const pb = task.playbook ? getPlaybook(task.playbook) : null;
-      if (result.ok && !nothingToChange && (jail.repo || task.kind === 'tool')) {
+      if (result.ok && !nothingToChange && !personHold && (jail.repo || task.kind === 'tool')) {
         const cmd = task.testCmd ?? (task.kind === 'tool' ? toolTestCommand(jail.dir) : detectTestCmd(jail.dir));
         if (cmd) {
           this.store.setRunStage(runId, task.id, 'test', cmd);

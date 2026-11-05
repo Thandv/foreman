@@ -6,7 +6,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sweepJails } from '../src/archive.ts';
-import { applyApproval, landedTreeOf } from '../src/gate.ts';
+import { applyApproval as approveChecked, landedTreeOf } from '../src/gate.ts';
+import { acceptingGitChanges } from './helpers/tripwire.ts';
+const applyApproval = acceptingGitChanges(approveChecked); // these tests plant drivers in the real repo's config on purpose
 import { createJail, jailBase, type Jail } from '../src/isolate.ts';
 import { checkMain } from '../src/postMerge.ts';
 import { Store } from '../src/queue.ts';

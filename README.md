@@ -145,6 +145,10 @@ section as evidence; `test/readme-limitations-copy.test.ts` keeps the two equal.
 - The approve endpoint takes no proof of who is calling, and the route records the caller as `human`.
   The `x-foreman-run` header on `POST /api/verify-slot` is not authenticated: anything that can
   reach the port may send any run id. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
+- Until workers are sandboxed, a worker can write the real repo's `.git/config`, `hooks/`, `info/` or a
+  `refs/replace`/`refs/notes` ref by path. Foreman only detects that (a baseline taken at jail creation, compared
+  at collection and at landing; docs/security.md) and holds or refuses for a person; it restores nothing. The
+  baseline is a file the unsandboxed worker could rewrite too, as could the worker-suite line's mtimes.
 - The recurrence language is not cron (see `schedule`); missed windows fire once, not once per
   window elapsed.
 
