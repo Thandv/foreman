@@ -6,7 +6,9 @@
 // Hashed: the bytes of config and config.worktree, every file under hooks/ and info/ except info/refs (git gc rewrites
 // it from the refs; a symlink is hashed by its target, never followed), and the
 // refs git lists logically with a pinned `git for-each-ref` (so packed-refs counts), except refs/heads, refs/remotes,
-// refs/tags and refs/stash, which are the operator's work. A ref anywhere else (refs/replace, refs/notes, ...) is flagged.
+// refs/tags and refs/stash, which are the operator's work, and refs/bisect and refs/prefetch, which the operator's own
+// `git bisect` and `git maintenance` create and which hold no code that runs. A ref anywhere else (refs/replace,
+// refs/notes, ...) is flagged.
 // Foreman's own git writes (worktree add/prune, ORIG_HEAD/MERGE_HEAD, foreman-main-* worktrees, branch -D of its own
 // branches) land in worktrees/, refs/heads or top-level files, none of which is in the set.
 
@@ -34,7 +36,7 @@ export interface TripwireBaseline {
 
 export type TripwireVerdict = { ok: true; note: string | null } | { ok: false; reason: string };
 
-const OPERATOR_REFS = /^refs\/(heads|remotes|tags|stash)(\/|$)/;
+const OPERATOR_REFS = /^refs\/(heads|remotes|tags|stash|bisect|prefetch)(\/|$)/;
 
 export function baselinePath(runId: string): string {
   return path.join(config.artifactRoot, runId, 'git-tripwire.json');

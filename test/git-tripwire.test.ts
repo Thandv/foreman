@@ -171,6 +171,31 @@ test('operator work is not flagged: commits, another branch, a tag, a stash, pac
   assert.deepEqual(v, { ok: true, note: null });
 });
 
+test('refs from the operator\'s git bisect and git maintenance prefetch are not flagged', async () => {
+  const dir = repo();
+  await recordBaseline(dir, 'r_bisect', pinnedGit);
+  git(dir, 'update-ref', 'refs/bisect/bad', 'HEAD');
+  git(dir, 'update-ref', 'refs/prefetch/remotes/origin/main', 'HEAD~1');
+  const v = await checkRepo(dir, 'r_bisect', { requireBaseline: true, git: pinnedGit });
+  assert.deepEqual(v, { ok: true, note: null });
+});
+
+test('refs next to the excluded ones are still flagged: no prefix bleed, notes and replace', async () => {
+  const dir = repo();
+  await recordBaseline(dir, 'r_bleed', pinnedGit);
+  git(dir, 'update-ref', 'refs/bisectx/a', 'HEAD');
+  git(dir, 'update-ref', 'refs/prefetchx/a', 'HEAD');
+  git(dir, 'notes', 'add', '-m', 'hi', 'HEAD');
+  const replaced = git(dir, 'rev-parse', 'HEAD~1');
+  git(dir, 'replace', replaced, 'HEAD');
+  const v = await checkRepo(dir, 'r_bleed', { requireBaseline: true, git: pinnedGit });
+  assert.equal(v.ok, false);
+  const reason = (v as { reason: string }).reason;
+  for (const ref of ['refs/bisectx/a', 'refs/prefetchx/a', 'refs/notes/commits', `refs/replace/${replaced}`]) {
+    assert.ok(reason.includes(`ref ${ref} was created`), `${ref} is flagged: ${reason}`);
+  }
+});
+
 test('a refs/replace ref that exists only in packed-refs is still detected', async () => {
   const dir = repo();
   await createJail(taskFor(dir), 'r_packed');
