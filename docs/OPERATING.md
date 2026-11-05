@@ -13,7 +13,7 @@ it says otherwise, and none runs inside a worker session (see [Commands](command
 | `foreman approve <taskId> --as-is <tree sha>` | Lands work whose tree changed after its review. The refusal prints the tree to name; naming it is the decision. Recorded as corrected unless it is the reviewed tree. |
 | `foreman retry <taskId> [--note <text>]` | Requeues a task that ended (`failed`, `rejected` or `canceled`). The note is binding on the worker and on every reviewer; write what to do differently. `--skills <a>[,<b>]\|default` changes the skills for the new attempt. |
 | `foreman reopen <taskId> [--note <text>]` | Puts a task that failed review back at the human gate with its work intact, for you to decide. Nothing runs again. |
-| `foreman cancel <taskId> [--note <text>]` | Stops a queued or running task. A task that is already closed is refused. The note is recorded and never blocks the cancel. |
+| `foreman cancel <taskId> [--note <text>] [--cascade]` | Stops a queued or running task. A task that is already closed is refused. The note is recorded and never blocks the cancel. Its dependents wait in `blocked` for you to drop, land or retry it; `--cascade` fails them instead. |
 
 `reject` and `cancel` differ: `reject` answers work that is waiting for you; `cancel` stops a task that is not decided.
 Every approve, reject, cancel, retry and reopen is one row in the ledger's `decisions` table.

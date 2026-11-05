@@ -177,6 +177,30 @@ test('a canceled dependency with no cancel decisions row cascades, even when the
   store.close();
 });
 
+test('a cancel from before a retry does not count: canceled again with no row of its own, the dependent cascades', () => {
+  const store = new Store(':memory:');
+  const { x, d1 } = trio(store);
+  store.cancel(x);
+  store.reconcileBlocked();
+  store.retry(x);
+  store.setStatus(x, 'canceled', 'aborted'); // the scheduler's own path, which writes no decision row
+  store.reconcileBlocked();
+  assert.equal(store.getTask(d1)!.error, `dependency ${x} ended as canceled`);
+  store.close();
+});
+
+test('a failed dependency beside a waiting one fails the dependent', () => {
+  const store = new Store(':memory:');
+  const x = store.addTask({ title: 'x', prompt: 'p' });
+  const y = store.addTask({ title: 'y', prompt: 'p' });
+  const d = store.addTask({ title: 'd', prompt: 'p', deps: [x.id, y.id] });
+  store.cancel(x.id);
+  store.setStatus(y.id, 'failed', 'boom');
+  store.reconcileBlocked();
+  assert.equal(store.getTask(d.id)!.error, `dependency ${y.id} ended as failed`);
+  store.close();
+});
+
 test('1,000 reconcileBlocked ticks never re-fail a waiting dependent', () => {
   const store = new Store(':memory:');
   const { x, d1, d2 } = trio(store);
@@ -220,6 +244,16 @@ test('/api/state and foreman show carry the waiting note', async (t) => {
     child.on('close', () => resolve(text));
   });
   assert.ok(out.includes(`error: ${waitingNote(d1, x)}`), out);
+
+  // `foreman cancel --cascade <id>` reaches the route: the row is marked, and the dependent fails.
+  const c = trio(store);
+  const code = await new Promise<number | null>((resolve) => {
+    spawn(process.execPath, [CLI, 'cancel', '--cascade', c.x], { env: { ...process.env, FOREMAN_PORT: String(port), FOREMAN_HOST: '127.0.0.1' } })
+      .on('close', resolve);
+  });
+  assert.equal(code, 0);
+  store.reconcileBlocked();
+  assert.equal(store.getTask(c.d1)!.error, `dependency ${c.x} ended as canceled`);
 });
 
 function get(port: number, urlPath: string): Promise<string> {

@@ -815,14 +815,15 @@ export class Store extends EventEmitter {
 
   /**
    * Whether a canceled ticket's latest 'cancel' decision is its OWN: a person's plain cancel. An epic cascade writes
-   * its children's rows as actor 'system', and `cancel --cascade` marks its row extra.cascade; neither counts. Read from
-   * the decisions row alone, never from the ticket's status note.
+   * its children's rows as actor 'system', and `cancel --cascade` marks its row extra.cascade; neither counts. A cancel
+   * from before a later retry or reopen is not this cancel either. Read from the decisions rows alone, never from the
+   * ticket's status note.
    */
   private canceledByOperator(taskId: string): boolean {
     const row = this.db
-      .prepare("SELECT actor, extra FROM decisions WHERE task_id = ? AND action = 'cancel' ORDER BY at DESC, rowid DESC LIMIT 1")
+      .prepare("SELECT action, actor, extra FROM decisions WHERE task_id = ? AND action IN ('cancel', 'retry', 'reopen') ORDER BY at DESC, rowid DESC LIMIT 1")
       .get(taskId) as Record<string, unknown> | undefined;
-    if (!row || row['actor'] === 'system') return false;
+    if (!row || row['action'] !== 'cancel' || row['actor'] === 'system') return false;
     try {
       const extra = row['extra'] ? (JSON.parse(String(row['extra'])) as Record<string, unknown>) : null;
       return extra?.['cascade'] !== true;

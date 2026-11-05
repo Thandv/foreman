@@ -86,8 +86,8 @@ read from the `decisions` table: the canceled ticket must have its OWN `cancel` 
 
 **`--cascade`** keeps the earlier behaviour: the cancel's row is marked `cascade` in `extra`, and every dependent fails
 with `dependency <id> ended as canceled` on the next reconcile. A ticket canceled by its parent epic (a `system` row) also
-fails its dependents this way, and so does one with no `cancel` row at all. Dependencies that ended `failed` or `rejected`
-always fail their dependents.
+fails its dependents this way, and so does one with no `cancel` row since its last `retry` or `reopen` (or none at all).
+Dependencies that ended `failed` or `rejected` always fail their dependents.
 
 ### `foreman deps <taskId> --drop <depId>`
 

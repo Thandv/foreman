@@ -47,7 +47,8 @@ ticket's own `cancel` row in `decisions`, never from a status or note. Three exi
 3. `foreman retry <id>` requeues it; its dependents are released when it lands as `done`.
 
 Not waiting, still failed with `dependency <id> ended as <status>`: dependents of a ticket canceled with `--cascade`, of one
-canceled by its parent epic (a `system` row), of one with no `cancel` row, and of one that ended `failed` or `rejected`.
+canceled by its parent epic (a `system` row), of one with no `cancel` row since its last `retry` or `reopen`, and of one
+that ended `failed` or `rejected`.
 
 ### The worker's own suite run (advisory)
 
