@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.ts';
+import { rowToDecision } from './db.ts';
 import { DOCTOR_DEADLINE_MS, DOCTOR_PING_TIMEOUT_MS } from './doctorTiming.ts';
 import type { ReceiptWindow, Store } from './queue.ts';
 import { REVIEW_SOURCE_MAX, safeRecord } from './queue.ts';
@@ -122,6 +123,11 @@ async function readJsonBody(req: http.IncomingMessage, limit = 1_000_000): Promi
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+/** `foreman landed` inputs, checked at the boundary: a hex commit id, a ticket id for --by, a bounded note. */
+const LANDED_SHA_RE = /^[0-9a-fA-F]{7,40}$/;
+const LANDED_BY_RE = /^t_[a-z0-9]{4,32}$/;
+const LANDED_NOTE_MAX = 2000;
+
 /**
  * The body of a decision route (approve, cancel, retry, reopen): what the
  * caller says about the decision, for the `decisions` row. An empty body is no
@@ -238,12 +244,30 @@ function stub(text: string | null, len: number): { value: string | null; truncat
   return { value: text.slice(0, len), truncated: true };
 }
 
+function landedSummary(d: Decision): { commit: string | null; landedTree: string | null; by: string | null; actor: string; at: number } {
+  const extra = d.extra ?? {};
+  return {
+    commit: typeof extra['commit'] === 'string' ? extra['commit'] : null,
+    landedTree: d.landedTree,
+    by: typeof extra['by'] === 'string' ? extra['by'] : null,
+    actor: d.actor,
+    at: d.at,
+  };
+}
+
 function snapshot(store: Store, scheduler: Scheduler): unknown {
   // Two grouped queries rather than two per task: the board polls this on
   // every event, so it must not scale with the length of the history.
   const runs = store.latestRunByTask();
   const provisional = new Set(store.provisionalAwaiting(1000).map((t) => t.id));
   const artifacts = store.artifactsByTask();
+  // The 'landed' decision of each hand-landed ticket (the latest, if there were ever two): one grouped query, so the
+  // board and `GET /api/state` can say which commit closed a ticket without reading every ticket's ledger.
+  const landed = new Map<string, Decision>();
+  for (const row of store.db.prepare("SELECT * FROM decisions WHERE action = 'landed' ORDER BY at, rowid").all()) {
+    const d = rowToDecision(row as Record<string, unknown>);
+    landed.set(d.taskId, d);
+  }
   // Resolved once per snapshot, not once per task: loadPlaybooks() is cached
   // on the dir's mtime+size fingerprint (see playbooks.ts), but even a cache
   // hit is a readdir+statSync sweep, and a 50-task crew board would otherwise
@@ -290,6 +314,7 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       provisional: provisional.has(task.id),
       hold: store.holdOf(task.id),
       artifacts: artifacts.get(task.id) ?? [],
+      landed: landed.has(task.id) ? landedSummary(landed.get(task.id)!) : null,
     };
   });
   const lastEvent = store.db.prepare('SELECT MAX(id) AS id FROM events').get() as Record<string, unknown> | undefined;
@@ -787,6 +812,32 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           const { task, merge, registration, decision } = approved;
           void scheduler.tick().catch(() => {});
           return json(res, 200, { ...task, merge, registration, decision: decision ?? null });
+        }
+        if (action === 'landed') {
+          // Host and Origin were checked for every /api write above, before routing: this route is behind the same
+          // guard as approve, not a copy of it.
+          const { body, note } = await readDecisionBody(req);
+          refuseCorrected(body, 'landed');
+          const commit = body['commit'];
+          if (typeof commit !== 'string' || !LANDED_SHA_RE.test(commit)) {
+            return json(res, 400, { error: 'commit must be a hex commit id of 7 to 40 characters; nothing was done' });
+          }
+          const by = body['by'];
+          if (by !== undefined && by !== null && (typeof by !== 'string' || !LANDED_BY_RE.test(by))) {
+            return json(res, 400, { error: 'by must be a ticket id (t_ and letters or digits); nothing was done' });
+          }
+          if (note !== null && note.length > LANDED_NOTE_MAX) {
+            return json(res, 400, { error: `note is ${note.length} characters; at most ${LANDED_NOTE_MAX} are kept, so nothing was done` });
+          }
+          try {
+            const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human' });
+            void scheduler.tick().catch(() => {});
+            const decision = store.decisionsForTask(taskId).filter((d) => d.action === 'landed').at(-1) ?? null;
+            return json(res, 200, { ...landed, decision });
+          } catch (err) {
+            const message = (err as Error).message;
+            return json(res, /^task not found/.test(message) ? 404 : 409, { error: message });
+          }
         }
         if (action === 'reject') {
           const body = (await readJsonBody(req)) as Record<string, unknown>;
