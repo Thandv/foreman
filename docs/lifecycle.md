@@ -33,6 +33,18 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
 7. **merge** — approving a code task merges its branch `--no-ff`. It refuses on a dirty repo and
    aborts cleanly on conflict; your checkout is never left mid-merge.
 
+### The worker's own suite run (advisory)
+
+What the gate recorded before: only its own test stage, plus timeline lines while the worker's suite waited for a test slot. The worker's in-jail runs through `src/verify/testSlot.ts` were not read back.
+
+At collection (before the gate's own tests touch the jail) the daemon reads `savedOutputs(outputDir, runId)` — the run key matched exactly, so output under `r_1-2` does not count for `r_1` — and writes one `worker-suite` event, a `worker-suite` artifact (its summary is the line, so it shows in `foreman show` and `/api/state`) and a line (on the run's timeline and as that artifact's summary; it is not put in the reviewers' input):
+
+- `worker suite: PASSED|FAILED at <time> (advisory, written by worker-side code)`, with `; changed after the worker's suite` when a file in the jail (not `.git`, not `node_modules`) has a newer mtime than the last saved output;
+- `the worker never ran the suite` when there is no saved output;
+- `worker suite: could not read its saved output (<reason>)` when the output folder cannot be read. Collection goes on.
+
+The line is **advisory** and holds nothing: the output is written by worker-side code in a folder the worker can write, and "changed after" is a file-mtime comparison, so an unsandboxed worker can forge either. The gate's own test stage is the result that counts. The daemon looks in its own temp dir (`os.tmpdir()`), which is the worker's only when they share it.
+
 ### Three outcomes of the test stage that are not "a test failed"
 
 Each of these parks the ticket at `awaiting-approval` for a person, with the reason as the gate

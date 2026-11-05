@@ -21,6 +21,10 @@
   directories (`FOREMAN_TEST_REAL_HOME=1` keeps the real home — only with `FOREMAN_SANDBOX=off`;
   with the sandbox on, a run that sets it fails saying so). `FOREMAN_TEST_KEEP_ENV=NAME,…`
   passes named variables through for a suite that needs one.
+- The `worker suite:` line (docs/lifecycle.md) is advisory: it reads output saved by worker-side code and
+  compares file mtimes, so an unsandboxed worker (it runs as the user) can forge both. Nothing is held on
+  it; the gate's own test run is the one that counts. No tripwire baseline exists in this tree; any such
+  baseline kept in a file the worker can write has the same limit.
 - Admission BLOCK is non-overridable by config, by design.
 
 ## The revert check, per test (`FOREMAN_REVERT_TESTS`)
