@@ -90,6 +90,29 @@ test('POST /api/tasks with an empty title is still a 400 with its own message', 
   const store = new Store(':memory:');
   const r = await post(store, { title: '', prompt: 'p' });
   assert.equal(r.status, 400);
-  assert.ok(r.body.error.length > 0);
-  assert.doesNotMatch(r.body.error, /ledger/);
+  assert.equal(r.body.error, 'title is required');
+});
+
+test('a real LOCKED answers 503; other errors, sqlite or not, keep 400 and their message', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE u (x UNIQUE); INSERT INTO u VALUES (1), (2)');
+  const reading = db.prepare('SELECT * FROM u').iterate(); // an open read makes the DROP fail LOCKED
+  reading.next();
+  const locked = sqliteError(() => db.exec('DROP TABLE u'));
+  const unique = sqliteError(() => db.exec('INSERT INTO u VALUES (1)'));
+  const cases: [unknown, number, string][] = [
+    [locked, 503, 'ledger busy: database table is locked; retry'],
+    [unique, 400, 'UNIQUE constraint failed: u.x'],
+    [new Error('database is locked'), 400, 'database is locked'],
+    [Object.assign(new Error('not sqlite'), { code: 'EOTHER', errcode: 5 }), 400, 'not sqlite'],
+  ];
+  for (const [err, status, error] of cases) {
+    const store = new Store(':memory:');
+    store.addTask = () => {
+      throw err;
+    };
+    const r = await post(store, { title: 'z', prompt: 'p' });
+    assert.deepEqual([r.status, r.body.error], [status, error]);
+  }
+  reading.return?.();
 });
