@@ -839,6 +839,23 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             return json(res, /^task not found/.test(message) ? 404 : 409, { error: message });
           }
         }
+        if (action === 'deps-drop') {
+          // Host and Origin were checked for every /api write above, before routing: same guard as approve.
+          const body = (await readJsonBody(req)) as Record<string, unknown>;
+          const dep = body['dep'];
+          if (typeof dep !== 'string' || !LANDED_BY_RE.test(dep)) {
+            return json(res, 400, { error: 'dep must be a ticket id (t_ and letters or digits); nothing was done' });
+          }
+          try {
+            const task = store.dropDependency(taskId, dep, 'human');
+            void scheduler.tick().catch(() => {});
+            const decision = store.decisionsForTask(taskId).filter((d) => d.action === 'deps-drop').at(-1) ?? null;
+            return json(res, 200, { ...task, decision });
+          } catch (err) {
+            const message = (err as Error).message;
+            return json(res, /^task not found/.test(message) ? 404 : 409, { error: message });
+          }
+        }
         if (action === 'reject') {
           const body = (await readJsonBody(req)) as Record<string, unknown>;
           refuseCorrected(body, 'reject');

@@ -1,7 +1,7 @@
 ## Commands
 
 ```
-serve · stop · add · ls · show · approve · landed · reject · cancel · retry [--note] · reopen [--note] · rm · watch · demo
+serve · stop · add · ls · show · approve · landed · deps · reject · cancel · retry [--note] · reopen [--note] · rm · watch · demo
 doctor      probe every model, runner and agent
 receipts    spend ledger — today, or one task
 verdict     the council's opinions for a task
@@ -72,6 +72,23 @@ root; its artifacts stay.
 part appears only when `--by` was given. `GET /api/state` carries the same facts on each ticket as
 `landed: { commit, landedTree, by, actor, at }` (null when the ticket was not landed by hand), and
 `GET /api/tasks/:id` lists the full row under `decisions`.
+
+### `foreman deps <taskId> --drop <depId>`
+
+Drops one dependency edge (`--after`) from a ticket. It posts to `POST /api/tasks/:id/deps-drop` with `{ dep }`, behind
+the same Host and Origin checks as `approve` and `landed`. In one transaction it deletes exactly that `task_deps` row and
+writes one `deps-drop` row in `decisions` (actor `human`) whose note names the dependency.
+
+**Refuses**, changing nothing (409 with the reason; the CLI prints it and exits non-zero): a ticket that is `running`; an
+edge that does not exist; and a terminal ticket (`done`, `failed`, `rejected`, `canceled`), with one exception. A
+dependent this edge failed by cascade (status `failed`, error `dependency <depId> ended as failed|rejected|canceled`, and
+the edge exists) is accepted: it is revived through the same path as a retry of its dependency, goes to `blocked`, and
+the next reconcile queues it. A ticket that does not exist answers 404; a `dep` that is not a ticket id answers 400.
+
+**There is no `--add`.** `reconcileBlocked` relies on an invariant: only ticket creation writes edges, so an edge on a
+reviewer's follow-up is either the real dependency or an order written by the filing rule. Adding an edge later breaks
+that, so edges are set when a ticket is created and can only be dropped. A test fails if any code in `src/` other than
+task creation inserts into `task_deps`.
 
 **Inside a worker run the CLI refuses.** A worker session carries `FOREMAN_RUN_ID`; with it set, every
 `foreman` command except `help` (and `--help`) exits 2 with `foreman: worker ledger guard: …` before it opens, creates or

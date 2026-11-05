@@ -179,9 +179,9 @@ export interface Run {
 export type RunEndedReason = 'ok' | 'turn-ceiling' | 'deadline' | 'provider-limit' | 'tripwire' | 'canceled' | 'error';
 export const RUN_ENDED_REASONS: readonly RunEndedReason[] = ['ok', 'turn-ceiling', 'deadline', 'provider-limit', 'tripwire', 'canceled', 'error'];
 
-export type DecisionAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'reopen' | 'landed';
+export type DecisionAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'reopen' | 'landed' | 'deps-drop';
 export type DecisionActor = 'human' | 'owner-model' | 'system';
-export const DECISION_ACTIONS: readonly DecisionAction[] = ['approve', 'reject', 'cancel', 'retry', 'reopen', 'landed'];
+export const DECISION_ACTIONS: readonly DecisionAction[] = ['approve', 'reject', 'cancel', 'retry', 'reopen', 'landed', 'deps-drop'];
 export const DECISION_ACTORS: readonly DecisionActor[] = ['human', 'owner-model', 'system'];
 
 /**

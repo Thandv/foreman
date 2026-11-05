@@ -1376,12 +1376,51 @@ export class Store extends EventEmitter {
         `dependency ${taskId} ended as rejected`,
         `dependency ${taskId} ended as canceled`,
       ) as Record<string, unknown>[];
-    for (const row of rows) {
-      const id = String(row['id']);
-      this.db.prepare('UPDATE tasks SET attempts = 0, stop_requeues = 0 WHERE id = ?').run(id);
-      this.setStatus(id, 'blocked', `revived: dependency ${taskId} was retried`);
-      this.reviveDependents(id, seen);
+    for (const row of rows) this.reviveOne(String(row['id']), taskId, seen);
+  }
+
+  /** One dependent that failed by cascade comes back to `blocked`, and so does whatever failed by cascade from it. */
+  private reviveOne(id: string, taskId: string, seen: Set<string>): void {
+    this.db.prepare('UPDATE tasks SET attempts = 0, stop_requeues = 0 WHERE id = ?').run(id);
+    this.setStatus(id, 'blocked', `revived: dependency ${taskId} was retried`);
+    this.reviveDependents(id, seen);
+  }
+
+  /**
+   * Drop ONE dependency edge (`foreman deps <id> --drop <dep>`): one transaction deletes exactly that task_deps row
+   * and writes one 'deps-drop' decision naming the dep. Refused, changing nothing: a missing ticket or edge, a
+   * running ticket, and a terminal ticket, with one exception: a dependent this very edge failed by cascade
+   * (error `dependency <dep> ended as failed|rejected|canceled`), which is revived through the reviveDependents
+   * path (to `blocked`; reconcileBlocked then queues it). There is deliberately no way to ADD an edge here.
+   */
+  dropDependency(taskId: string, dep: string, actor: DecisionActor): Task {
+    if (!DECISION_ACTORS.includes(actor)) throw new Error(`unknown decision actor: ${String(actor)}`);
+    const refusal = (why: string): Error => new Error(`cannot drop ${dep} from ${taskId}: ${why}`);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const task = this.getTask(taskId);
+      if (!task) throw new Error(`task not found: ${taskId}`);
+      const edge = this.db.prepare('SELECT 1 AS n FROM task_deps WHERE task_id = ? AND depends_on = ?').get(taskId, dep);
+      if (!edge) throw refusal(`${taskId} does not depend on ${dep}`);
+      if (task.status === 'running') throw refusal('it is running');
+      const failedByThisEdge = task.status === 'failed'
+        && ['failed', 'rejected', 'canceled'].some((s) => task.error === `dependency ${dep} ended as ${s}`);
+      if (TERMINAL_STATUSES.includes(task.status) && !failedByThisEdge) {
+        throw refusal(`it is ${task.status}, and not because of this dependency`);
+      }
+      this.db.prepare('DELETE FROM task_deps WHERE task_id = ? AND depends_on = ?').run(taskId, dep);
+      this.addDecision({
+        taskId, runId: null, action: 'deps-drop', actor,
+        note: `dropped dependency ${dep}${failedByThisEdge ? '; the ticket had failed by cascade from it and is revived' : ''}`,
+        extra: { dep, statusBefore: task.status },
+      });
+      if (failedByThisEdge) this.reviveOne(taskId, dep, new Set([dep]));
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw err;
     }
+    return this.getTask(taskId)!;
   }
 
   /**
