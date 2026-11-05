@@ -52,3 +52,29 @@ test('rm still refuses a ticket with a real (non-order) dependent, changing noth
   assert.equal(drops(store, b.id).length, 0);
   store.close();
 });
+
+test('rm with an ordered sibling is refused, changing nothing, while it runs or verifies, or the sibling runs or ended', () => {
+  const snap = (s: Store): string =>
+    JSON.stringify(['tasks', 'task_deps', 'decisions', 'events'].map((t) => s.db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all()));
+  for (const [who, status] of [['f1', 'running'], ['f1', 'verifying'], ['f2', 'running'], ['f2', 'done'], ['f2', 'canceled']] as const) {
+    const store = new Store(':memory:');
+    const ids = fixture(store);
+    store.setStatus(ids[who].id, status);
+    const before = snap(store);
+    assert.throws(() => store.deleteTask(ids.f1.id), status === 'running' && who === 'f1' ? /while it is running/ : /cannot delete/);
+    assert.equal(snap(store), before, `${who} ${status}`);
+    store.close();
+  }
+  // Not reviewer follow-ups, so every edge is real: no prefix (a child with an edge to its work ticket), and a
+  // planned ticket whose prompt opens with the prefix (its parent is an epic, with no edge to it).
+  const store = new Store(':memory:');
+  const w = store.addTask({ title: 'w', prompt: 'p' });
+  const one = store.addTask({ title: 'one', prompt: 'p', parentId: w.id, deps: [w.id] });
+  store.addTask({ title: 'two', prompt: 'p', parentId: w.id, deps: [w.id, one.id] });
+  assert.throws(() => store.deleteTask(one.id), /depend on it/);
+  const epic = store.addTask({ title: 'e', prompt: 'p', isEpic: true });
+  const a = store.addTask({ title: 'a', prompt: 'p', parentId: epic.id });
+  store.addTask({ title: 'b', prompt: `${FILED_PREFIX}x`, parentId: epic.id, deps: [a.id] });
+  assert.throws(() => store.deleteTask(a.id), /depend on it/);
+  store.close();
+});
