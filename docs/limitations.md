@@ -37,7 +37,7 @@
 - The sandbox exists only on macOS. On Linux the default `FOREMAN_SANDBOX=tests` makes `foreman serve`
   refuse to start (its start-up self-test fails); set `FOREMAN_SANDBOX=off` and test commands run
   unconfined. `FOREMAN_SANDBOX=all` is accepted but behaves as `tests`.
-- The approve endpoint takes no proof of who is calling, and the route records the caller as `human`.
+- The approve and `landed` endpoints take no proof of who is calling, and the routes record the caller as `human`.
   The `x-foreman-run` header on `POST /api/verify-slot` is not authenticated: anything that can
   reach the port may send any run id. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
 - Until workers are sandboxed, a worker can write the real repo's `.git/config`, `hooks/`, `info/` or a

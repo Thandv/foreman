@@ -75,6 +75,7 @@ for (const [what, { sh, names }] of Object.entries(TAMPER)) {
       assert.equal(held.status, 'awaiting-approval');
       assert.match(held.error ?? '', /git tripwire/);
       assert.match(held.error ?? '', names);
+      assert.ok(!store.eventsForTask(held.id).some((e) => /tests passed|TESTS FAILED|GATE TIMED OUT/.test(e.message)), 'the tests did not run');
     } finally {
       store.close();
     }
@@ -182,6 +183,16 @@ test('a refs/replace ref that exists only in packed-refs is still detected', asy
   assert.match((v as { reason: string }).reason, /ref refs\/replace\/[0-9a-f]+ was created/);
 });
 
+test('with per-worktree config on, a worker writing .git/config.worktree is detected', async () => {
+  const dir = repo();
+  git(dir, 'config', 'extensions.worktreeConfig', 'true'); // what `git sparse-checkout init` sets
+  await recordBaseline(dir, 'r_wtconfig', pinnedGit);
+  fs.writeFileSync(path.join(dir, '.git', 'config.worktree'), '[core]\n\thooksPath = /elsewhere\n');
+  assert.equal(git(dir, 'config', 'core.hooksPath'), '/elsewhere', 'git reads it');
+  const v = await checkRepo(dir, 'r_wtconfig', { requireBaseline: true, git: pinnedGit });
+  assert.match((v as { reason?: string }).reason ?? '', /\.git\/config\.worktree was added/);
+});
+
 test('hashing and comparing leave the real .git byte-identical', async () => {
   const dir = repo();
   git(dir, 'gc', '-q'); // settle anything git itself would rewrite on its first housekeeping
@@ -201,6 +212,25 @@ test('an unreadable hooks dir holds the run with a reason instead of crashing it
     assert.match(held.error ?? '', /git tripwire: the repo's \.git could not be hashed \(EACCES/);
   } finally {
     fs.chmodSync(hooks, 0o755);
+    store.close();
+  }
+});
+
+test('a worker that writes a hook and then fails is caught: no repair round takes the hook into a fresh baseline', async () => {
+  const { dir, store, sched } = setup();
+  const hook = `"${dir}/.git/hooks/post-checkout"`;
+  try {
+    const t = store.addTask({
+      title: 'ticket', kind: 'code', runner: 'shell', repo: dir, maxRepairs: 1, testCmd: 'test -f new.txt',
+      // Round one plants the hook and fails; a repair round would find it there and do clean work.
+      prompt: `if [ ! -f ${hook} ]; then printf '#!/bin/sh\\n' > ${hook}; exit 1; fi; printf 'new\\n' > new.txt`,
+    });
+    await sched.drain(30_000);
+    const now = store.getTask(t.id)!;
+    assert.equal(now.status, 'failed');
+    assert.match(now.error ?? '', /git tripwire: .*\.git\/hooks\/post-checkout was added/);
+    assert.equal(store.runsForTask(t.id).length, 1, 'no repair round');
+  } finally {
     store.close();
   }
 });

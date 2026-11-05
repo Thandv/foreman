@@ -3,8 +3,8 @@
 // This module only DETECTS: it reads, hashes and compares, writes the baseline under <home>/artifacts/<runId>/ and
 // nothing in the real .git, and restores nothing. Callers hold or refuse for a person with the reason it returns.
 //
-// Hashed: the bytes of config, every file under hooks/ and info/ except info/refs (git gc rewrites it from the refs; a
-// symlink is hashed by its target, never followed), and the
+// Hashed: the bytes of config and config.worktree, every file under hooks/ and info/ except info/refs (git gc rewrites
+// it from the refs; a symlink is hashed by its target, never followed), and the
 // refs git lists logically with a pinned `git for-each-ref` (so packed-refs counts), except refs/heads, refs/remotes,
 // refs/tags and refs/stash, which are the operator's work. A ref anywhere else (refs/replace, refs/notes, ...) is flagged.
 // Foreman's own git writes (worktree add/prune, ORIG_HEAD/MERGE_HEAD, foreman-main-* worktrees, branch -D of its own
@@ -68,6 +68,7 @@ async function takeSnapshot(gitDir: string, repo: string, pinnedGit: GitRun): Pr
   const files: Record<string, string> = {};
   await walk(gitDir, 'config', files);
   if (files['config'] === undefined) files['config'] = 'absent';
+  await walk(gitDir, 'config.worktree', files); // read as config too once extensions.worktreeConfig is set
   await walk(gitDir, 'hooks', files);
   await walk(gitDir, 'info', files);
   // info/refs is derived from the refs by `git gc` / update-server-info, and the refs are compared on their own.

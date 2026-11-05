@@ -2,7 +2,7 @@
 
 - The API can queue shell commands. It binds loopback only; anything else needs
   `FOREMAN_ALLOW_REMOTE=1`, and there is still **no authentication** — this is a local tool.
-  The approve endpoint takes no proof of who is calling and records the caller as `human`.
+  The approve and `landed` endpoints take no proof of who is calling and record the caller as `human`.
   The `x-foreman-run` header on `POST /api/verify-slot` is unauthenticated:
   any client that can reach the port can send any run id.
 - Runners work in a worktree or scratch dir, never in your checkout, and only an approval makes
@@ -34,9 +34,9 @@ Until workers are sandboxed, a worker runs as you and can write the real repo's 
 you use the repo. The tripwire **only detects and holds**: it reads, hashes and compares; it never restores
 anything and writes nothing in the real `.git`.
 
-- **Hashed:** the bytes of `.git/config`; every file under `hooks/` and `info/` (a symlink by its target);
-  and the refs as `git for-each-ref` lists them (pinned git, so `packed-refs` counts and `git pack-refs` hides
-  nothing). In a linked worktree, the common git directory is the one hashed.
+- **Hashed:** the bytes of `.git/config` and `.git/config.worktree`; every file under `hooks/` and `info/` (a
+  symlink by its target); and the refs as `git for-each-ref` lists them (pinned git, so `packed-refs` counts and
+  `git pack-refs` hides nothing). In a linked worktree, the common git directory is the one hashed.
 - **Excluded, and why:** `refs/heads`, `refs/remotes`, `refs/tags` and `refs/stash` are your own work (commits,
   branches, tags, stashes). `info/refs` is rewritten by `git gc`. Foreman's own git writes (`worktree add` and
   `prune`, `ORIG_HEAD`/`MERGE_HEAD`, the `foreman-main-*` worktrees, deleting its own branches) fall in
@@ -50,13 +50,17 @@ anything and writes nothing in the real `.git`.
 - **The reason** names each changed file (`.git/hooks/post-commit was added`) or ref (`ref refs/replace/<sha>
   was created`). A snapshot that cannot be taken (an unreadable `hooks/`) holds with that error; it never
   crashes the run. After you have looked, delete the named baseline file to accept the change; a run with no
-  baseline passes at landing (it began before the tripwire), but is held at collection.
+  baseline passes at landing (it began before the tripwire), but is held at collection. A held run's tests and
+  reviewers were skipped, so approving it then lands it unchecked; to have it checked, reject it, then
+  `foreman retry` it.
 - **Limit:** the baseline file is in `<home>`, which an unsandboxed worker running as you can also write. A worker
   that rewrites both `.git` and the baseline defeats the check (the same is true of the `worker suite:` line's
   mtimes). Detection is for mistakes and unsubtle tampering; the sandbox is what closes this. A run whose
-  worker failed is not parked, so it is not checked at collection; a later retry takes a fresh baseline.
-- Operator changes to `.git/config` during a run (adding a remote, say) are flagged too; look at the reason and
-  accept as above.
+  worker failed is checked too: a change fails the ticket with the reason, and no repair round is queued. A run
+  that ends before collection (a provider limit, a guard refusal, a crash) is not checked, and its retry takes a
+  fresh baseline.
+- Operator changes to `.git/config` during a run are flagged too, including the ones git writes for you (adding a
+  remote, `git push -u`, a branch made to track a remote one); look at the reason and accept as above.
 
 ## The revert check, per test (`FOREMAN_REVERT_TESTS`)
 

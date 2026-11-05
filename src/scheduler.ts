@@ -1590,10 +1590,13 @@ export class Scheduler {
       let personHold: string | null = nothingToChange ? nothingToChangeNote(result.summary) : null;
       // The real repo's .git against the baseline taken when the jail was made (gitTripwire.ts). A change parks the run
       // for a person with the files and refs named, and the tests do not run: a tampered config or hook would run in them.
-      if (jail.repo && result.ok) {
+      // A failed worker is checked too: its change fails the ticket below, never taken into a repair round's baseline.
+      let tripped: string | null = null;
+      if (jail.repo) {
         const tripwire = await checkRepo(jail.repo, runId, { requireBaseline: true, git: pinnedGit });
         if (!tripwire.ok) {
-          personHold = tripwire.reason.slice(0, PARK_NOTE_MAX);
+          tripped = tripwire.reason;
+          if (result.ok) personHold = tripwire.reason.slice(0, PARK_NOTE_MAX);
           this.store.record({ taskId: task.id, runId, type: 'warning', message: tripwire.reason.slice(0, 4000) });
           emit(tripwire.reason);
         }
@@ -1902,7 +1905,7 @@ export class Scheduler {
       if (!result.ok) {
         verdict = this.store.addVerdict({
           runId, taskId: task.id, verdict: 'fail', disagreement: false, council: [],
-          critique: `the worker itself failed: ${result.summary}`,
+          critique: `${tripped ? `${tripped}\n` : ''}the worker itself failed: ${result.summary}`,
         });
       } else if (personHold) {
         // Nothing changed, the gate timed out twice, or it failed on tests main has since changed: no verdict is
@@ -2117,7 +2120,7 @@ export class Scheduler {
         this.store.endRun(runId, 'failed', { exitCode: result.exitCode ?? 1, summary: result.summary });
         const critique = verdict.critique ?? 'rejected by the council';
         recordEpisode(this.store, task, this.store.getRun(runId), verdict);
-        if (this.store.scheduleRepair(task.id, critique)) {
+        if (!tripped && this.store.scheduleRepair(task.id, critique)) {
           emit('council rejected the work; queuing one repair round');
         } else {
           this.store.setStatus(task.id, 'failed', critique.slice(0, 1000));

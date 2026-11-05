@@ -34,9 +34,9 @@ but a way to make them worse than described is in scope.
   `shell` tickets, the `api` runner's shell and tool calls, the post-merge check and a worker's own
   suite run (`src/verify/testSlot.ts`) run under the sandbox. `FOREMAN_SANDBOX=all` currently behaves as `tests`.
 - The HTTP API has **no authentication**. It binds to loopback only unless
-  `FOREMAN_ALLOW_REMOTE=1` is set; it is a local tool. The approve endpoint takes no proof of who
-  is calling, so anything that can reach the port can approve a task. The `x-foreman-run` header on
-  the verify-slot request is unauthenticated too.
+  `FOREMAN_ALLOW_REMOTE=1` is set; it is a local tool. The approve and `landed` endpoints take no
+  proof of who is calling, so anything that can reach the port can approve a task or mark it landed.
+  The `x-foreman-run` header on the verify-slot request is unauthenticated too.
 - The sandbox exists only on macOS (`sandbox-exec`). On Linux `src/security/sandbox.ts` answers that it needs macOS, so the
   default `FOREMAN_SANDBOX=tests` makes `foreman serve` refuse to start, and `FOREMAN_SANDBOX=off`
   runs test commands with no sandbox. The sandbox does not limit CPU, memory or disk, and leaves the
