@@ -243,7 +243,7 @@ export interface GateDecisionFact {
 
 export interface OperatorAction {
   at: number;
-  action: 'approve' | 'approve-as-is' | 'approve-not-landed' | 'reject' | 'retry' | 'cancel' | 'reopen' | 'landed' | 'skills' | 'assign';
+  action: 'approve' | 'approve-as-is' | 'approve-not-landed' | 'reject' | 'retry' | 'cancel' | 'reopen' | 'landed' | 'deps-drop' | 'skills' | 'assign';
   by: 'human' | 'owner-gate';
   note: string;
   /** Where the note was read: the ledger's `decisions` row, the gate decision in memory, the ledger's event, a trace file; '' when there is none. */

@@ -67,6 +67,7 @@ const USAGE = `foreman — parallel agent mission control
   foreman landed <taskId> --commit <sha> [--by <ticketId>] [--note <text>]
                                           record work you landed by hand: the ticket becomes done and its
                                           dependents are revived (refused unless the commit is on the base branch)
+  foreman deps <taskId> --drop <depId>    drop one dependency edge (refused on a running ticket; there is no --add)
   foreman approve <taskId> [--note <text>] accept the staged artifacts (waits for the merge and its check)
                                           --as-is <tree sha> lands work that changed after its review, by naming
                                           the tree to land (the refusal prints it)
@@ -1164,6 +1165,18 @@ async function main(): Promise<number> {
       });
       process.stdout.write(`${t.id} → ${t.status}\n`);
       process.stdout.write(recordedLine('landed', t.decision));
+      return 0;
+    }
+    case 'deps': {
+      const taskId = args._[1];
+      const usage = 'usage: foreman deps <taskId> --drop <depId>   (there is no --add: an edge is only set when a ticket is created)';
+      if (!taskId) throw new Error(usage);
+      if (args.flags['add'] !== undefined) throw new Error(`there is no --add: an edge is only set when a ticket is created\n${usage}`);
+      const dep = flagStr(args, 'drop');
+      if (!dep || args.flags['drop'] === true) throw new Error(`--drop <depId> is required\n${usage}`);
+      const t = await apiCall(`/api/tasks/${taskId}/deps-drop`, { method: 'POST', body: JSON.stringify({ dep }) });
+      process.stdout.write(`${t.id} → ${t.status}\n`);
+      process.stdout.write(recordedLine('deps drop', t.decision));
       return 0;
     }
     case 'reject': {
