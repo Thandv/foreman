@@ -277,7 +277,11 @@ test('an operator cancel during the runner still ends canceled — also when the
         assert.equal(store.latestRun(t.id)!.status, 'canceled');
         assert.equal(store.runsForTask(t.id).length, 1, 'and it is not retried');
         store.reconcileBlocked();
-        assert.equal(store.getTask(dep.id)!.error, `dependency ${t.id} ended as canceled`, 'a canceled dependency reads as before');
+        assert.equal(
+          store.getTask(dep.id)!.error,
+          `waiting: dependency ${t.id} was canceled - foreman deps ${dep.id} --drop ${t.id}, foreman landed ${t.id}, or foreman retry ${t.id}`,
+          'an operator-canceled dependency leaves its dependent waiting',
+        );
       });
     } finally {
       release();

@@ -813,6 +813,24 @@ export class Store extends EventEmitter {
     return this.landing.has(taskId);
   }
 
+  /**
+   * Whether a canceled ticket's latest 'cancel' decision is its OWN: a person's plain cancel. An epic cascade writes
+   * its children's rows as actor 'system', and `cancel --cascade` marks its row extra.cascade; neither counts. Read from
+   * the decisions row alone, never from the ticket's status note.
+   */
+  private canceledByOperator(taskId: string): boolean {
+    const row = this.db
+      .prepare("SELECT actor, extra FROM decisions WHERE task_id = ? AND action = 'cancel' ORDER BY at DESC, rowid DESC LIMIT 1")
+      .get(taskId) as Record<string, unknown> | undefined;
+    if (!row || row['actor'] === 'system') return false;
+    try {
+      const extra = row['extra'] ? (JSON.parse(String(row['extra'])) as Record<string, unknown>) : null;
+      return extra?.['cascade'] !== true;
+    } catch {
+      return true;
+    }
+  }
+
   reconcileBlocked(): number {
     let changed = 0;
     const blocked = this.db
@@ -854,11 +872,30 @@ export class Store extends EventEmitter {
         && depStatuses.some((d) => String(d['id']) === parentId)
         && Number(this.getTaskRow(parentId!)?.['is_epic']) !== 1;
       const orderOnly = (depId: string): boolean => filedFollowUp && depId !== parentId;
-      const dead = depStatuses.find((d) => ended(String(d['status'])) && !orderOnly(String(d['id'])));
+      // A canceled dependency the OPERATOR canceled (its own 'cancel' decision, see canceledByOperator) is not
+      // dead: its dependents wait, and the operator picks one of three exits. Everything else that ended fails them.
+      const waitsOn = (d: Record<string, unknown>): boolean =>
+        String(d['status']) === 'canceled' && !orderOnly(String(d['id'])) && this.canceledByOperator(String(d['id']));
+      const dead = depStatuses.find((d) => ended(String(d['status'])) && !orderOnly(String(d['id'])) && !waitsOn(d));
       if (dead) {
         this.setStatus(taskId, 'failed', `dependency ${String(dead['id'])} ended as ${String(dead['status'])}`);
         changed++;
         continue;
+      }
+      const waiting = depStatuses.find(waitsOn);
+      if (waiting) {
+        const wid = String(waiting['id']);
+        const note = `waiting: dependency ${wid} was canceled - foreman deps ${taskId} --drop ${wid}, foreman landed ${wid}, or foreman retry ${wid}`;
+        // Written once: a tick that finds the note already there changes nothing.
+        if (this.getTaskRow(taskId)?.['error'] !== note) {
+          this.setStatus(taskId, 'blocked', note);
+          changed++;
+        }
+        continue;
+      }
+      // The waiting note is stale once nothing is canceled under it any more (retried, landed or dropped).
+      if (String(this.getTaskRow(taskId)?.['error'] ?? '').startsWith('waiting: dependency ')) {
+        this.db.prepare('UPDATE tasks SET error = NULL WHERE id = ?').run(taskId);
       }
       // Deps being done promotes a task to `queued`; an epic is promoted by
       // nothing — it is closed by its tickets, and must stay unclaimable.
@@ -1563,9 +1600,10 @@ export class Store extends EventEmitter {
    * tickets keep running would leave live workers spending on an epic nobody
    * is waiting for, so the cascade is not optional — and it goes through the
    * same per-child path (status + 'cancel' event), so a running worker still
-   * gets its abort.
+   * gets its abort. A plain cancel leaves the ticket's dependents waiting (reconcileBlocked); `cascade` fails them
+   * as a cancel always did, and says so in the decision row.
    */
-  cancel(taskId: string, note?: string | null): Task {
+  cancel(taskId: string, note?: string | null, opts: { cascade?: boolean } = {}): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     if (TERMINAL_STATUSES.includes(task.status)) throw new Error(`task ${taskId} already ${task.status}`);
@@ -1573,7 +1611,7 @@ export class Store extends EventEmitter {
     this.emit('cancel', taskId);
     // The reason, when one was given, is in the decision row and its timeline
     // event; the status note stays the fixed sentence other code matches on.
-    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', note, statusAfter: 'canceled', extra: { statusBefore: task.status } });
+    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
     // Parent first: the container is already terminal when its children close,
     // so closeEpicIfComplete cannot overwrite the cancel with a 'failed'.
     this.cancelDescendants(taskId, `parent ${taskId} was canceled`, new Set([taskId]));
