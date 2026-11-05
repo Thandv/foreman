@@ -1,7 +1,7 @@
 ## Commands
 
 ```
-serve · stop · add · ls · show · approve · reject · cancel · retry [--note] · reopen [--note] · rm · watch · demo
+serve · stop · add · ls · show · approve · landed · reject · cancel · retry [--note] · reopen [--note] · rm · watch · demo
 doctor      probe every model, runner and agent
 receipts    spend ledger — today, or one task
 verdict     the council's opinions for a task
@@ -32,6 +32,46 @@ prose       `prose audit <dir>` and `prose import <file> --out <dir>` for manusc
 agreement   how often the local reviewer would have decided what the cloud reviewer did
 drill       local-only readiness probes (see Local-only mode)
 ```
+
+### `foreman landed <taskId> --commit <sha> [--by <ticketId>] [--note <text>]`
+
+Records work a person landed on the base branch by hand, so the ticket closes as `done` instead of being cancelled.
+It posts to `POST /api/tasks/:id/landed`; the route sits behind the same Host check (DNS-rebinding defence) and
+cross-origin (Origin) check as every other write under `/api`, which run before routing. There is no separate token:
+the guard is those two checks. The decision is always recorded with actor `human`.
+
+**Accepts** a ticket that is `awaiting-approval`, `failed` or `blocked`, or `canceled` when the ticket's latest
+`cancel` decision is from a person (not `system`).
+
+**Refuses**, changing nothing (the route answers 409 with the Store's reason; the CLI prints it and exits non-zero):
+any other state (`queued`, `running`, `verifying`, `done`, `rejected`, ...: a rejection is a ruling on the work, so
+retry the ticket, or cancel it and land the work as a new ticket); a `canceled` ticket whose cancel came from its
+parent epic; a ticket with no repo, or a repo that is not a git repo; a `--commit` that is not a commit in that repo;
+a repo with no branch checked out; and either ancestry check below. A ticket that does not exist answers 404.
+
+**Inputs** are checked at the route before the Store sees them (400, nothing done): `--commit` is hex, 7 to 40
+characters; `--by` has the ticket-id shape (`t_` then letters or digits); `--note` is at most 2000 characters.
+
+**Two ancestry checks**, against the branch checked out in the ticket's repo (the base branch):
+
+1. the commit must be an ancestor of the base branch (it really is landed there);
+2. the commit must NOT be an ancestor of the latest run's `base_commit` (that would be work that was already there,
+   not work from this ticket). **Exception:** a ticket with no run, or a run with no `base_commit`, skips this second
+   check, and the decision's note says so ("no run base_commit, so the jail-base ancestor check was skipped").
+   If git cannot compare the two (say the repo does not have that base), the landing is refused.
+
+**What it writes**, in one transaction: a `landed` row in `decisions` (note, `landed_tree` = the commit's tree, and in
+`extra` the full `commit`, the `by` ticket id when given, and `statusBefore`), the status `done`, and the revival of
+dependents. Dependents revive: tickets that failed *because of* this one (error `dependency <id> ended as failed`,
+`rejected` or `canceled`) go back to `blocked`, transitively, and the scheduler releases them once every dependency is
+done. Afterwards the ticket's jail (worktree and branch) is removed, but only when it is the run's own tree under the work
+root; its artifacts stay.
+
+`foreman show <taskId>` prints the row among the ticket's decisions:
+`landed by human; commit <sha>; landed_tree <12 chars>; by ticket <id>; → done; note: landed by hand: ...`. The `by`
+part appears only when `--by` was given. `GET /api/state` carries the same facts on each ticket as
+`landed: { commit, landedTree, by, actor, at }` (null when the ticket was not landed by hand), and
+`GET /api/tasks/:id` lists the full row under `decisions`.
 
 **Inside a worker run the CLI refuses.** A worker session carries `FOREMAN_RUN_ID`; with it set, every
 `foreman` command except `help` (and `--help`) exits 2 with `foreman: worker ledger guard: …` before it opens, creates or

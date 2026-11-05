@@ -64,6 +64,9 @@ const USAGE = `foreman — parallel agent mission control
                                           how long work of this shape really took, from measurements
         archive unarchive <taskId>        put one back in the Closed lane
   foreman show <taskId>                   task detail, its skills, artifacts, the decisions recorded on it, recent activity
+  foreman landed <taskId> --commit <sha> [--by <ticketId>] [--note <text>]
+                                          record work you landed by hand: the ticket becomes done and its
+                                          dependents are revived (refused unless the commit is on the base branch)
   foreman approve <taskId> [--note <text>] accept the staged artifacts (waits for the merge and its check)
                                           --as-is <tree sha> lands work that changed after its review, by naming
                                           the tree to land (the refusal prints it)
@@ -270,6 +273,12 @@ function decisionLine(d: Decision): string {
     parts.push(`merged: ${yesNo(d.merged, 'n/a')}${d.asIs ? ' (--as-is)' : ''}`);
     parts.push(`reviewed ${shortTree(d.reviewedTree)} → landed ${shortTree(d.landedTree)}`);
     if (d.reviewSource) parts.push(`verified by: ${d.reviewSource}`);
+  }
+  if (d.action === 'landed') {
+    const extra = d.extra ?? {};
+    parts.push(`commit ${typeof extra['commit'] === 'string' ? extra['commit'] : 'unknown'}`);
+    parts.push(`landed_tree ${shortTree(d.landedTree)}`);
+    if (typeof extra['by'] === 'string') parts.push(`by ticket ${extra['by']}`);
   }
   if (d.statusAfter) parts.push(`→ ${d.statusAfter}`);
   const note = d.note ? d.note.replace(/\s+/g, ' ').trim() : '';
@@ -1136,6 +1145,25 @@ async function main(): Promise<number> {
             : `NOT MERGED: merge-on-approve is off for this ticket — its work is still in ${where}; land it by hand\n`,
         );
       }
+      return 0;
+    }
+    case 'landed': {
+      const taskId = args._[1];
+      const usage = 'usage: foreman landed <taskId> --commit <sha> [--by <ticketId>] [--note <text>]';
+      if (!taskId) throw new Error(usage);
+      for (const key of ['commit', 'by', 'note']) {
+        if (args.flags[key] === true) throw new Error(`--${key} needs its value\n${usage}`);
+      }
+      const commit = flagStr(args, 'commit');
+      if (!commit) throw new Error(`--commit <sha> is required: the commit you landed on the base branch\n${usage}`);
+      const by = flagStr(args, 'by');
+      const note = flagStr(args, 'note');
+      const t = await apiCall(`/api/tasks/${taskId}/landed`, {
+        method: 'POST',
+        body: JSON.stringify({ commit, ...(by === undefined ? {} : { by }), ...(note === undefined ? {} : { note }) }),
+      });
+      process.stdout.write(`${t.id} → ${t.status}\n`);
+      process.stdout.write(recordedLine('landed', t.decision));
       return 0;
     }
     case 'reject': {
