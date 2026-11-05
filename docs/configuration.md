@@ -34,7 +34,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_TEST_REAL_HOME` | unset | `1` runs test commands with the real home instead of a private one; refused while the sandbox is on | `src/verify/tests.ts` |
 | `FOREMAN_TEST_KEEP_ENV` | unset | Comma-separated variable names a test command keeps from the daemon's environment | `src/verify/tests.ts` |
 | `FOREMAN_TICK_MS` | `250` | Scheduler tick interval | `src/config.ts` |
-| `FOREMAN_LOG_LINES` | `2000` | Log lines kept per run in SQLite (the full log stays on disk) | `src/config.ts` |
+| `FOREMAN_LOG_LINES` | `2000` | Log lines kept per run in SQLite (the full log stays on disk). A runner's own output is recorded as events only up to twice this many lines per run; later lines go only to the run log file, with one "further output is in the run log" event when the cap is hit and one event with the total line count at run end. Foreman's own notes (council, gate, follow-ups) are never capped. Progress events are throttled to a changed value plus 1 s elapsed or a move of 0.01 | `src/config.ts` |
 | `FOREMAN_TRACE_RETAIN_DAYS` | `14` | Days of daily trace files kept | `src/config.ts` |
 | `FOREMAN_JAIL_RETAIN_DAYS` | `3` | Days a merged or archived task's worktree is kept (at least 1); negative keeps them | `src/config.ts` |
 | `FOREMAN_FAILED_JAIL_RETAIN_DAYS` | `14` | Days a failed task's worktree is kept after it last moved (at least 1); negative keeps it for ever | `src/config.ts` |
