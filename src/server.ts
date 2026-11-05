@@ -496,7 +496,21 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         res.end();
         return;
       }
-      json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      // node:sqlite failures carry code 'ERR_SQLITE_ERROR' and a numeric errcode.
+      // Matched on those, never on message text.
+      const e = err as { code?: unknown; errcode?: unknown } | null;
+      if (e !== null && typeof e === 'object' && e.code === 'ERR_SQLITE_ERROR') {
+        if (e.errcode === 5 || e.errcode === 6) {
+          json(res, 503, { error: `ledger busy: ${message}; retry` });
+          return;
+        }
+        if (e.errcode === 13) {
+          json(res, 507, { error: `ledger disk full: ${message}` });
+          return;
+        }
+      }
+      json(res, 400, { error: message });
     });
   });
 

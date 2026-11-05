@@ -33,6 +33,12 @@ agreement   how often the local reviewer would have decided what the cloud revie
 drill       local-only readiness probes (see Local-only mode)
 ```
 
+**HTTP status codes for ledger failures.** A route that rejects its input answers 400 with the reason, and any
+error a route does not map itself is a 400 with its message. The exception is a SQLite failure, matched on the
+error's `code` (`ERR_SQLITE_ERROR`) and numeric `errcode`, never on message text: `5` (BUSY) or `6` (LOCKED) answers
+**503** `ledger busy: <detail>; retry`, and `13` (FULL) answers **507** `ledger disk full: <detail>`. The CLI does
+not retry; run the command again.
+
 ### `foreman landed <taskId> --commit <sha> [--by <ticketId>] [--note <text>]`
 
 Records work a person landed on the base branch by hand, so the ticket closes as `done` instead of being cancelled.
