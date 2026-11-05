@@ -9,7 +9,9 @@ import path from 'node:path';
 import { BudgetExceeded } from '../src/budget.ts';
 import { config } from '../src/config.ts';
 import { leadWithCoreGuard, Store } from '../src/queue.ts';
-import { applyApproval, hardHumanReason, ownerGate, ownerGateBatch } from '../src/gate.ts';
+import { applyApproval as approveChecked, hardHumanReason, ownerGate, ownerGateBatch } from '../src/gate.ts';
+import { acceptingGitChanges } from './helpers/tripwire.ts';
+const applyApproval = acceptingGitChanges(approveChecked); // these tests plant config in the real repo on purpose
 import { changedFiles, createJail, diffJail, jailChanges, jailTree, reuseJail, showBaseFile, type Jail } from '../src/isolate.ts';
 import { mergeApproved } from '../src/merge.ts';
 import { resetPreflightCache } from '../src/runners/cliRunners.ts';

@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { createHash } from 'node:crypto';
-import { applyApproval } from '../src/gate.ts';
+import { applyApproval as approveChecked } from '../src/gate.ts';
+import { acceptingGitChanges } from './helpers/tripwire.ts';
+const applyApproval = acceptingGitChanges(approveChecked); // one test plants config in the real repo on purpose
 import { Scheduler } from '../src/scheduler.ts';
 import { mergeApproved } from '../src/merge.ts';
 import { jailTree } from '../src/isolate.ts';

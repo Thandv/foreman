@@ -24,6 +24,7 @@ import { checkMain, postMergeCheckEnabled, repoHead, type MainCheck } from './po
 import type { Decision, GateMode, Run, Task } from './types.ts';
 import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
+import { checkRepo } from './gitTripwire.ts';
 import { storedRevertTestsNote } from './verify/revertTests.ts';
 import { cutMiddle, storedReport } from './verify/report.ts';
 import { boundDroppedIssues, droppedSinceLastPark, DROPPED_ISSUE_PREFIX, formatDroppedIssues, heldReason, isCapDrop } from './verify/crewReview.ts';
@@ -331,7 +332,12 @@ async function approve(
   // Work that is not the tree its reviewers were shown is not approved at all:
   // asked before decide(), so the task is never marked done, no approval is
   // remembered and no dependent is released. It stays parked, with the reason.
-  const unreviewed = landable ? await landingRefusal(before!, run, { ...who, selfRoot: opts.selfRoot }).catch(() => null) : null;
+  // The real .git against the run's baseline (gitTripwire.ts), before anything is decided or merged: a change holds the
+  // ticket here for a person, with the files and refs named. Detection only; nothing is restored.
+  const tripwire = landable && before!.repo ? await checkRepo(before!.repo, run!.id, { requireBaseline: false, git: pinnedGit }) : null;
+  const unreviewed = tripwire && !tripwire.ok
+    ? tripwire.reason
+    : landable ? await landingRefusal(before!, run, { ...who, selfRoot: opts.selfRoot }).catch(() => null) : null;
   if (unreviewed) {
     store.setStatus(taskId, 'awaiting-approval', store.withCoreGuard(taskId, `not landed: ${unreviewed}`));
     store.record({ taskId, runId: run!.id, type: 'status', message: `merge: ${unreviewed}` });

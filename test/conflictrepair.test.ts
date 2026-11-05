@@ -6,7 +6,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Store, conflictRepairNotes } from '../src/queue.ts';
-import { applyApproval } from '../src/gate.ts';
+import { applyApproval as approveChecked } from '../src/gate.ts';
+import { acceptingGitChanges } from './helpers/tripwire.ts';
+const applyApproval = acceptingGitChanges(approveChecked); // one test plants a merge driver in the real repo's config on purpose
 import { Scheduler, resumableSession } from '../src/scheduler.ts';
 import { leftoverMarkers } from '../src/isolate.ts';
 import { resetPreflightCache } from '../src/runners/cliRunners.ts';
