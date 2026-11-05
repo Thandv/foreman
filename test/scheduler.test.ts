@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
+import { config } from '../src/config.ts';
 import { councilShareOf, finishedRound, Scheduler, type SchedulerOptions } from '../src/scheduler.ts';
 
 /** Scheduler with the council stubbed, so pipeline tests need no model server. */
@@ -262,4 +263,58 @@ test('a council that runs out of time keeps the last round it finished, if anyon
   } finally {
     store.close();
   }
+});
+
+// --- runner output cap and progress throttle (events table only; the run log file keeps everything) ---
+
+async function runShellLines(n: number, logLines?: number, now?: () => number) {
+  const store = new Store(':memory:');
+  const sched = scheduler(store, { maxWorkers: 1, ...(now ? { now } : {}) });
+  // Prune runs after the run and would hide what the run itself wrote.
+  (sched as unknown as { pruneEvents: () => void }).pruneEvents = () => {};
+  const mutable = config as { logLinesPerRun: number };
+  const saved = mutable.logLinesPerRun;
+  if (logLines !== undefined) mutable.logLinesPerRun = logLines;
+  try {
+    const t = store.addTask({ title: `lines ${n}`, prompt: `seq 1 ${n}`, kind: 'code', runner: 'shell', repo: fixtureRepo(false) });
+    await sched.drain(120_000);
+    const events = store.db.prepare('SELECT type, message FROM events WHERE task_id = ? ORDER BY id').all(t.id) as { type: string; message: string }[];
+    return { store, t, events, task: store.getTask(t.id)!, run: store.latestRun(t.id)! };
+  } finally {
+    mutable.logLinesPerRun = saved;
+  }
+}
+
+test('a 100-line shell ticket records every line, the same status and summary, and its progress', async () => {
+  const { store, events, task, run } = await runShellLines(100);
+  assert.equal(task.status, 'awaiting-approval');
+  assert.equal(run.summary, 'shell command succeeded (100 lines)');
+  const out = events.filter((e) => e.type === 'log' && /^\d+$/.test(e.message));
+  assert.deepEqual(out.map((e) => e.message), Array.from({ length: 100 }, (_, i) => String(i + 1)));
+  assert.equal(events.filter((e) => /further output|lines in total/.test(e.message)).length, 0);
+  const prog = events.filter((e) => e.type === 'progress');
+  assert.equal(prog.at(-1)!.message, '1.000');
+  assert.equal(run.progress, 1);
+  store.close();
+});
+
+test('a 200,000-line shell ticket caps its runner events, keeps the whole run log, throttles progress, and still records gate notes', async () => {
+  const { store, t, events, task, run } = await runShellLines(200_000, 2000, () => 1_700_000_000_000);
+  assert.equal(task.status, 'awaiting-approval', task.error ?? '');
+  assert.equal(run.summary, 'shell command succeeded (200000 lines)');
+  const runnerEvents = events.filter((e) => e.type === 'log' && (/^\d+$/.test(e.message) || /further output|lines in total/.test(e.message)));
+  assert.ok(runnerEvents.length <= 2 * 2000 + 2, `runner log events: ${runnerEvents.length}`);
+  assert.ok(events.some((e) => e.message.startsWith('further output is in the run log')));
+  assert.ok(events.some((e) => e.message === 'runner output: 200000 lines in total, all in the run log'));
+  const prog = events.filter((e) => e.type === 'progress');
+  assert.ok(prog.length <= 101, `progress events: ${prog.length}`);
+  assert.equal(prog.at(-1)!.message, '1.000');
+  // Foreman's own note after the cap is not capped.
+  assert.ok(events.some((e) => e.type === 'log' && e.message === 'collecting artifacts'));
+  const log = store.artifactsForTask(t.id).find((a) => a.type === 'log')!;
+  const text = fs.readFileSync(log.path, 'utf8');
+  const numbered = text.split('\n').filter((l) => /^\S+ \d+$/.test(l));
+  assert.equal(numbered.length, 200_000, 'the run log holds every runner line');
+  assert.ok(numbered.at(-1)!.endsWith(' 200000'));
+  store.close();
 });

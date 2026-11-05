@@ -1266,6 +1266,37 @@ export class Scheduler {
       writeLog(line);
       this.store.record({ taskId: task.id, runId, type: 'log', message: line.slice(0, 4000) });
     };
+    // A runner's own output (ctx.log) is capped in the events table at twice the per-run line limit; the run log file
+    // keeps every line. Foreman's own notes go through emit and are never capped.
+    const runnerCap = 2 * config.logLinesPerRun;
+    let runnerLines = 0;
+    const runnerLog = (line: string): void => {
+      runnerLines++;
+      if (runnerLines <= runnerCap) return emit(line);
+      writeLog(line);
+      if (runnerLines === runnerCap + 1) {
+        this.store.record({ taskId: task.id, runId, type: 'log', message: `further output is in the run log (the first ${runnerCap} runner lines are recorded here)` });
+      }
+    };
+    // Progress: a write needs a changed value, plus 1 s since the last write or a move of at least 0.01.
+    let wroteProgress: number | null = null;
+    let wroteProgressAt = 0;
+    let pendingProgress: number | null = null;
+    const writeProgress = (fraction: number): void => {
+      wroteProgress = fraction;
+      wroteProgressAt = this.now();
+      pendingProgress = null;
+      this.store.setRunProgress(runId, task.id, fraction);
+    };
+    const throttledProgress = (fraction: number): void => {
+      if (wroteProgress === null) return writeProgress(fraction);
+      if (fraction === wroteProgress) {
+        pendingProgress = null;
+        return;
+      }
+      if (Math.abs(fraction - wroteProgress) >= 0.01 || this.now() - wroteProgressAt >= 1000) return writeProgress(fraction);
+      pendingProgress = fraction;
+    };
 
     // Time spent queued for a verify slot (src/verify/slots.ts), summed onto the run.
     const onVerifyWait = (ms: number): void => {
@@ -1415,8 +1446,8 @@ export class Scheduler {
         stage: (stage: Stage, message?: string) => this.store.setRunStage(runId, task.id, stage, message),
         child: (pid: number | null) => this.store.setRunPid(runId, pid),
         session: (id: string) => this.store.setRunMeta(runId, { sessionId: id }),
-        log: emit,
-        progress: (fraction: number) => this.store.setRunProgress(runId, task.id, fraction),
+        log: runnerLog,
+        progress: throttledProgress,
         usage: (u) => this.store.addUsage(runId, task.id, u),
         enqueue: (spec) => {
           const child = this.store.addTask({ ...spec, parentId: task.id });
@@ -2262,6 +2293,14 @@ export class Scheduler {
       }
     } finally {
       clock.stop();
+      try {
+        if (pendingProgress !== null) writeProgress(pendingProgress);
+        if (runnerLines > runnerCap) {
+          this.store.record({ taskId: task.id, runId, type: 'log', message: `runner output: ${runnerLines} lines in total, all in the run log` });
+        }
+      } catch (err) {
+        writeLog(`run summary events not recorded: ${causeOf(err, 1000)}`);
+      }
       // A reused worktree belongs to the run that created it — and that run's
       // row still points at it. This one only cleans up what it made.
       if (jail && createdJail && !keepJail) await removeJail(jail).catch(() => {});
