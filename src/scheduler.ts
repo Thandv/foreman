@@ -27,7 +27,7 @@ import { checkAcceptanceMap, formatMapGaps } from './acceptanceMap.ts';
 import { checkScope, effectiveScopeRules } from './scope.ts';
 import { admit, AdmissionBlocked } from './security/admit.ts';
 import { coreRefusal, isSelfTask, PROTECTED_PATHS } from './security/coreGuard.ts';
-import { boundBrief, collectBriefCuts, compactDiff, tailLog } from './context.ts';
+import { boundBrief, collectBriefCuts, tailLog } from './context.ts';
 import { endedReason, newRunFacts, noteBrief, noteResult, noteResumed } from './runFacts.ts';
 import { getRunner, type RunnerContext } from './runners/index.ts';
 import { ProviderLimited, isProviderLimit, limitBackoffMs } from './providerLimit.ts';

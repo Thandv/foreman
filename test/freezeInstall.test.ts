@@ -2,7 +2,6 @@ import { realHomes, scratchDir, privateTmpdir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { config } from '../src/config.ts';
@@ -253,7 +252,7 @@ const sandboxAnswer = await sandboxAvailable();
 const SANDBOX_SKIP = sandboxAnswer === 'ok' ? false : `the sandbox cannot be exercised here: ${sandboxAnswer}`;
 
 test('a worker\'s testSlot inside the worker sandbox cannot write the home: it says so, writes nothing, and the suite still passes', { skip: SANDBOX_SKIP, timeout: 170_000 }, async (t) => {
-  const g = procGuard(t);
+  procGuard(t);
   const area = fs.realpathSync(scratchDir('foreman-slotbox-'));
   t.after(() => fs.rmSync(area, { recursive: true, force: true }));
   const dirs = Object.fromEntries(['jail', 'tmp', 'home', 'cfg'].map((n) => [n, path.join(area, n)]));

@@ -3,7 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Store, conflictRepairNotes } from '../src/queue.ts';
 import { applyApproval as approveChecked } from '../src/gate.ts';
@@ -243,7 +242,7 @@ for (const [kind, files, edit] of [
   ['a binary-file conflict', { 'a.txt': 'l1\nl2\nl3\n', 'b.bin': Buffer.from([0, 1, 2, 3]) }, `printf '\\000\\001\\377' > b.bin; printf 'l1\\nt\\nl3\\n' > a.txt`],
 ] as const) {
   test(`${kind}: the diff cannot be applied with markers, so the round is not run and the approved run goes back to the gate`, async () => {
-    const { dir, seen, store, sched } = setup(files);
+    const { dir, store, sched } = setup(files);
     try {
       const t = await toGate(store, sched, dir, edit, { testCmd: 'true' });
       const approved = store.latestRun(t.id)!;
@@ -524,7 +523,7 @@ test('an approval never lands or completes a conflict round that was interrupted
 });
 
 test('a marker in a file the ticket itself added is reported as such', async () => {
-  const { dir, seen, store, sched } = setup();
+  const { dir, store, sched } = setup();
   try {
     const t = await toGate(store, sched, dir,
       `if grep -q '<<<<<<<' a.txt; then printf 'l1\\nRESOLVED\\nl3\\n' > a.txt; else printf 'l1\\nticket\\nl3\\n' > a.txt; printf 'x\\n=======\\ny\\n' > doc.txt; fi`);

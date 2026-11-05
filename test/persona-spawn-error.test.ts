@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test, { after, before, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { savePersona, seedPersonas } from '../src/align/personas.ts';
 import { servePersona } from '../src/align/personaServe.ts';

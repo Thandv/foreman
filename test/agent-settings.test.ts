@@ -3,7 +3,6 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createJail, diffJail, restoreAgentSettings, type Jail } from '../src/isolate.ts';
 import type { Task } from '../src/types.ts';

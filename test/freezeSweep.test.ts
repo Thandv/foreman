@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { nameMatchesRecord, parseFreezeRecord, recordFileName } from '../src/runners/freezeRecord.ts';

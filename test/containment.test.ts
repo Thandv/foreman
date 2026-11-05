@@ -83,7 +83,6 @@ function throwOn<K extends 'record' | 'endRun' | 'setStatus' | 'markGateDecision
   return fault;
 }
 
-const idOf = (v: string | { taskId?: string | null } | undefined): string | undefined => (typeof v === 'string' ? v : v?.taskId ?? undefined);
 
 function scratch(t: TestContext, prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

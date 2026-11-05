@@ -2186,7 +2186,6 @@ const hhmm = (ms: number | null): string => {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-const mins = (ms: number | null): string => (ms === null ? '' : ms < 60_000 ? '<1 min' : `${Math.round(ms / 60_000)} min`);
 const pct = (x: number | null): string => (x === null ? 'n/a' : `${Math.round(x * 100)}%`);
 /**
  * Text Foreman did not write (a ticket title, a ledger message, a reviewer's sentence, a gate note), made safe to

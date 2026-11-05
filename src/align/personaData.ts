@@ -5,7 +5,7 @@ import { extractSamples, type ExtractOptions, type Sample } from './extract.ts';
 import { redact } from './redact.ts';
 import {
   loadPersonas, personaDataDir, personaForText, personaId,
-  savePersona, type Persona, type PersonaCatalog,
+  savePersona, type PersonaCatalog,
 } from './personas.ts';
 import type { DpoRow, SftRow } from './dataset.ts';
 

@@ -114,7 +114,7 @@ export function selectByMentionedNames(
   // to 12,681 tokens, which is not a context pack, it is the whole bible again.
   const out: BibleEntry[] = [];
   let bytes = 0;
-  for (const { e, score } of scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score)) {
+  for (const { e } of scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score)) {
     const size = bodyOf(e).length;
     if (out.length >= max || bytes + size > maxBytes) continue;
     out.push(e);

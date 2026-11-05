@@ -2,8 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { removeAfterStops, stopsFirst } from './helpers/removal.ts';
 
 // The dir is registered first, as the fixtures do; plain t.after hooks would remove it before either stop ran.

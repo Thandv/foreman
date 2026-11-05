@@ -8,6 +8,13 @@ npm run typecheck:tsc  # tsc 5.9, the reference: run it when the two might disag
 foreman drill     # the live readiness suite — real models, answers checked by code
 ```
 
+The typecheck step of `verify` (`tsgo --noEmit`, see `scripts/verify.sh`) uses `tsconfig.json`: `strict` and
+`noUncheckedIndexedAccess`, plus `noUnusedLocals` (rejects an unused local or import), `noUnusedParameters`
+(an unused parameter; prefix with `_` if the signature needs it), `noFallthroughCasesInSwitch` (a non-empty
+case that falls through), `noImplicitReturns` (a function that returns a value on only some paths) and
+`noImplicitOverride` (an overriding member without `override`). Tickets queued before this landed must rebase
+onto it; a new failure on an unused binding after the rebase is expected, not a regression.
+
 Covered: DAG promotion and dependency-failure propagation, exactly-once claim, crash recovery,
 orphaned-process-group reaping on recovery, pid recording over a child's lifetime, the daemon
 pidfile lock (live conflict and stale reclaim), pool concurrency, cancel and timeout aborts,

@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { planSkillsSection } from '../src/assistant/crewPlan.ts';
 import { clearPlaybookCache, getPlaybook, loadPlaybooks, type Playbook } from '../src/playbooks.ts';
