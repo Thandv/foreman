@@ -98,6 +98,15 @@ locks anything (`ls`, `add`, `restore`, `serve`, `approve`, `doctor`, …). The 
 (the wrapper drops it; `test/env.ts` clears it too). The guard is not a fence: a worker that unsets or empties
 `FOREMAN_RUN_ID` (`env -u FOREMAN_RUN_ID …`) is not refused, and see [A worker's `FOREMAN_HOME`](lifecycle.md#a-workers-foreman_home).
 
+### `foreman rm <taskId>`
+
+Deletes a ticket. **Refuses** (nothing changes) while it is running or verifying, while open child tickets remain, and
+while another ticket depends on it. One kind of dependent no longer blocks it: a reviewer's follow-up that is only
+ORDERED behind the ticket (an edge written by the filing rule, not the edge to its own parent). Each such edge is
+released through the same path as `foreman deps <id> --drop`, so it writes one `deps-drop` decision (actor `human`) on
+the sibling, and the next reconcile queues it once its other dependencies are done. A real dependency still refuses
+the rm, as does an ordered sibling that is running or already terminal.
+
 `foreman add` flags: `--kind --runner --repo --agent --priority --after --sensitivity --budget
 --test-cmd --no-merge --repairs --prompt --role --playbook --assignee --skills --allow-core` (see [Skills](skills.md);
 `--allow-core` is not in `foreman help`, see [Self-improvement](self-improvement.md)).
