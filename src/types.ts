@@ -292,7 +292,7 @@ export interface RunEvent {
   taskId: string | null;
   runId: string | null;
   ts: number;
-  type: 'status' | 'stage' | 'log' | 'progress' | 'artifact' | 'error' | 'metrics' | 'verdict' | 'assign' | 'archive' | 'shadow' | 'warning' | 'skills' | 'decision';
+  type: 'status' | 'stage' | 'log' | 'progress' | 'artifact' | 'error' | 'metrics' | 'verdict' | 'assign' | 'archive' | 'shadow' | 'warning' | 'skills' | 'decision' | 'worker-suite';
   stage: Stage | null;
   message: string;
 }
@@ -305,7 +305,7 @@ export interface Artifact {
    * `assertions`: the pre-existing assertions the run's diff removed or changed (verify/assertionCheck.ts).
    * `revert-tests`: each changed test run with the src change put back (verify/revertTests.ts); a reviewer aid, never a hold.
    */
-  type: 'diff' | 'file' | 'report' | 'log' | 'assertions' | 'revert-tests';
+  type: 'diff' | 'file' | 'report' | 'log' | 'assertions' | 'revert-tests' | 'worker-suite';
   path: string;
   summary: string | null;
   /** null = undecided, 1 = approved, 0 = rejected. */

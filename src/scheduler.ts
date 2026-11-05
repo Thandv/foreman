@@ -42,6 +42,7 @@ import { buildPrompt, councilAliases, councilNumCtx, MAX_RUNG, rungFor, reviewLa
 import { crewLeadsVerify, crewReview, DROPPED_ISSUE_PREFIX, droppedSinceLastPark, heldReason, isPartialPassNote, type CrewVerdict } from './verify/crewReview.ts';
 import { storeReport, storedReport } from './verify/report.ts';
 import { recordAssertionChanges, storedAssertionNote } from './verify/assertionCheck.ts';
+import { existingOutputDir, readWorkerSuite, recordWorkerSuite } from './verify/workerSuite.ts';
 import { recordRevertTests, revertTestsApplies, revertTestsCheck, revertTestsNote, revertTestsSummary, storedRevertTestsNote } from './verify/revertTests.ts';
 import { detectTestCmd, runTestsSlotted } from './verify/tests.ts';
 import {
@@ -1557,6 +1558,24 @@ export class Scheduler {
           }
           if (!diff.trim()) throw new ConflictRoundAbandoned('the round produced no change against main');
         }
+      }
+
+      // What the worker's own in-jail suite run left (advisory, worker-written; verify/workerSuite.ts). Read here,
+      // before the gate's own tests touch the jail. Never throws, never holds: a read error is a visible line.
+      // The line goes on the run's timeline and on a `worker-suite` artifact (foreman show, /api/state); it is not
+      // put in the reviewers' input.
+      if (jail.repo && task.kind === 'code') {
+        const ws = readWorkerSuite(existingOutputDir(), runId, jail.dir);
+        try {
+          this.store.record({
+            taskId: task.id, runId, type: 'worker-suite',
+            message: `${ws.status}${ws.at ? ` at ${new Date(ws.at).toISOString()}` : ''}${ws.log ? ` log ${ws.log}` : ''}${ws.changedAfter ? ' changed-after' : ''}`,
+          });
+          recordWorkerSuite(this.store, config.artifactRoot, runId, task.id, ws);
+        } catch (err) {
+          emit(`worker suite: could not record (${(err as Error).message.slice(0, 200)})`);
+        }
+        emit(ws.line);
       }
 
       // A code run that ended well and changed nothing has nothing to test and nothing to show a reviewer: 60 crew
