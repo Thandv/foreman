@@ -629,11 +629,39 @@ export class Store extends EventEmitter {
     }
   }
 
+  /**
+   * Whether `dependentId`'s edge to `depId` is an ORDER written by the follow-up filing rule rather than a real
+   * dependency: the dependent is a reviewer-filed follow-up (a parent, the FILED_PREFIX prompt, an edge to a
+   * non-epic parent) and `depId` is not that parent. Same reading as reconcileBlocked.
+   */
+  private isOrderEdge(dependentId: string, depId: string): boolean {
+    const row = this.db
+      .prepare('SELECT is_epic, parent_id, substr(prompt, 1, ?) AS prompt_head FROM tasks WHERE id = ?')
+      .get(FILED_PREFIX.length, dependentId) as Record<string, unknown> | undefined;
+    if (!row || Number(row['is_epic']) === 1 || row['parent_id'] == null) return false;
+    if (String(row['prompt_head'] ?? '') !== FILED_PREFIX) return false;
+    const parentId = String(row['parent_id']);
+    if (depId === parentId) return false;
+    const parentEdge = this.db.prepare('SELECT 1 AS n FROM task_deps WHERE task_id = ? AND depends_on = ?').get(dependentId, parentId);
+    return !!parentEdge && Number(this.getTaskRow(parentId)?.['is_epic']) !== 1;
+  }
+
+  /**
+   * Delete a ticket. A ticket that later siblings are only ORDERED behind (see isOrderEdge) is still deleted: each
+   * such edge is released through dropDependency (one 'deps-drop' decision each), so there is no second delete
+   * path, and the sibling is queued by the next reconcile. Any real dependent still refuses the delete, as does an
+   * order-edge sibling that is running or already terminal (dropDependency would refuse it); nothing is changed then.
+   */
   deleteTask(taskId: string): void {
     const dependents = this.db
       .prepare('SELECT task_id FROM task_deps WHERE depends_on = ?')
       .all(taskId) as Record<string, unknown>[];
-    if (dependents.length) {
+    const releasable = dependents.every((d) => {
+      const id = String(d['task_id']);
+      const status = this.getTaskRow(id)?.['status'] as TaskStatus | undefined;
+      return this.isOrderEdge(id, taskId) && status !== undefined && status !== 'running' && !TERMINAL_STATUSES.includes(status);
+    });
+    if (dependents.length && !releasable) {
       throw new Error(`cannot delete ${taskId}: ${dependents.length} task(s) depend on it`);
     }
     const task = this.getTask(taskId);
@@ -659,6 +687,7 @@ export class Store extends EventEmitter {
     if (children.length) {
       this.db.prepare('UPDATE tasks SET parent_id = NULL, updated_at = ? WHERE parent_id = ?').run(Date.now(), taskId);
     }
+    for (const d of dependents) this.dropDependency(String(d['task_id']), taskId, 'human');
     this.db.prepare('DELETE FROM events WHERE task_id = ?').run(taskId);
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
   }
