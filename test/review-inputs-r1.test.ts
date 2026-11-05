@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
@@ -14,7 +13,6 @@ import { applyApproval, buildGatePrompt, hardHumanReason, reviewHolds } from '..
 import { assertionHold, assertionNote, changedAssertions, holds, recordAssertionChanges } from '../src/verify/assertionCheck.ts';
 import { citedSourceBlock } from '../src/verify/citedSource.ts';
 import { readJailFile } from '../src/verify/jailRead.ts';
-import { storeReport } from '../src/verify/report.ts';
 import type { Run, Task } from '../src/types.ts';
 
 /**

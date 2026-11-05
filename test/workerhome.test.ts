@@ -3,7 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';

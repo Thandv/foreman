@@ -2,8 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { spawnStreaming } from '../src/runners/proc.ts';
 
 function scratch(t: test.TestContext): string {

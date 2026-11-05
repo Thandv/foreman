@@ -59,7 +59,7 @@ function readAllState(): Record<string, ToolState> {
   }
 }
 
-function defaultState(): ToolState {
+export function defaultState(): ToolState {
   return { stats: { calls: 0, failures: 0, consecutiveFailures: 0, lastUsed: null }, quarantined: false, quarantineReason: null };
 }
 

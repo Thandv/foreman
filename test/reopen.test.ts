@@ -2,8 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';

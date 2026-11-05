@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { clearPlaybookCache, getPlaybook, loadPlaybooksFrom } from '../src/playbooks.ts';
 import { CLI_PREAPPROVED_FETCH_HOSTS, workerShellAllowlist, workerShellDenylist, workerWebTools } from '../src/runners/cliRunners.ts';

@@ -24,6 +24,15 @@ npm run verify    # typecheck, then the whole suite, then scripts/checks/*.ts
 `npm test` runs the suite alone; `npm run typecheck:tsc` runs the reference compiler when the
 native one (`tsgo`) and `tsc` might disagree.
 
+The typecheck step (`tsgo --noEmit`, in `scripts/verify.sh`) reads `tsconfig.json`, which has `strict` and
+`noUncheckedIndexedAccess` plus five more flags. Each makes verify fail on:
+
+- `noUnusedLocals`: an unused local, or an unused import.
+- `noUnusedParameters`: an unused function parameter (prefix it with `_` if the signature needs it).
+- `noFallthroughCasesInSwitch`: a non-empty `switch` case that falls through into the next one.
+- `noImplicitReturns`: a function that returns a value on some paths and falls off the end on others.
+- `noImplicitOverride`: a subclass member that overrides a base member without the `override` keyword.
+
 The OS sandbox (`FOREMAN_SANDBOX`, default `tests`) exists only on macOS, where it uses `sandbox-exec`
 (`sandboxAvailable()` in `src/security/sandbox.ts`). On any other platform, including Linux, `foreman serve`
 refuses to start and a sandboxed command is refused rather than run unsandboxed, so set `FOREMAN_SANDBOX=off`

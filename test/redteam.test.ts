@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { Broker } from '../src/budget.ts';

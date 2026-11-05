@@ -194,7 +194,6 @@ test('CLI approve: the NOT MERGED line fires on what mergeApproved itself answer
   const { mergeApproved } = await import('../src/merge.ts');
   const { execFileSync } = await import('node:child_process');
   const fs = await import('node:fs');
-  const os = await import('node:os');
   const repo = scratchDir('foreman-notmerged-');
   execFileSync('git', ['init', '-q', repo]);
   try {

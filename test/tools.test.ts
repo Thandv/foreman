@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
@@ -514,7 +513,7 @@ test('build_tool queues a gated child task rather than building inline', async (
 
 test('refusing a quarantined tool does not count as another failure by it', async () => {
   freshCatalog();
-  const tool = registerTool({ sourceDir: sourceTree({ name: 'broken', body: 'process.exit(1);' }) });
+  registerTool({ sourceDir: sourceTree({ name: 'broken', body: 'process.exit(1);' }) });
   const jail = scratchDir('foreman-jail-');
   for (let i = 0; i < 3; i++) await runTool(getTool('broken')!, { nums: [] }, { cwd: jail });
   const atQuarantine = getTool('broken')!;
