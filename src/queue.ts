@@ -1090,6 +1090,7 @@ export class Store extends EventEmitter {
         AND (SELECT p.clean_exit FROM daemon_starts p WHERE p.id < s.id ORDER BY p.id DESC LIMIT 1) = 0`)
       .get(cutoff) as Record<string, unknown>)['n']);
     // Pruning can drop the row just before an in-window start, which then counts as clean: it can only undercount.
+    // Rows after the last clean stop are kept for `crashes`, so a ledger with no clean stop yet is never pruned.
     this.db.prepare('DELETE FROM daemon_starts WHERE id < ? AND at < ?').run(lastClean, cutoff);
     return { id, crashes, recentUncleanStarts };
   }

@@ -56,8 +56,9 @@ a parent also cancels its descendants.
   then run `foreman land-clear <repo>`; the next tick releases the held work. It is kept until you clear it, across
   restarts.
 - **A crash, and a crash loop.** Each start writes a `daemon_starts` row, and an orderly stop (`foreman stop`, or a
-  signal the daemon shuts down on) marks it `clean_exit` last, so a stop that runs out of time counts as a crash. After
-  a clean stop, recovery is unchanged. After a crash, one task in flight is taken as the likely cause: its attempt is
+  signal the daemon shuts down on) marks it `clean_exit` last, so a stop that runs out of time counts as a crash, and
+  so does a stop that exits non-zero, as an uncaught exception's does. After a clean stop, recovery is unchanged.
+  After a crash, one task in flight is taken as the likely cause: its attempt is
   spent, and when none are left it fails with `in flight across N daemon crashes`, N being the crashes in a row since
   the last clean stop. Several tasks in flight cannot be told apart, so each gets its attempt back as a daemon stop
   does, and shares that count: past 3 such requeues the ticket goes to `awaiting-human`. A start after a crash that is

@@ -606,7 +606,8 @@ async function main(): Promise<number> {
         let capTimer: NodeJS.Timeout | undefined;
         const capped = new Promise<'capped'>((r) => { capTimer = setTimeout(() => r('capped'), APPROVAL_DRAIN_CAP_MS); });
         try {
-          if ((await Promise.race([scheduler.stop(), capped])) === 'capped') {
+          // Only an exit 0 is clean; a second call mid-drain can raise the code, so it is read at the end.
+          if ((await Promise.race([scheduler.stop(() => exitCode === 0), capped])) === 'capped') {
             process.stderr.write(`shutdown: the scheduler did not stop within ${APPROVAL_DRAIN_CAP_MS}ms; exiting anyway\n`);
             // stop() ends by killing the groups of runs that never settled; it did not get there, so that is done here.
             store.killLiveRunGroups();

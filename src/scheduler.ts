@@ -913,7 +913,7 @@ export class Scheduler {
 
   private hold: { reason: string; since: number } | null = null;
 
-  /** This start's daemon_starts row (Store.recordDaemonStart); an orderly stop() marks it clean. */
+  /** This start's daemon_starts row (Store.recordDaemonStart); an orderly stop() that exits 0 marks it clean. */
   private daemonStartId: number | null = null;
 
   /**
@@ -933,7 +933,11 @@ export class Scheduler {
     return this.hold && { ...this.hold };
   }
 
-  async stop(): Promise<void> {
+  /**
+   * `exitsClean` is read once the drain is done: a stop on the way to a non-zero exit (an uncaught exception) leaves
+   * this start unclean, so a loop of them is a crash loop.
+   */
+  async stop(exitsClean: () => boolean = () => true): Promise<void> {
     this.stopped = true;
     clearInterval(this.timer);
     this.lifetime.abort();
@@ -951,7 +955,7 @@ export class Scheduler {
     // Kill it now rather than leave an orphan behind a clean shutdown.
     this.store.killLiveRunGroups();
     // Last: a stop that throws or is cut off before here leaves its start unclean (recordDaemonStart).
-    if (this.daemonStartId !== null) this.store.markCleanExit(this.daemonStartId);
+    if (this.daemonStartId !== null && exitsClean()) this.store.markCleanExit(this.daemonStartId);
     this.daemonStartId = null;
   }
 
