@@ -84,10 +84,18 @@ test('the pipeline bench waits for the owner gate to finish a landing before it 
     assert.equal(outcome(store, id), 'pending', 'queued');
     store.setStatus(id, 'done');
     assert.equal(outcome(store, id), 'pending', 'done, but the gate has not spoken');
-    store.noteDecision({ taskId: id, runId: null, action: 'approve', actor: 'owner-model', note: null, statusAfter: 'done' });
+    store.noteDecision({ taskId: id, runId: null, action: 'approve', actor: 'owner-model', note: null, statusAfter: 'done', merged: true });
     assert.equal(outcome(store, id), 'pending', 'the decision row, but not yet the gate\'s verdict');
     store.markGateDecision(id, 'approved');
     assert.equal(outcome(store, id), 'landed');
+    // The gate logs 'approved' whether or not the merge happened (merge disabled, conflict, nothing ahead, core
+    // refused): only an approval that merged has landed, and a verdict with no approve row has not either.
+    const unmerged = store.addTask({ title: 'bench ticket unmerged', prompt: 'true', runner: 'shell' }).id;
+    store.setStatus(unmerged, 'done');
+    store.markGateDecision(unmerged, 'approved');
+    assert.equal(outcome(store, unmerged), 'not-landed', 'the gate approved, but there is no approve row');
+    store.noteDecision({ taskId: unmerged, runId: null, action: 'approve', actor: 'owner-model', note: null, statusAfter: 'done', merged: false });
+    assert.equal(outcome(store, unmerged), 'not-landed', 'approved, but nothing merged');
     const failed = store.addTask({ title: 'bench ticket 2', prompt: 'true', runner: 'shell' }).id;
     store.setStatus(failed, 'failed');
     assert.equal(outcome(store, failed), 'not-landed');
