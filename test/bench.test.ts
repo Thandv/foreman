@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/queue.ts';
-import { outcome } from '../scripts/bench/outcome.ts';
+import { outcome, whyNotLanded } from '../scripts/bench/outcome.ts';
 
 // The benchmarks in scripts/bench are too slow for the suite at their real sizes. These runs are the smallest sizes
 // that still exercise every path: each script runs from the checkout, with no network, and writes nothing to the
@@ -99,6 +99,23 @@ test('the pipeline bench waits for the owner gate to finish a landing before it 
     const failed = store.addTask({ title: 'bench ticket 2', prompt: 'true', runner: 'shell' }).id;
     store.setStatus(failed, 'failed');
     assert.equal(outcome(store, failed), 'not-landed');
+  } finally {
+    store.close();
+  }
+});
+
+test('the pipeline bench keeps the end of a not-landed ticket\'s events, where the error says why', () => {
+  // A failed git command's message starts with the long pinned `-c` argument list (src/isolate.ts) and ends with git's
+  // stderr, the cause; the start alone cannot say why the ticket did not land.
+  const store = new Store(path.join(scratchDir('foreman-bench-why-'), 'foreman.db'));
+  try {
+    const id = store.addTask({ title: 'bench ticket', prompt: 'true', runner: 'shell' }).id;
+    store.record({ taskId: id, type: 'error', message: `Command failed: git ${'-c core.x=y '.repeat(40)}worktree add\nfatal: the cause` });
+    store.setStatus(id, 'failed');
+    const why = whyNotLanded(store, id);
+    assert.equal(why.status, 'failed');
+    assert.equal(why.gate, null);
+    assert.ok(why.events.some((e) => e.startsWith('error: ') && e.endsWith('fatal: the cause')), JSON.stringify(why.events));
   } finally {
     store.close();
   }
