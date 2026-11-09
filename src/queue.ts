@@ -1104,7 +1104,7 @@ export class Store extends EventEmitter {
    * Crash recovery: any run still marked running belongs to a dead process.
    * Requeue its task if it has attempts left, otherwise fail it. After an
    * unclean exit (`crashes` > 0, recordDaemonStart) one task in flight is the
-   * likely cause and keeps that path, its text naming the crashes; several
+   * likely cause and keeps that path, its text naming the crashes it was in flight for; several
    * cannot be told apart, so each gets one stop refund (requeueAfterStop) and
    * shares its bound. Returns how many tasks were in flight.
    */
@@ -1127,18 +1127,25 @@ export class Store extends EventEmitter {
     const stuck = this.db
       .prepare("SELECT id FROM tasks WHERE status IN ('running','verifying')")
       .all() as Record<string, unknown>[];
-    const across = crashes > 0 && stuck.length === 1 ? `; in flight across ${crashes} daemon crash${crashes === 1 ? '' : 'es'}` : '';
     for (const row of stuck) {
       if (crashes > 0 && stuck.length > 1) {
         this.requeueAfterStop(String(row['id']));
         continue;
       }
       this.endLostRun(String(row['id']), {
-        failed: `interrupted by daemon restart${across}; no attempts left`,
+        failed: `interrupted by daemon restart${crashes > 0 ? this.crashesInFlight(String(row['id'])) : ''}; no attempts left`,
         requeued: 'requeued after daemon restart',
       });
     }
     return stuck.length;
+  }
+
+  /** `; in flight across N daemon crashes`, N being this task's runs that a restart interrupted (recoverOrphans). */
+  private crashesInFlight(taskId: string): string {
+    const n = Number((this.db
+      .prepare("SELECT COUNT(*) AS n FROM runs WHERE task_id = ? AND summary = 'interrupted by daemon restart'")
+      .get(taskId) as Record<string, unknown>)['n']);
+    return `; in flight across ${n} daemon crash${n === 1 ? '' : 'es'}`;
   }
 
   /**
