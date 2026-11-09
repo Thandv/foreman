@@ -32,11 +32,6 @@ async function bench(script: string, args: string[]): Promise<unknown> {
   return JSON.parse(stdout) as unknown;
 }
 
-test('tsconfig typechecks scripts/bench, so npm run verify does', () => {
-  const tsconfig = JSON.parse(fs.readFileSync(path.join(root, 'tsconfig.json'), 'utf8')) as { include: string[] };
-  assert.ok(tsconfig.include.includes('scripts/bench'), `include is ${JSON.stringify(tsconfig.include)}`);
-});
-
 test('the ledger bench reports p50 and p99 of each operation at each size, and writes nothing to the caller\'s home', async () => {
   const out = await bench('ledger.ts', ['--sizes', '50,100', '--iterations', '3']);
   const rows = out as Array<{ tasks: number; op: string; p50Ms: number; p99Ms: number; samples: number }>;

@@ -8,7 +8,8 @@ npm run typecheck:tsc  # tsc 5.9, the reference: run it when the two might disag
 foreman drill     # the live readiness suite — real models, answers checked by code
 ```
 
-The typecheck step of `verify` (`tsgo --noEmit`, see `scripts/verify.sh`) uses `tsconfig.json`: `strict` and
+The typecheck step of `verify` (`tsgo --noEmit`, see `scripts/verify.sh`) uses `tsconfig.json`, which covers
+`src/`, `test/` and all of `scripts/` (the `scripts/checks/*.ts` gates too): `strict` and
 `noUncheckedIndexedAccess`, plus `noUnusedLocals` (rejects an unused local or import), `noUnusedParameters`
 (an unused parameter; prefix with `_` if the signature needs it), `noFallthroughCasesInSwitch` (a non-empty
 case that falls through), `noImplicitReturns` (a function that returns a value on only some paths) and

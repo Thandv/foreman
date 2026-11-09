@@ -24,7 +24,8 @@ npm run verify    # typecheck, then the whole suite, then scripts/checks/*.ts
 `npm test` runs the suite alone; `npm run typecheck:tsc` runs the reference compiler when the
 native one (`tsgo`) and `tsc` might disagree.
 
-The typecheck step (`tsgo --noEmit`, in `scripts/verify.sh`) reads `tsconfig.json`, which has `strict` and
+The typecheck step (`tsgo --noEmit`, in `scripts/verify.sh`) reads `tsconfig.json`, whose `include` covers
+`src/`, `test/` and all of `scripts/` (the `scripts/checks/*.ts` gates among them), and which has `strict` and
 `noUncheckedIndexedAccess` plus five more flags. Each makes verify fail on:
 
 - `noUnusedLocals`: an unused local, or an unused import.
