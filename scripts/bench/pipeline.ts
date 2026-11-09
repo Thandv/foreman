@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { percentile } from '../../src/latency.ts';
 import { Store } from '../../src/queue.ts';
 import { Scheduler } from '../../src/scheduler.ts';
-import { outcome } from './outcome.ts';
+import { mergedApproval, outcome } from './outcome.ts';
 
 interface Spread { p50: number; p90: number; max: number }
 
@@ -149,11 +149,11 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
       const events = store.eventsForTask(id);
       const parked = events.find((e) => e.type === 'status' && e.message === 'awaiting-approval');
       const approved = events.find((e) => e.message.startsWith('owner-gate: approved'));
-      const decision = store.decisionsForTask(id).find((d) => d.action === 'approve');
-      if (outcome(store, id) !== 'landed' || !decision || !approved) {
+      if (outcome(store, id) !== 'landed' || !approved) {
         unlanded.push({ id, status: task.status, gate: store.gateDecision(id), events: events.slice(-5).map((e) => `${e.type}: ${e.message.slice(0, 200)}`) });
         continue;
       }
+      const decision = mergedApproval(store, id)!;
       landed++;
       last = Math.max(last, approved.ts);
       if (parked) gate.push(decision.at - parked.ts);
