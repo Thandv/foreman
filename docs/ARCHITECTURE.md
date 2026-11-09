@@ -42,6 +42,7 @@ Boundaries:
 - **Runners share one interface.** `src/runners/` holds the API runner, the CLI runners, the shell runner and the echo (demo) runner behind the `Runner` interface in `src/runners/index.ts`. The scheduler goes by each runner's declared traits (`takesBrief`, `verifiable`) and names a runner only for a few things: `claude-code`'s session resume, provider-limit hold, agent settings and shell allowlist, and the api runner's tool brief.
 - **Verification is its own lane.** `src/verify/` (tests, council, crew review, assertion and revert checks) runs after a worker finishes, in a lane with its own limit (`maxVerifying` in `src/config.ts`).
 - **The security code is guarded.** `src/security/` holds the sandbox, the admission scan and the core guard; see [Protected paths](#protected-paths).
+- **Alignment and prose sit behind a fixed set of edges.** The rest of `src/` reaches `src/align/` and `src/prose/` only through the value imports listed, each with its reason, in `ALIGN_PROSE_EDGES` in `test/architecture.test.ts`; a new edge, or a listed one that is gone, fails the test until the list changes in the same diff.
 - **The board is static files.** `board/` is plain HTML, CSS and JS served by `src/server.ts`; it holds no state of its own.
 
 ## Database tables
