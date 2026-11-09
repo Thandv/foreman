@@ -37,7 +37,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 
 Boundaries:
 
-- **One writer for the ledger.** Code outside `src/queue.ts` reads the tables through `store.db`; the few exceptions are listed under each table below.
+- **One writer for the ledger.** Code outside `src/queue.ts` reads the tables through `store.db`; the few exceptions are listed under each table below. `scripts/checks/no-raw-db.ts` holds the per-file count of raw ledger SQL (`.prepare`/`.exec` on a `.db`) and `new DatabaseSync` openers outside `src/queue.ts` and `src/db.ts`; a count may only fall, and verify prints the raw writes (2: `pruneEvents`, `setTicketSkills`) and the writable openers (1: `openLedgerForReceipt`) still outside the queue.
 - **The jail is separate from the repo.** A run works in a worktree under `<FOREMAN_HOME>/work/`, never in the target repo. `src/isolate.ts` makes it and reports what changed; `src/merge.ts` lands an approved change.
 - **Runners share one interface.** `src/runners/` holds the API runner, the CLI runners, the shell runner and the echo (demo) runner behind the `Runner` interface in `src/runners/index.ts`. The scheduler goes by each runner's declared traits (`takesBrief`, `verifiable`) and names a runner only for a few things: `claude-code`'s session resume, provider-limit hold, agent settings and shell allowlist, and the api runner's tool brief.
 - **Verification is its own lane.** `src/verify/` (tests, council, crew review, assertion and revert checks) runs after a worker finishes, in a lane with its own limit (`maxVerifying` in `src/config.ts`).
