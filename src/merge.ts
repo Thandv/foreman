@@ -3,8 +3,20 @@ import { jailChanges, jailTree, pinnedGit } from './isolate.ts';
 import { changedPaths, coreRefusal, isProtectedPath, isSelfTaskFresh } from './security/coreGuard.ts';
 import type { Run, Task } from './types.ts';
 
+/**
+ * What a landing came to, for every caller to decide on (gate.ts, cli.ts): the
+ * `reason` beside it is only ever shown, never matched. The first group is what
+ * `mergeApproved` answers; the second is what gate.ts answers for an approval
+ * that did not reach it, or that it reads on.
+ */
+export type MergeCode =
+  | 'not-approved' | 'nothing-to-merge' | 'merge-disabled' | 'core-refused' | 'branch-gone' | 'uncommitted'
+  | 'nothing-ahead' | 'not-reviewed' | 'conflict' | 'merged'
+  | 'conflict-round-abandoned' | 'failed' | 'interrupted-leftover' | 'nothing-to-land' | 'nothing-to-change-closed';
+
 export interface MergeResult {
   merged: boolean;
+  code: MergeCode;
   reason: string;
   branch: string | null;
   /** Something a person should read in the timeline about a landing that was made (the reviewed-tree check). */
@@ -17,9 +29,6 @@ export interface Approver {
   /** `foreman approve --as-is <sha>`: the full sha of the tree to land in place of the reviewed one. A person's only. */
   acceptTree?: string | null;
 }
-
-/** How every reason the reviewed-tree check gives begins; an approval refused with one stays parked (gate.ts). */
-export const NOT_REVIEWED = /^(work changed after review|no reviewed tree|--as-is)/;
 
 const TREE_SHA = /^[0-9a-f]{40,64}$/;
 
@@ -252,9 +261,9 @@ export async function mergeApproved(
 ): Promise<MergeResult> {
   // The gate is the whole point: only an approved task may land.
   if (task.status !== 'done') {
-    return { merged: false, reason: `task is ${task.status}, not approved`, branch: run?.branch ?? null };
+    return { merged: false, code: 'not-approved', reason: `task is ${task.status}, not approved`, branch: run?.branch ?? null };
   }
-  if (!task.repo || !run?.branch) return { merged: false, reason: 'nothing to merge', branch: run?.branch ?? null };
+  if (!task.repo || !run?.branch) return { merged: false, code: 'nothing-to-merge', reason: 'nothing to merge', branch: run?.branch ?? null };
 
   // Everything runs at the checkout's top level. task.repo may name a
   // sub-directory of it: git reads path-limiting config (diff.relative)
@@ -271,7 +280,9 @@ export async function mergeApproved(
     const refusal = self && !task.allowCore
       ? await unmergedRefusal(repo, { ...run, branch })
       : null;
-    return { merged: false, reason: refusal ?? 'merge-on-approve disabled for this task', branch };
+    return refusal
+      ? { merged: false, code: 'core-refused', reason: refusal, branch }
+      : { merged: false, code: 'merge-disabled', reason: 'merge-on-approve disabled for this task', branch };
   }
   // A change to Foreman itself lands with every hook off. The jail shares the
   // repo's config, so a worker can point core.hooksPath at a script of its
@@ -285,10 +296,10 @@ export async function mergeApproved(
   const guarded = self && !task.allowCore;
 
   const exists = await git(repo, ['rev-parse', '--verify', branch]).then(() => true).catch(() => false);
-  if (!exists) return { merged: false, reason: `branch ${branch} no longer exists`, branch };
+  if (!exists) return { merged: false, code: 'branch-gone', reason: `branch ${branch} no longer exists`, branch };
 
   const dirty = (await git(repo, ['status', '--porcelain'])).trim();
-  if (dirty) return { merged: false, reason: 'repo has uncommitted changes; merge skipped', branch };
+  if (dirty) return { merged: false, code: 'uncommitted', reason: 'repo has uncommitted changes; merge skipped', branch };
 
   // The worktree left the change unstaged, so commit it on its own branch first.
   const worktree = run.worktreePath;
@@ -301,12 +312,12 @@ export async function mergeApproved(
       try {
         early = await reviewedTreeCheck(repo, task, run, await jailTree(worktree), opts);
       } catch (err) {
-        return { merged: false, reason: `work changed after review cannot be ruled out: the worktree's tree could not be read (${(err as Error).message.slice(0, 200)})`, branch };
+        return { merged: false, code: 'not-reviewed', reason: `work changed after review cannot be ruled out: the worktree's tree could not be read (${(err as Error).message.slice(0, 200)})`, branch };
       }
       // Unless it is a change to Foreman that now holds its core: the core
       // guard refuses that below, on the commit, in its own words.
       if ('refusal' in early && !(guarded && (await unmergedRefusal(repo, { ...run, branch })))) {
-        return { merged: false, reason: early.refusal, branch };
+        return { merged: false, code: 'not-reviewed', reason: early.refusal, branch };
       }
       await opts.beforeCommit?.();
       await git(worktree, ['add', '-A']);
@@ -322,7 +333,7 @@ export async function mergeApproved(
   const head = (await git(repo, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
 
   const ahead = (await git(repo, ['rev-list', '--count', `${head}..${tip}`]).catch(() => '0')).trim();
-  if (ahead === '0') return { merged: false, reason: 'branch has no commits ahead of HEAD', branch };
+  if (ahead === '0') return { merged: false, code: 'nothing-ahead', reason: 'branch has no commits ahead of HEAD', branch };
 
   // The hard block on a change to Foreman's own core. Here, on the commit that
   // is about to land, because nothing earlier sees all of it: the commit above
@@ -336,7 +347,7 @@ export async function mergeApproved(
     } catch (err) {
       refusal = `core change refused: the paths ${branch} would land could not be listed (${(err as Error).message.slice(0, 200)})`;
     }
-    if (refusal) return { merged: false, reason: refusal + (await putCoreBack(repo, head)), branch };
+    if (refusal) return { merged: false, code: 'core-refused', reason: refusal + (await putCoreBack(repo, head)), branch };
   }
 
   // The reviewed-tree check, on the commit that is about to land: its tree is
@@ -347,9 +358,9 @@ export async function mergeApproved(
   try {
     reviewed = await reviewedTreeCheck(repo, task, run, (await git(repo, ['rev-parse', '--verify', `${tip}^{tree}`])).trim(), opts);
   } catch (err) {
-    return { merged: false, reason: `work changed after review cannot be ruled out: the tree of ${branch} could not be read (${(err as Error).message.slice(0, 200)})`, branch };
+    return { merged: false, code: 'not-reviewed', reason: `work changed after review cannot be ruled out: the tree of ${branch} could not be read (${(err as Error).message.slice(0, 200)})`, branch };
   }
-  if ('refusal' in reviewed) return { merged: false, reason: reviewed.refusal, branch };
+  if ('refusal' in reviewed) return { merged: false, code: 'not-reviewed', reason: reviewed.refusal, branch };
 
   await opts.beforeMerge?.();
   try {
@@ -357,16 +368,16 @@ export async function mergeApproved(
   } catch (err) {
     await git(repo, ['merge', '--abort']).catch(() => '');
     const core = guarded ? await putCoreBack(repo, head) : '';
-    return { merged: false, reason: `merge conflict, aborted — resolve ${branch} by hand: ${(err as Error).message.slice(0, 300)}${core}`, branch };
+    return { merged: false, code: 'conflict', reason: `merge conflict, aborted — resolve ${branch} by hand: ${(err as Error).message.slice(0, 300)}${core}`, branch };
   }
   // Asked a second time of the merge as made: the check above is git's
   // prediction, and config the jail could write (a merge driver, a filter)
   // takes part in the real one.
   if (guarded) {
     const undone = await refuseLanded(repo, head, tip);
-    if (undone) return { merged: false, reason: undone, branch };
+    if (undone) return { merged: false, code: 'core-refused', reason: undone, branch };
   }
-  return { merged: true, reason: `merged ${ahead} commit(s) from ${branch}`, branch, ...(reviewed.note ? { note: reviewed.note } : {}) };
+  return { merged: true, code: 'merged', reason: `merged ${ahead} commit(s) from ${branch}`, branch, ...(reviewed.note ? { note: reviewed.note } : {}) };
 }
 
 export interface PruneResult {

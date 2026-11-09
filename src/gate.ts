@@ -9,7 +9,7 @@ import { config } from './config.ts';
 import { gitTimeoutOpts } from './gitTimeout.ts';
 import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
-import { landingRefusal, mergeApproved, NOT_REVIEWED, type MergeResult } from './merge.ts';
+import { landingRefusal, mergeApproved, type MergeCode, type MergeResult } from './merge.ts';
 import { NOTHING_TO_CHANGE_CLOSED, personPark } from './verify/gateOutcome.ts';
 import { extractJson } from './models.ts';
 import { cloudFallback, localOnly } from './localOnly.ts';
@@ -298,6 +298,9 @@ export async function applyApproval(
   return tracker.track(approve(store, taskId, opts, tracker));
 }
 
+/** Landings an approval sends back to the gate for a person to put right before approving again. */
+const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused']);
+
 async function approve(
   store: Store,
   taskId: string,
@@ -317,7 +320,7 @@ async function approve(
     const reason = store.abandonConflictRound(taskId, run!.id, unlandable);
     return recorded({
       task: store.getTask(taskId)!,
-      merge: { merged: false, reason, branch: run!.branch ?? null },
+      merge: { merged: false, code: 'conflict-round-abandoned', reason, branch: run!.branch ?? null },
       registration: { registered: false, reason: 'nothing landed', tool: null },
     });
   }
@@ -343,7 +346,7 @@ async function approve(
     store.record({ taskId, runId: run!.id, type: 'status', message: `merge: ${unreviewed}` });
     return recorded({
       task: store.getTask(taskId)!,
-      merge: { merged: false, reason: unreviewed, branch: run!.branch ?? null },
+      merge: { merged: false, code: 'not-reviewed', reason: unreviewed, branch: run!.branch ?? null },
       registration: { registered: false, reason: 'nothing landed', tool: null },
     });
   }
@@ -370,23 +373,25 @@ async function approve(
     merge = landable
       ? await mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who }).catch((err: Error): MergeResult => ({
         merged: false,
+        code: 'failed',
         reason: `merge failed: ${err.message}`,
         branch: run?.branch ?? null,
       }))
     : left
       ? {
         merged: false,
+        code: 'interrupted-leftover',
         reason: `not landed: an interrupted run's work is still in ${run!.worktreePath} (branch ${run!.branch}) — ` +
           'commit it there and merge it yourself if you want it',
         branch: run!.branch,
       }
-      : { merged: false, reason: 'nothing to land: no run was approved', branch: null };
+      : { merged: false, code: 'nothing-to-land', reason: 'nothing to land: no run was approved', branch: null };
     // A run that changed nothing (it recorded no diff) and whose branch the landing found empty: the approval
     // closes the ticket, and says so instead of reading like a merge that went missing. Nothing above is skipped —
     // the reviewed-tree check and mergeApproved ran as for any approval, and found nothing to merge.
-    if (landable && !merge.merged && merge.reason === 'branch has no commits ahead of HEAD'
+    if (landable && merge.code === 'nothing-ahead'
       && !store.artifactsForTask(taskId).some((a) => a.type === 'diff' && a.runId === run!.id)) {
-      merge = { ...merge, reason: NOTHING_TO_CHANGE_CLOSED };
+      merge = { ...merge, code: 'nothing-to-change-closed', reason: NOTHING_TO_CHANGE_CLOSED };
     }
     // An approval whose work did not land is not done: its dependents would be
     // released onto a main without it (a desktop-app run: a conflict aborted the
@@ -395,22 +400,22 @@ async function approve(
     // core change is the same, except that approving again is refused again:
     // it is never marked done with the change unlanded, and its note does not
     // promise that another approval will help.
-    // A conflict (and only a conflict: a refused core change starts with other
-    // words) with repair budget left becomes a repair round Foreman prepares.
-    // Nothing lands here; the round parks at the gate like any other.
-    const requeued = landable && !merge.merged && merge.reason.startsWith('merge conflict') && run !== null
+    // A conflict (and only a conflict) with repair budget left becomes a
+    // repair round Foreman prepares. Nothing lands here; the round parks at
+    // the gate like any other.
+    const requeued = landable && merge.code === 'conflict' && run !== null
       ? requeueConflict(store, task, run)
       : null;
     if (requeued) {
       merge = { ...merge, reason: `${merge.reason}; requeued as repair round ${requeued} to resolve the conflict` };
       task = store.getTask(taskId)!;
-    } else if (landable && !merge.merged && NOT_REVIEWED.test(merge.reason)) {
+    } else if (landable && merge.code === 'not-reviewed') {
       // The worktree changed between the check above and the commit. The
       // reason already says what a person can do.
       store.setStatus(taskId, 'awaiting-approval', store.withCoreGuard(taskId, `approved, but not landed: ${merge.reason}`));
       task = store.getTask(taskId)!;
-    } else if (landable && !merge.merged && /^(merge conflict|merge failed|repo has uncommitted|branch .* no longer exists|core change refused)/.test(merge.reason)) {
-      const next = merge.reason.startsWith('core change refused')
+    } else if (landable && RETRY_AT_GATE.has(merge.code)) {
+      const next = merge.code === 'core-refused'
         ? 'reject it, or take the core change out of its branch by hand before approving'
         : 'resolve it, then approve again';
       store.setStatus(taskId, 'awaiting-approval', store.withCoreGuard(taskId, `approved, but not landed: ${merge.reason} — ${next}`));
@@ -1250,9 +1255,9 @@ async function applyGateReply(
   if (reply.decision === 'approved') {
     if (approvals.shuttingDown) return log('hold', 'the daemon is shutting down; the ticket stays parked for the next start', false);
     const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot });
-    // Not the tree that was reviewed, or no tree on record: nothing landed and
-    // the ticket is a person's now.
-    if (!result.merge.merged && NOT_REVIEWED.test(result.merge.reason)) return log('hold', result.merge.reason);
+    // Not the tree that was reviewed, no tree on record, or the real .git
+    // changed (the git tripwire): nothing landed and the ticket is a person's now.
+    if (result.merge.code === 'not-reviewed') return log('hold', result.merge.reason);
     return log('approved', `${rationale}${result.merge.branch ? ` [merge: ${result.merge.reason}]` : ''}`);
   }
   applyRejection(store, task.id, note, 'owner-gate');

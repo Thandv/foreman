@@ -68,7 +68,8 @@ anything and writes nothing in the real `.git`.
   `<home>/artifacts/<runId>/git-tripwire.json` (mode 0600, written to a temp file, then renamed): outside the
   jail, and not in the database, so it survives a restart and event pruning. It is compared at collection (a
   change parks the run for a person, with no reviewer called and the tests not run, since a tampered config or
-  hook could run in them), when you approve (refused before anything is merged; the ticket stays at the gate),
+  hook could run in them), when you approve (refused before anything is merged; the ticket stays at the gate,
+  and an owner-gate approval it refuses is logged as `owner-gate: hold`, like work that changed after review),
   and on `foreman landed` (refused).
 - **The reason** names each changed file (`.git/hooks/post-commit was added`) or ref (`ref refs/replace/<sha>
   was created`). A snapshot that cannot be taken (an unreadable `hooks/`) holds with that error; it never

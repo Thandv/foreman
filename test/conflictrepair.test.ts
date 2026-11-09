@@ -641,6 +641,7 @@ test('a marker check that cannot run at the gate drops the parked round back to 
     const r = await applyApproval(store, t.id, {});
     git(dir, 'config', '--unset', 'diff.algorithm');
     assert.equal(r.merge.merged, false);
+    assert.equal(r.merge.code, 'conflict-round-abandoned');
     assert.match(r.merge.reason, /could not check the round's tree/);
     await assertBackAtGate(store, dir, t.id, approved, tip);
   } finally {

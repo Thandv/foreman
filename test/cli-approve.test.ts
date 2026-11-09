@@ -87,7 +87,7 @@ async function cliAgainstRoutes(argv: string[], routes: Record<string, unknown>)
 
 const lastLine = (stdout: string): string => stdout.trimEnd().split('\n').pop() ?? '';
 // What merge.ts answers for an approved ticket whose merge-on-approve is off, as the approve route returns it.
-const UNMERGED = { merged: false, reason: 'merge-on-approve disabled for this task', branch: 'foreman/t_x-r_new' };
+const UNMERGED = { merged: false, code: 'merge-disabled', reason: 'merge-on-approve disabled for this task', branch: 'foreman/t_x-r_new' };
 const RUNS = {
   task: { id: 't_x' },
   runs: [
@@ -118,9 +118,11 @@ test('CLI approve: a code ticket with merging switched off is NOT MERGED too, wi
 
 test('CLI approve says NOT MERGED only for a ticket that does not merge: not for a merge, a merge that failed for another reason, or an approval with no branch', async () => {
   for (const merge of [
-    { merged: true, reason: 'merged 1 commit(s)', branch: 'b' },
-    { merged: false, reason: 'merge failed: conflict in README.md', branch: 'b' },
-    { merged: false, reason: 'nothing to merge', branch: null },
+    { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'b' },
+    { merged: false, code: 'failed', reason: 'merge failed: conflict in README.md', branch: 'b' },
+    { merged: false, code: 'nothing-to-merge', reason: 'nothing to merge', branch: null },
+    // The words alone are not the decision: only the code is.
+    { merged: false, code: 'core-refused', reason: 'merge-on-approve disabled for this task', branch: 'b' },
   ]) {
     const r = await cliAgainstRoutes(['approve', 't_x'], {
       'POST /api/tasks/t_x/approve': { id: 't_x', status: 'done', kind: 'writing', merge },

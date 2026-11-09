@@ -1151,8 +1151,8 @@ async function main(): Promise<number> {
       if (cmd === 'cancel' && typeof t.warning === 'string') process.stdout.write(`${t.warning}\n`);
       // An approval that lands nothing read exactly like one that did, bar one quiet line: on an earlier trial an
       // approved ADR (kind writing) was taken for landed. Said last and loudly, from what the daemon already answers
-      // (merge.ts's reason for a ticket with merge-on-approve off, and the run that holds the branch).
-      if (cmd === 'approve' && t.merge?.merged === false && t.merge.branch && /merge-on-approve disabled/.test(String(t.merge.reason))) {
+      // (merge.ts's code for a ticket with merge-on-approve off, and the run that holds the branch).
+      if (cmd === 'approve' && t.merge?.code === 'merge-disabled' && t.merge.branch) {
         const runs: Array<{ branch?: string | null; worktreePath?: string | null }> =
           (await apiCall(`/api/tasks/${taskId}`).catch(() => null))?.runs ?? [];
         const where = runs.find((r) => r.branch === t.merge.branch && r.worktreePath)?.worktreePath ?? `branch ${t.merge.branch}`;
