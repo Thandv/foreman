@@ -14,7 +14,7 @@ import { RunClock } from '../src/runClock.ts';
 import { BudgetExceeded } from '../src/budget.ts';
 import { echoRunner } from '../src/runners/echo.ts';
 import type { RunnerContext, RunnerResult } from '../src/runners/index.ts';
-import { acquireVerifySlot, verifySlotStats } from '../src/verify/slots.ts';
+import { acquireVerifySlot, runToken, verifySlotStats } from '../src/verify/slots.ts';
 import { FakeTime } from './fakeclock.ts';
 
 const MIN = 60_000;
@@ -302,7 +302,7 @@ test('the verify-slot handler stops the asking run\'s clock while its wrapper qu
   /** What the wrapper does: POST with the run's id, and read lines until told. */
   const ask = (runId: string): { req: http.ClientRequest; text: () => string } => {
     let body = '';
-    const req = http.request({ host: '127.0.0.1', port, path: '/api/verify-slot', method: 'POST', headers: { 'x-foreman-run': runId } }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/verify-slot', method: 'POST', headers: { 'x-foreman-run': runId, 'x-foreman-run-token': runToken(runId) } }, (res) => {
       res.setEncoding('utf8').on('data', (c: string) => { body += c; });
       res.on('error', () => {});
     });

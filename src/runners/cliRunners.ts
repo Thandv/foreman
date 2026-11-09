@@ -10,7 +10,8 @@ import { modelForTask, tierForTask, tierMaxTurns } from '../roles.ts';
 import { cloudDown, cloudFallback, localOnly, localOnlyLabel } from '../localOnly.ts';
 import { config } from '../config.ts';
 import { testTimeoutMs } from '../verify/tests.ts';
-import { RUN_ID_ENV, WORKER_TEST_CMD_ENV } from '../verify/testSlot.ts';
+import { runToken } from '../verify/slots.ts';
+import { RUN_ID_ENV, RUN_TOKEN_ENV, WORKER_TEST_CMD_ENV } from '../verify/testSlot.ts';
 import { claudeIsolationArgs, claudeWorkerEnv, outOfJailWrite } from './claudeIsolation.ts';
 
 const exec = promisify(execFile);
@@ -378,12 +379,16 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
  * asks for the long timeout on its suite run (the shell brief says so); the
  * ceiling never exceeds the task's own timeout. And which run it is, so the
  * wrapper can tell the daemon whose suite is asking for a slot (that wait is
- * not charged to the run, and a run holds one suite run at a time).
+ * not charged to the run, and a run holds one suite run at a time), with the
+ * run's token as proof: a run id alone claims nothing.
  */
 export function workerEnv(task: Pick<Task, 'testCmd'>, runId?: string): NodeJS.ProcessEnv {
   // Always the daemon's resolved home, so a spec-allowlisted base environment cannot carry a relative one either.
   const env: NodeJS.ProcessEnv = { FOREMAN_HOME: config.home };
-  if (runId) env[RUN_ID_ENV] = runId;
+  if (runId) {
+    env[RUN_ID_ENV] = runId;
+    env[RUN_TOKEN_ENV] = runToken(runId);
+  }
   if (task.testCmd?.trim()) env[WORKER_TEST_CMD_ENV] = task.testCmd.trim();
   const toolMs = Math.min(testTimeoutMs() + 15 * 60_000, config.taskTimeoutMs);
   if (!process.env['BASH_MAX_TIMEOUT_MS']) env['BASH_MAX_TIMEOUT_MS'] = String(toolMs);

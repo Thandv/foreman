@@ -7,6 +7,8 @@
  * (testSlot.ts); a targeted single-file run it makes directly does not.
  */
 
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+
 export const DEFAULT_MAX_VERIFIES = 2;
 
 /** Read lazily, never captured at module load, so tests can flip it per case. */
@@ -106,6 +108,7 @@ export function verifySlotStats(): { active: number; waiting: number } {
 
 /** The request headers the slot wrapper (testSlot.ts) names itself with on POST /api/verify-slot. */
 export const RUN_HEADER = 'x-foreman-run';
+export const RUN_TOKEN_HEADER = 'x-foreman-run-token';
 export const WRAPPER_PID_HEADER = 'x-foreman-wrapper-pid';
 export const OUTPUT_HEADER = 'x-foreman-output';
 
@@ -125,8 +128,25 @@ interface RunLeaseHolder {
  */
 const runLeases = new Map<string, RunLeaseHolder>();
 
+/**
+ * This process's key for run tokens: random at start, held only in memory, never written anywhere. No run outlives
+ * its daemon (recoverOrphans ends every recorded run's group at start), so a token from an earlier daemon names nothing.
+ */
+const RUN_TOKEN_KEY = randomBytes(32);
+
+/** The proof a worker session carries that it is this run: HMAC-SHA256(runId) under this daemon's key, hex. */
+export function runToken(runId: string): string {
+  return createHmac('sha256', RUN_TOKEN_KEY).update(runId).digest('hex');
+}
+
+function tokenMatches(runId: string, token: string): boolean {
+  const want = Buffer.from(runToken(runId));
+  const got = Buffer.from(token);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
 export interface RunLease {
-  /** The run the request named, or null when it named none (an older worker env): nothing is enforced then. */
+  /** The run the request named with its valid token, or null otherwise (none named, or no proof): nothing is enforced then. */
   runId: string | null;
   /** Set when this run already has a slot request open: the line to answer with, and nothing was claimed. */
   busy: string | null;
@@ -140,11 +160,15 @@ const one = (v: string | string[] | undefined): string => (Array.isArray(v) ? v[
  * A worker's suite run asks for a slot: one request per run at a time. A second one for the same run while the
  * first is open is refused here, before it takes a place in the queue — a worker that started two suite runs a
  * second apart held both of the two slots and then waited on itself. A different run, a request that names no
- * run, and the daemon's own test stage (which never comes through here) are not affected.
+ * run, and the daemon's own test stage (which never comes through here) are not affected. A request that names a run
+ * without that run's token (runToken) is exactly one that names none: still slotted, never refused, no claim — so no
+ * other local process can make a run's lease busy or have its slot wait recorded against it.
  */
 export function claimRunLease(headers: Record<string, string | string[] | undefined>, now: () => number = Date.now): RunLease {
   const runId = one(headers[RUN_HEADER]);
-  if (!/^[\w.-]{1,80}$/.test(runId)) return { runId: null, busy: null, release: () => {} };
+  if (!/^[\w.-]{1,80}$/.test(runId) || !tokenMatches(runId, one(headers[RUN_TOKEN_HEADER]))) {
+    return { runId: null, busy: null, release: () => {} };
+  }
   const holder = runLeases.get(runId);
   if (holder) {
     const secs = Math.max(0, Math.round((now() - holder.since) / 1000));

@@ -8,8 +8,8 @@ value and keep the default. A reader written as `value ?? default` uses an empty
 stays empty (for example `FOREMAN_TOOLS_DIR`, `FOREMAN_OLLAMA_URL`), an empty number reads as 0, and a value that is
 not a number reads as NaN (for example `FOREMAN_HIGH_PRIORITY`, `FOREMAN_TOOL_QUARANTINE_AFTER`,
 `FOREMAN_TOOL_TIMEOUT_MS`, `FOREMAN_PREWARM_TIMEOUT_MS`, `FOREMAN_FAST_VERIFY_MAX_LINES`, `FOREMAN_IMPROVE_PRIORITY`,
-`FOREMAN_IMPROVE_BUDGET_USD`, `FOREMAN_MODEL_TIMEOUT_MS`, `FOREMAN_API_MAX_TURNS`). `FOREMAN_RUN_ID` and
-`FOREMAN_WORKER_TEST_CMD` are set by Foreman for a worker's session, never by you, and a few more are read only by
+`FOREMAN_IMPROVE_BUDGET_USD`, `FOREMAN_MODEL_TIMEOUT_MS`, `FOREMAN_API_MAX_TURNS`). `FOREMAN_RUN_ID`,
+`FOREMAN_RUN_TOKEN` and `FOREMAN_WORKER_TEST_CMD` are set by Foreman for a worker's session, never by you, and a few more are read only by
 tests; none of those is in the table. Two families are read under names built at run time, so they are not rows:
 `FOREMAN_MODEL_<ALIAS>` pins the model behind a gateway alias (`src/models.ts`), and `FOREMAN_PERSONA_URL_<ID>`
 overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/align/personas.ts`).

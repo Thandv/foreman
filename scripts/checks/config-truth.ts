@@ -11,6 +11,7 @@ const ALLOW: Record<string, string> = {
   FOREMAN_FREEZE_SWEEP_FAULT: 'fault injection for tests (src/runners/freezeSweep.ts): hang|throw',
   FOREMAN_WORKER_TEST_CMD: 'set by Foreman for a worker run (src/verify/testSlot.ts), never by an operator',
   FOREMAN_RUN_ID: 'set by Foreman for a worker run (src/cli.ts, src/verify/testSlot.ts), never by an operator',
+  FOREMAN_RUN_TOKEN: 'set by Foreman for a worker run beside FOREMAN_RUN_ID (src/verify/testSlot.ts), never by an operator',
 };
 
 const NAME = /^FOREMAN_[A-Z0-9_]+$/;

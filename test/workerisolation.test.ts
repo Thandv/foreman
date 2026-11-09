@@ -300,7 +300,7 @@ test('the worker\'s environment is an allowlist: what the daemon holds beyond it
     // Not just those: every variable the CLI saw is one the allowlist names
     // (or one the runner sets itself, or one sh makes up for its own process).
     const unlisted = Object.keys(call.env).filter(
-      (k) => !workerEnvAllowed(k) && !['FOREMAN_WORKER_TEST_CMD', 'FOREMAN_RUN_ID', 'PWD', 'OLDPWD', 'SHLVL', '_'].includes(k),
+      (k) => !workerEnvAllowed(k) && !['FOREMAN_WORKER_TEST_CMD', 'FOREMAN_RUN_ID', 'FOREMAN_RUN_TOKEN', 'PWD', 'OLDPWD', 'SHLVL', '_'].includes(k),
     );
     assert.deepEqual(unlisted, []);
     assert.equal(call.env['PATH'], process.env['PATH'], 'the toolchain is still reachable');

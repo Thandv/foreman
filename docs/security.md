@@ -3,8 +3,14 @@
 - The API can queue shell commands. It binds loopback only; anything else needs
   `FOREMAN_ALLOW_REMOTE=1`, and there is still **no authentication** — this is a local tool.
   The approve and `landed` endpoints take no proof of who is calling and record the caller as `human`.
-  The `x-foreman-run` header on `POST /api/verify-slot` is unauthenticated:
-  any client that can reach the port can send any run id.
+  The one exception is the run a `POST /api/verify-slot` request names: `x-foreman-run` counts only
+  with `x-foreman-run-token`, an HMAC-SHA256 of the run id under a key the daemon draws at start
+  (32 random bytes, held in memory, never written to disk; no run outlives its daemon). Workers get
+  it as `FOREMAN_RUN_TOKEN` beside `FOREMAN_RUN_ID`; the slot wrapper sends it and removes both from
+  the suite's environment. A request with a missing or wrong token is treated exactly as one that
+  names no run: it is still slotted, never refused, and claims nothing, so another local process
+  cannot make a run's lease busy or have a slot wait counted against its deadline. It is never
+  answered 403, because the wrapper reads any non-200 answer as "no daemon" and runs unslotted.
 - Runners work in a worktree or scratch dir, never in your checkout, and only an approval makes
   Foreman land anything in your repo. That keeps a worker's mistake out of your repo, not a hostile
   worker: the `claude-code` and `codex-cli` workers are not sandboxed (see "What it does NOT

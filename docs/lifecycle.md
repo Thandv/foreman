@@ -174,12 +174,13 @@ A `claude-code` worker runs the full suite through the slot wrapper,
 `node <foreman>/src/verify/testSlot.ts [-- <cmd>]`, which takes one of the `FOREMAN_MAX_VERIFIES`
 slots from the daemon and runs the command while it holds it.
 
-- **One suite run per ticket at a time.** The worker session carries `FOREMAN_RUN_ID`; the wrapper
-  sends it, and the daemon refuses a second request for the same run while the first is open. The
-  second invocation runs nothing, takes no slot and exits **4** with
+- **One suite run per ticket at a time.** The worker session carries `FOREMAN_RUN_ID` and its proof
+  `FOREMAN_RUN_TOKEN` (see [security](security.md)); the wrapper sends both, and the daemon refuses
+  a second request for the same run while the first is open. The second invocation runs nothing, takes no slot and exits **4** with
   `testSlot: a suite run for this ticket is already in progress (started <N> s ago, pid <p>); wait for it — its full output will be at <path>`.
   The claim lasts as long as the first wrapper's connection, so a wrapper that died holds nothing.
-  Other tickets, and a wrapper started with no run id (by hand), are not held to each other. With
+  Other tickets, and a wrapper started with no run id or without that run's token (by hand), are
+  not held to each other. With
   no daemon to ask, or one started before this version, the wrapper runs as it did before and
   nothing enforces the rule. Exit codes: 0 passed, 1 failed, 2 nothing was run (refused command,
   no command, `--saved` with nothing saved), 3 no slot within `FOREMAN_SLOT_WAIT_MS`, 4 already running.

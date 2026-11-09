@@ -11,7 +11,7 @@
  * dies, the socket closes and the daemon releases the slot.
  *
  * One suite run per ticket at a time: the wrapper tells the daemon which run it
- * is (FOREMAN_RUN_ID), and the daemon refuses a second request while the first
+ * is (FOREMAN_RUN_ID, with its proof FOREMAN_RUN_TOKEN), and the daemon refuses a second request while the first
  * is open — this one then exits 4 without running anything. And nobody runs a
  * suite again to read more of it: the whole output goes to a file
  * (suiteOutput.ts); what is printed is the end, the failing tests last, and a
@@ -30,7 +30,7 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { config, daemonUrl } from '../config.ts';
 import { installProcessRecorder } from '../runners/freezeInstall.ts';
-import { OUTPUT_HEADER, RUN_HEADER, WRAPPER_PID_HEADER } from './slots.ts';
+import { OUTPUT_HEADER, RUN_HEADER, RUN_TOKEN_HEADER, WRAPPER_PID_HEADER } from './slots.ts';
 import { outputDir, resultFileFor, savedOutputs, SuiteLog } from './suiteOutput.ts';
 import { detectTestCmd, runTests } from './tests.ts';
 
@@ -38,6 +38,8 @@ import { detectTestCmd, runTests } from './tests.ts';
 export const WORKER_TEST_CMD_ENV = 'FOREMAN_WORKER_TEST_CMD';
 /** Which run the worker session belongs to, handed to it the same way. Unset (an older worker env, a person at a shell): as before. */
 export const RUN_ID_ENV = 'FOREMAN_RUN_ID';
+/** The run's proof of who it is (slots.ts runToken), handed beside the run id. Without it the daemon treats the run id as absent. */
+export const RUN_TOKEN_ENV = 'FOREMAN_RUN_TOKEN';
 
 /** Exit code when this run already has a suite run in progress: nothing was run, and no slot was taken. */
 export const EXIT_ALREADY_RUNNING = 4;
@@ -50,6 +52,8 @@ const QUEUED_NOTICE_MS = 2_000;
 /** Who is asking for a slot, when the worker env says: the daemon then holds this run to one suite run at a time. */
 export interface SlotCaller {
   runId: string;
+  /** The run's token, sent beside its id: without the right one the daemon treats the request as naming no run. */
+  token: string | null;
   /** Where this run's output will be saved, so a refused second invocation can be told. */
   output?: string | null;
 }
@@ -121,6 +125,7 @@ export function holdSlot(
     const headers: Record<string, string> = {};
     if (caller?.runId) {
       headers[RUN_HEADER] = caller.runId;
+      if (caller.token) headers[RUN_TOKEN_HEADER] = caller.token;
       headers[WRAPPER_PID_HEADER] = String(process.pid);
       // A header takes no control characters or non-ASCII: such a path is simply not announced.
       if (caller.output && /^[\x20-\x7e]+$/.test(caller.output)) headers[OUTPUT_HEADER] = caller.output;
@@ -207,8 +212,10 @@ async function main(argv: string[]): Promise<number> {
   // A reader that closed the pipe gets no more output; the suite and its saved file are not its to end.
   process.stdout.on('error', () => { stdoutGone = true; });
   const runId = process.env[RUN_ID_ENV]?.trim() || null;
+  const token = process.env[RUN_TOKEN_ENV]?.trim() || null;
   // This wrapper's to send, not the suite's to inherit: a suite that starts wrappers of its own is not this run asking again.
   delete process.env[RUN_ID_ENV];
+  delete process.env[RUN_TOKEN_ENV];
   if (argv[0] === '--saved') return printSaved(runId);
   const dash = argv.indexOf('--');
   const ticketCmd = process.env[WORKER_TEST_CMD_ENV]?.trim() || null;
@@ -239,7 +246,7 @@ async function main(argv: string[]): Promise<number> {
       process.stderr.write(`testSlot: waiting for a test slot${ahead === null ? '' : ` (${ahead} ahead)`}\n`);
     },
     maxWait,
-    runId ? { runId, output: outputPath } : null,
+    runId ? { runId, token, output: outputPath } : null,
   );
   if (release === 'timeout') {
     // Never run unslotted here: the slot exists because the machine is loaded.
