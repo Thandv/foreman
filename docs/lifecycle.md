@@ -37,7 +37,10 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    decide on the code; the reason is the words you are shown and is never matched.
    Landings in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
    same repo waits until the first one's merge and post-merge check have settled, whether they
-   passed, failed or threw. Approvals in different repos land side by side. The queue is keyed by
+   passed, failed or threw. While it waits its ticket stays at `awaiting-approval` and nothing is
+   decided: its checks, the decision and the merge all run when its turn comes, so approving the
+   same ticket twice lands it once, and an approval whose turn comes after a daemon shutdown began
+   is refused (approve again after restart). Approvals in different repos land side by side. The queue is keyed by
    the ticket's repo path, so two tickets naming different directories of one checkout are not
    queued together.
 

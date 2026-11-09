@@ -42,7 +42,7 @@ export async function withRepoMergeSection<T>(repo: string, fn: () => Promise<T>
   }
 }
 
-/** How many sections are running or waiting in `repo`. */
+/** How many sections are running or waiting in `repo`. For tests: they wait on it to see an approval queued. */
 export function mergeSectionsPending(repo: string): number {
   return chains.get(path.resolve(repo))?.pending ?? 0;
 }

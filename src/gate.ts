@@ -302,12 +302,27 @@ export async function applyApproval(
 /** Landings an approval sends back to the gate for a person to put right before approving again. */
 const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused']);
 
-async function approve(
-  store: Store,
-  taskId: string,
-  opts: { note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; selfRoot?: string; acceptTree?: string | null } & ApprovalStatement,
-  tracker: ApprovalTracker,
-): Promise<ApprovalResult> {
+type ApproveOpts = { note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; selfRoot?: string; acceptTree?: string | null } & ApprovalStatement;
+
+/**
+ * An approval of work parked at the gate in a repo runs whole inside that
+ * repo's merge section (src/landing/queue.ts): every check, the decision and
+ * the landing. Queued behind another landing, the ticket stays parked and
+ * nothing is decided, so a crash while it waits leaves no ticket done whose
+ * work never merged; when its turn comes everything is read afresh, so a
+ * second approval of the same ticket finds it decided and is refused, and one
+ * whose turn comes after a shutdown began is refused the way a new approval is.
+ */
+async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker): Promise<ApprovalResult> {
+  const parked = store.getTask(taskId);
+  if (!parked?.repo || parked.status !== 'awaiting-approval') return approveNow(store, taskId, opts, tracker);
+  return withRepoMergeSection(parked.repo, () => {
+    tracker.admit(taskId);
+    return approveNow(store, taskId, opts, tracker);
+  });
+}
+
+async function approveNow(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker): Promise<ApprovalResult> {
   const source = opts.source ?? 'human';
   const before = store.getTask(taskId);
   const run = before ? store.latestRun(taskId) : null;
@@ -372,9 +387,7 @@ async function approve(
     task = store.decide(taskId, true, undefined, source);
     recordDecision(store, task, true, note, source);
     if (landable) {
-      const decided = task;
-      const go = (): Promise<Landed> => land(store, decided, run!, { selfRoot: opts.selfRoot, mainCheck: opts.mainCheck, ...who }, tracker);
-      ({ task, merge } = await (decided.repo ? withRepoMergeSection(decided.repo, go) : go()));
+      ({ task, merge } = await land(store, task, run!, { selfRoot: opts.selfRoot, mainCheck: opts.mainCheck, ...who }, tracker));
     } else {
       merge = left
         ? {
@@ -420,9 +433,9 @@ interface Landed {
 
 /**
  * Land an approved run: merge it, send a landing that did not merge back to
- * the gate, and test the merged main. Called inside the repo's merge section
- * (src/landing/queue.ts), so no other approval merges into this checkout
- * until this one, its main check included, has settled.
+ * the gate, and test the merged main. Runs inside the repo's merge section
+ * (see approve), so no other approval merges into this checkout until this
+ * one, its main check included, has settled.
  */
 async function land(
   store: Store,
@@ -1282,8 +1295,12 @@ async function applyGateReply(
 
   const note = `${OWNER_GATE_NOTE} ${rationale}`.slice(0, 1000);
   if (reply.decision === 'approved') {
-    if (approvals.shuttingDown) return log('hold', 'the daemon is shutting down; the ticket stays parked for the next start', false);
-    const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot });
+    const stopping = 'the daemon is shutting down; the ticket stays parked for the next start';
+    if (approvals.shuttingDown) return log('hold', stopping, false);
+    // A shutdown can also begin while the approval waits for its repo's merge section: refused, nothing decided.
+    const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot })
+      .catch((err: unknown) => { if (err instanceof ShuttingDownError) return null; throw err; });
+    if (!result) return log('hold', stopping, false);
     // Not the tree that was reviewed, no tree on record, or the real .git
     // changed (the git tripwire): nothing landed and the ticket is a person's now.
     if (result.merge.code === 'not-reviewed') return log('hold', result.merge.reason);
