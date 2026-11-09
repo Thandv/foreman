@@ -87,7 +87,8 @@ test('an owner-gate approval queued behind a landing is a hold if the ticket is 
     assert.equal(await decided, 'hold');
     assert.equal(fs.existsSync(path.join(repo, 'b.txt')), false, 'nothing of B landed');
     const owner = store.eventsForTask(b.id).map((e) => e.message).filter((m) => m.startsWith('owner-gate:'));
-    assert.deepEqual(owner, ['owner-gate: hold — the review or the gate changed while the owner was deciding']);
+    assert.equal(owner.length, 1);
+    assert.match(owner[0]!, /^owner-gate: hold — approval of \S+ not applied, nothing decided: the review or the gate changed/);
     assert.equal(store.gateDecision(b.id), null, 'no durable decision');
     assert.equal(store.getTask(b.id)!.status, 'awaiting-approval');
     assert.equal(store.decisionsForTask(b.id).length, 0, 'no approval is on record for it');

@@ -40,7 +40,11 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    passed, failed or threw. While it waits its ticket stays at `awaiting-approval` and nothing is
    decided: its checks, the decision and the merge all run when its turn comes, so approving the
    same ticket twice lands it once, and an approval whose turn comes after a daemon shutdown began
-   is refused (approve again after restart). Approvals in different repos land side by side. The queue is keyed by
+   is refused (approve again after restart). A queued approval is for the run that was parked when
+   it was given: if the ticket has been rejected, retried and parked on another run by its turn,
+   the approval is refused with nothing decided. An owner-gate approval is also refused, as a hold
+   that leaves no durable marker, if by its turn the review changed, the ticket was handed to a
+   person, or it became a hard-human case. Approvals in different repos land side by side. The queue is keyed by
    the ticket's repo path, so two tickets naming different directories of one checkout are not
    queued together.
 

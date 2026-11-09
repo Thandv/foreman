@@ -130,6 +130,13 @@ const execGit = promisify(execFile);
 export class ShuttingDownError extends Error {}
 
 /**
+ * Thrown by applyApproval when an approval's turn in its repo's merge section
+ * comes and the work it was given for is no longer what is parked. Nothing
+ * was decided; the ticket stays where it is.
+ */
+export class StaleApprovalError extends Error {}
+
+/**
  * The approvals in flight in this process, so a shutdown can wait for them.
  *
  * An approval is a merge into the operator's own checkout followed by a test
@@ -292,6 +299,8 @@ export async function applyApproval(
      * reviewed one (merge.ts). Read only when `source` is 'human'.
      */
     acceptTree?: string | null;
+    /** Why the approval no longer applies, or null; asked again when its turn in the merge section comes (approve). */
+    stale?: () => string | null;
   } & ApprovalStatement = {},
 ): Promise<ApprovalResult> {
   const tracker = opts.tracker ?? approvals;
@@ -302,7 +311,10 @@ export async function applyApproval(
 /** Landings an approval sends back to the gate for a person to put right before approving again. */
 const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused']);
 
-type ApproveOpts = { note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; selfRoot?: string; acceptTree?: string | null } & ApprovalStatement;
+type ApproveOpts = {
+  note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; selfRoot?: string; acceptTree?: string | null;
+  stale?: () => string | null;
+} & ApprovalStatement;
 
 /**
  * An approval of work parked at the gate in a repo runs whole inside that
@@ -312,12 +324,23 @@ type ApproveOpts = { note?: string | null; source?: 'human' | 'owner-gate'; main
  * work never merged; when its turn comes everything is read afresh, so a
  * second approval of the same ticket finds it decided and is refused, and one
  * whose turn comes after a shutdown began is refused the way a new approval is.
+ * It is an approval of the run parked when it was given: if another run is
+ * parked by its turn, or the caller's own `stale` check now names a reason,
+ * it is refused (StaleApprovalError) with nothing decided.
  */
 async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker): Promise<ApprovalResult> {
   const parked = store.getTask(taskId);
   if (!parked?.repo || parked.status !== 'awaiting-approval') return approveNow(store, taskId, opts, tracker);
+  const runId = store.latestRun(taskId)?.id ?? null;
   return withRepoMergeSection(parked.repo, () => {
     tracker.admit(taskId);
+    const now = store.getTask(taskId);
+    const why = now?.status !== 'awaiting-approval'
+      ? `task ${taskId} is ${now?.status ?? 'gone'}, not awaiting-approval as when it was approved`
+      : (store.latestRun(taskId)?.id ?? null) !== runId
+        ? `the work changed while the approval waited for its turn to land: run ${runId} was approved, another is parked`
+        : opts.stale?.() ?? null;
+    if (why) throw new StaleApprovalError(`approval of ${taskId} not applied, nothing decided: ${why}`);
     return approveNow(store, taskId, opts, tracker);
   });
 }
@@ -1244,38 +1267,45 @@ async function applyGateReply(
   const rationale = reply.rationale || '(no rationale given)';
   if (reply.decision === 'hold') return log('hold', rationale);
 
-  // The ticket may have been decided by a person, cancelled or re-queued while
-  // the model was thinking; decide() would throw, and it would be right to.
-  // Neither hold is a decision about the work now parked, so neither leaves the
-  // durable marker: a newer run must still get its own owner review.
-  const current = store.getTask(task.id);
-  if (current?.status !== 'awaiting-approval') {
-    return log('hold', `task moved to ${current?.status ?? 'gone'} while the owner was deciding`, false);
-  }
-  // …or rejected, retried and parked AGAIN: the same status, different work.
-  // The ruling is about the run the owner read, never a newer one.
-  if (store.latestRun(task.id)?.id !== run?.id) {
-    return log('hold', 'the work changed while the owner was deciding — the ruling was about an earlier run', false);
-  }
-  // …or re-reviewed, or handed to the human, on the same run: not the review
-  // the owner was shown, or no longer the owner's call.
-  // (The scheduler's eligibility covers the board's house-default switch and a
-  // ticket reset to the default — not just a ticket set to 'human'.)
-  const now = store.getTask(task.id)!;
-  if ((store.verdictsForTask(task.id)[0]?.id ?? null) !== seen || now.gate === 'human'
-      || (stillEligible && !stillEligible())
-      || hardHumanReason(now, store.latestRun(task.id), { ...reviewHolds(store, task.id), selfRoot })) {
-    return log('hold', 'the review or the gate changed while the owner was deciding', false);
-  }
+  // Asked now and again when an approval's turn to land comes (it can wait
+  // behind another landing in the repo). None of these holds is a decision
+  // about the work now parked, so none leaves the durable marker: a newer run
+  // must still get its own owner review.
+  const changed = (): string | null => {
+    // The ticket may have been decided by a person, cancelled or re-queued while
+    // the model was thinking; decide() would throw, and it would be right to.
+    const current = store.getTask(task.id);
+    if (current?.status !== 'awaiting-approval') return `task moved to ${current?.status ?? 'gone'} while the owner was deciding`;
+    // …or rejected, retried and parked AGAIN: the same status, different work.
+    // The ruling is about the run the owner read, never a newer one.
+    if (store.latestRun(task.id)?.id !== run?.id) return 'the work changed while the owner was deciding — the ruling was about an earlier run';
+    // …or re-reviewed, or handed to the human, on the same run: not the review
+    // the owner was shown, or no longer the owner's call.
+    // (The scheduler's eligibility covers the board's house-default switch and a
+    // ticket reset to the default — not just a ticket set to 'human'.)
+    if ((store.verdictsForTask(task.id)[0]?.id ?? null) !== seen || current.gate === 'human'
+        || (stillEligible && !stillEligible())
+        || hardHumanReason(current, store.latestRun(task.id), { ...reviewHolds(store, task.id), selfRoot })) {
+      return 'the review or the gate changed while the owner was deciding';
+    }
+    return null;
+  };
+  const stale = changed();
+  if (stale) return log('hold', stale, false);
 
   const note = `${OWNER_GATE_NOTE} ${rationale}`.slice(0, 1000);
   if (reply.decision === 'approved') {
     const stopping = 'the daemon is shutting down; the ticket stays parked for the next start';
     if (approvals.shuttingDown) return log('hold', stopping, false);
-    // A shutdown can also begin while the approval waits for its repo's merge section: refused, nothing decided.
-    const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot })
-      .catch((err: unknown) => { if (err instanceof ShuttingDownError) return null; throw err; });
-    if (!result) return log('hold', stopping, false);
+    // While the approval waits for its repo's merge section a shutdown can begin, or the work, review or gate
+    // can change: refused, nothing decided.
+    const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot, stale: changed })
+      .catch((err: unknown) => {
+        if (err instanceof ShuttingDownError) return stopping;
+        if (err instanceof StaleApprovalError) return err.message;
+        throw err;
+      });
+    if (typeof result === 'string') return log('hold', result, false);
     // Not the tree that was reviewed, no tree on record, or the real .git
     // changed (the git tripwire): nothing landed and the ticket is a person's now.
     if (result.merge.code === 'not-reviewed') return log('hold', result.merge.reason);
