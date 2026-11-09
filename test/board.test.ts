@@ -332,6 +332,48 @@ test('the daemon serves board subpaths with the right content type', async () =>
   store.close();
 });
 
+/**
+ * GET /api/events?since=<cursor> after `behind` events, read up to and
+ * including a live event recorded once the stream is open, so the read ends on
+ * a known frame rather than on a timer.
+ */
+async function replayAfter(behind: number): Promise<{ text: string; cursor: number; newest: number; store: Store }> {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { maxWorkers: 1, tickMs: 5, verifyEnabled: false });
+  const server = createServer(store, sched);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const cursor = store.record({ type: 'log', message: 'cursor' }).id;
+    let newest = cursor;
+    for (let i = 0; i < behind; i++) newest = store.record({ type: 'log', message: `missed ${i}` }).id;
+    const res = await fetch(`http://127.0.0.1:${port}/api/events?since=${cursor}`);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    store.record({ type: 'log', message: 'live after reconnect' });
+    let text = '';
+    while (!text.includes('live after reconnect')) {
+      const { value, done } = await reader.read();
+      assert.equal(done, false, 'the stream ended before the live event arrived');
+      text += decoder.decode(value, { stream: true });
+    }
+    await reader.cancel();
+    return { text, cursor, newest, store };
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await sched.stop();
+  }
+}
+
+test('a reconnect 600 events behind replays only 500 of them and says nothing about the rest', async () => {
+  const { text, store } = await replayAfter(600);
+  const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
+  assert.equal(ids.length, 501, '500 replayed rows plus the live one');
+  assert.doesNotMatch(text, /^event: gap$/m);
+  store.close();
+});
+
 /*
  * ------------------------------------------------------------------ the gate
  *
