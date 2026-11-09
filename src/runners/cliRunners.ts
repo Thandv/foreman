@@ -12,7 +12,7 @@ import { config } from '../config.ts';
 import { testTimeoutMs } from '../verify/tests.ts';
 import { runToken } from '../verify/slots.ts';
 import { RUN_ID_ENV, RUN_TOKEN_ENV, WORKER_TEST_CMD_ENV } from '../verify/testSlot.ts';
-import { claudeIsolationArgs, claudeWorkerEnv, outOfJailWrite } from './claudeIsolation.ts';
+import { CODEX_ENV, claudeIsolationArgs, claudeWorkerEnv, cliWorkerEnv, outOfJailWrite } from './claudeIsolation.ts';
 
 const exec = promisify(execFile);
 
@@ -55,10 +55,10 @@ export interface CliSpec {
   /**
    * The WHOLE environment every spawn of this CLI gets — the worker AND the
    * `--version` preflight, so the preflight proves the binary runs the way the
-   * worker will run it. It replaces the daemon's environment; a spec without
-   * one inherits the daemon's.
+   * worker will run it. It replaces the daemon's environment: a CLI worker
+   * never inherits the whole of it.
    */
-  env?(task: Pick<Task, 'id'>): NodeJS.ProcessEnv;
+  env(task: Pick<Task, 'id'>): NodeJS.ProcessEnv;
   /** Pull stage/log/usage signal out of one parsed NDJSON object. */
   onEvent(ev: Record<string, unknown>, ctx: RunnerContext, state: CliState): void;
 }
@@ -199,7 +199,7 @@ function makeCliRunner(spec: CliSpec): Runner {
       const provenAt = preflightOk.get(binPath);
       if (provenAt !== undefined && Date.now() - provenAt < PREFLIGHT_TTL_MS) return null;
       try {
-        await exec(binPath, ['--version'], { timeout: 20_000, env: spec.env?.(task) ?? process.env });
+        await exec(binPath, ['--version'], { timeout: 20_000, env: spec.env(task) });
         preflightOk.set(binPath, Date.now());
         return null;
       } catch (e) {
@@ -226,8 +226,8 @@ function makeCliRunner(spec: CliSpec): Runner {
       const code = await spawnStreaming(bin(), args, {
         cwd: ctx.dir,
         signal: AbortSignal.any([ctx.signal, tripwire.signal]),
-        env: { ...spec.env?.(ctx.task), ...workerEnv(ctx.task, ctx.runId) },
-        replaceEnv: spec.env !== undefined,
+        env: { ...spec.env(ctx.task), ...workerEnv(ctx.task, ctx.runId) },
+        replaceEnv: true,
         onSpawn: (pid) => ctx.child(pid),
         onLine: (line, stream) => {
           handleCliLine(spec, ctx, state, line, stream);
@@ -489,6 +489,7 @@ export const codexCliSpec: CliSpec = {
   defaultBin: 'codex',
   argsEnv: 'FOREMAN_CODEX_ARGS',
   buildArgs: (prompt, extra, _task) => ['exec', '--json', ...extra, prompt],
+  env: () => cliWorkerEnv(CODEX_ENV),
   onEvent(ev, ctx, state) {
     const msg = (ev['msg'] ?? ev) as Record<string, unknown>;
     const type = String(msg['type'] ?? ev['type'] ?? '');

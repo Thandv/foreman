@@ -85,7 +85,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_CLAUDE_ARGS` | unset | Extra arguments for the Claude CLI, split on whitespace | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_PERMISSION_MODE` | `acceptEdits` | `--permission-mode` passed to the Claude CLI | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_CONFIG_DIR` | `$FOREMAN_HOME/claude-config` | Folder all worker config directories live under | `src/runners/claudeIsolation.ts` |
-| `FOREMAN_CLAUDE_ENV_ALLOW` | unset | Extra environment variable names (comma or space separated, exact) a worker may inherit from the daemon | `src/runners/claudeIsolation.ts` |
+| `FOREMAN_CLAUDE_ENV_ALLOW` | unset | Extra environment variable names (comma or space separated, exact) a `claude-code` or `codex-cli` worker may inherit from the daemon | `src/runners/claudeIsolation.ts` |
 | `FOREMAN_CLAUDE_ALLOWED_TOOLS` | the slot wrapper, `npm run`, `npx tsc`, `node --test`, read-only git, plus web tools a playbook grants | `;`-separated replacement for the worker's allowed-tools list; `none` allows nothing extra | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_DISALLOWED_TOOLS` | `npm test`, `npm t`, `npm run test`, `npm run verify`, and web tools a playbook does not grant | `;`-separated replacement for the worker's denied-tools list; `none` denies nothing | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_RESUME` | on | `off` stops a repair round resuming the worker's previous Claude session | `src/scheduler.ts` |

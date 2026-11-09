@@ -16,7 +16,7 @@ import {
   claudeCodeRunner, claudeCodeSpec, handleCliLine, initialCliState, resetPreflightCache,
 } from '../src/runners/cliRunners.ts';
 import {
-  EMPTY_MCP_CONFIG, FOREMAN_CLAUDE_MD_BODY, claudeConfigDir, claudeConfigRoot, claudeIsolationEnv, outOfJailWrite, workerEnvAllowed,
+  CLAUDE_ENV, EMPTY_MCP_CONFIG, FOREMAN_CLAUDE_MD_BODY, claudeConfigDir, claudeConfigRoot, claudeIsolationEnv, outOfJailWrite, workerEnvAllowed,
 } from '../src/runners/claudeIsolation.ts';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -300,7 +300,7 @@ test('the worker\'s environment is an allowlist: what the daemon holds beyond it
     // Not just those: every variable the CLI saw is one the allowlist names
     // (or one the runner sets itself, or one sh makes up for its own process).
     const unlisted = Object.keys(call.env).filter(
-      (k) => !workerEnvAllowed(k) && !['FOREMAN_WORKER_TEST_CMD', 'FOREMAN_RUN_ID', 'FOREMAN_RUN_TOKEN', 'PWD', 'OLDPWD', 'SHLVL', '_'].includes(k),
+      (k) => !workerEnvAllowed(k, CLAUDE_ENV) && !['FOREMAN_WORKER_TEST_CMD', 'FOREMAN_RUN_ID', 'FOREMAN_RUN_TOKEN', 'PWD', 'OLDPWD', 'SHLVL', '_'].includes(k),
     );
     assert.deepEqual(unlisted, []);
     assert.equal(call.env['PATH'], process.env['PATH'], 'the toolchain is still reachable');

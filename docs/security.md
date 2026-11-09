@@ -26,6 +26,12 @@
   worker: the `claude-code` and `codex-cli` workers are not sandboxed (see "What it does NOT
   cover" below), a worktree jail shares the real repository's `.git`, and the approve endpoint
   takes no proof of who is calling.
+- A CLI worker's environment is an allowlist of the daemon's, not a copy: a shell and toolchain,
+  locale, proxy and CA settings, what the slot wrapper reads, the names in
+  `FOREMAN_CLAUDE_ENV_ALLOW`, and the CLI's own prefixes — `CLAUDE_*` / `ANTHROPIC_*` for
+  `claude-code` (`AWS_*` / `GOOGLE_*` only with Bedrock / Vertex switched on), `CODEX_*` /
+  `OPENAI_*` for `codex-cli`. A gateway key, a forge token or the other CLI's sign-in held by the
+  daemon never reaches a worker (`src/runners/claudeIsolation.ts`).
 - The `api` runner's file tools are contained to the jail (symlinks included) and its
   model-authored shell commands are screened by the same block rules as task admission. That
   screening is a guardrail, **not a sandbox** — the sandbox is `FOREMAN_SANDBOX` (below), which
