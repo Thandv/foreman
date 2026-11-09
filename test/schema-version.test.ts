@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { removeAfterStops } from './helpers/removal.ts';
 import { Store } from '../src/queue.ts';
@@ -142,6 +143,36 @@ test('only a migrating opener (serve) upgrades a ledger one schema version older
   assert.equal(userVersion(dbPath), SCHEMA_VERSION);
   assert.ok(hasColumn(dbPath, 'tasks', 'repair_notes'));
   new Store(dbPath).close();
+});
+
+test('foreman serve migrates a ledger one schema version older', async (t) => {
+  const home = scratch(t);
+  const dbPath = path.join(home, 'foreman.db');
+  olderLedger(dbPath);
+  const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const env: NodeJS.ProcessEnv = {
+    ...process.env, FOREMAN_HOME: path.join(home, 'home'), FOREMAN_DB: dbPath, FOREMAN_PORT: '0',
+    FOREMAN_PREWARM: 'off', FOREMAN_LOCAL_ONLY: 'on', FOREMAN_CLAUDE_BIN: path.join(home, 'no-claude'),
+    FOREMAN_SANDBOX: 'off', FOREMAN_BACKUP: 'off',
+  };
+  delete env['FOREMAN_RUN_ID'];
+  const child = spawn(process.execPath, [cli, 'serve'], { cwd: home, env, stdio: ['ignore', 'pipe', 'pipe'], killSignal: 'SIGKILL' });
+  const exited = new Promise<void>((resolve) => child.on('exit', () => resolve()));
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  let out = '';
+  // Read until "foreman up" (no sleeps); the process exiting first is a failure rather than a wait.
+  await new Promise<void>((resolve, reject) => {
+    child.stdout.on('data', (d) => {
+      out += d;
+      if (/^foreman up .*$/m.test(out)) resolve();
+    });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('exit', () => reject(new Error(`serve exited before "foreman up": ${out}`)));
+  });
+  child.kill('SIGKILL');
+  await exited;
+  assert.equal(userVersion(dbPath), SCHEMA_VERSION, out);
+  assert.ok(hasColumn(dbPath, 'tasks', 'repair_notes'), out);
 });
 
 test('any opener creates a brand-new ledger, including an empty file already on disk', (t) => {
