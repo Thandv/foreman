@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isProtectedPath, PROTECTED_PATHS } from '../src/security/coreGuard.ts';
 
 // Architecture guard: the shape of src/ as the import graph and the environment reads show it.
 //
@@ -283,6 +284,15 @@ const PROCESS_ENV_FILES: string[] = [
   'src/verify/testSlot.ts', 'src/verify/tests.ts', 'src/verify/triage.ts', 'src/warm.ts',
 ];
 
+// (g) Unprotected modules that only protected src files value-import: a run could change what the guarded code does
+// without touching a protected file. The list may only shrink; protecting one is a change to PROTECTED_PATHS.
+const PROTECTED_ONLY_HELPERS: string[] = [
+  'src/assign.ts', 'src/assistant/playbookForge.ts', 'src/diskSpace.ts', 'src/doctorPlan.ts', 'src/gitTripwire.ts',
+  'src/metrics.ts', 'src/postMerge.ts', 'src/prose/auditWorker.ts', 'src/prose/linecheck.ts', 'src/runClock.ts',
+  'src/runFacts.ts', 'src/runners/index.ts', 'src/schedule.ts', 'src/scope.ts', 'src/verify/assertionCheck.ts',
+  'src/verify/backgroundRun.ts', 'src/verify/workerSuite.ts',
+];
+
 test('the value-import cycles are exactly the allowlisted components', () => {
   const actual = cycles(value).map((c) => c.join(' + '));
   const allowed = CYCLES.map((c) => [...c.files].sort().join(' + ')).sort();
@@ -345,6 +355,11 @@ test('the process.env scan counts code and strings, and not a comment', () => {
   assert.equal(touchesProcessEnv('const e = process\n  .env;'), true);
   assert.equal(touchesProcessEnv("// process.env['X']\n/* process.env.Y */\nconst a = 1;"), false);
   assert.equal(touchesProcessEnv('const a = process.envelope;'), false);
+});
+
+test('every PROTECTED_PATHS entry exists, and the helpers only protected files import match the allowlist', () => {
+  for (const p of PROTECTED_PATHS) assert.ok(fs.existsSync(path.join(SRC, '..', p)), `${p} does not exist`);
+  assert.deepEqual(protectedOnlyHelpers(value, isProtectedPath), [...PROTECTED_ONLY_HELPERS].sort(), 'update PROTECTED_ONLY_HELPERS (new helper, or a stale entry)');
 });
 
 test('the protected-closure scan flags a helper only protected files import, and not one an unprotected file shares', () => {

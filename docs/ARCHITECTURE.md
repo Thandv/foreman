@@ -211,4 +211,6 @@ Why they are guarded, from the comment above the list:
 
 A ticket may change a protected path only if it carries `allowCore`, which Foreman never sets on its own.
 
+Helpers outside the list that only protected files value-import are not guarded: a run can change what the guarded code does through them. `PROTECTED_ONLY_HELPERS` in `test/architecture.test.ts` lists them (17 today, among them `src/assign.ts`, `src/postMerge.ts`, `src/runners/index.ts` and `src/metrics.ts`); the test reads `PROTECTED_PATHS` by import, so a new protected file or directory counts with no edit to it. A new such helper, or a listed one that is gone (protected, or imported from unprotected code too), fails the test; the list may only shrink, and protecting a helper is a change to `PROTECTED_PATHS`. The same test fails when a `PROTECTED_PATHS` entry does not exist.
+
 What this does not do: the list is matched on paths in the change, so it does not stop a person editing these files by hand, and it does not cover files outside the list that these files depend on.
