@@ -59,11 +59,11 @@ test('the pipeline bench lands every ticket with gate batching on and off, and b
   const out = await bench('pipeline.ts', ['--tickets', '3', '--suite-ms', '10', '--model-ms', '300']);
   const runs = out as Array<{
     gateBatch: 'on' | 'off'; tickets: number; landed: number; modelCalls: number; ticketsPerHour: number;
-    suiteRunsPerLanded: number; dispatchMs: { p50: number }; gateMs: { p50: number }; landingMs: { p50: number };
+    suiteRunsPerLanded: number; unlanded: unknown[]; dispatchMs: { p50: number }; gateMs: { p50: number }; landingMs: { p50: number };
   }>;
   assert.deepEqual(runs.map((r) => r.gateBatch), ['on', 'off']);
   for (const r of runs) {
-    assert.equal(r.landed, 3, `${r.gateBatch}: every ticket landed`);
+    assert.equal(r.landed, 3, `${r.gateBatch}: every ticket landed; not landed: ${JSON.stringify(r.unlanded)}`);
     assert.ok(r.ticketsPerHour > 0);
     // Each landing runs the suite at least twice: the ticket's own check, then the post-merge check on main.
     assert.ok(r.suiteRunsPerLanded >= 2, `${r.gateBatch}: ${r.suiteRunsPerLanded} suite runs per landed ticket`);

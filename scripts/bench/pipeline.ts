@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { percentile } from '../../src/latency.ts';
 import { Store } from '../../src/queue.ts';
 import { Scheduler } from '../../src/scheduler.ts';
+import { outcome } from './outcome.ts';
 
 interface Spread { p50: number; p90: number; max: number }
 
@@ -31,6 +32,8 @@ export interface PipelineResult {
   landingMs: Spread;
   /** Fake suite runs (the ticket's own check, post-merge checks, re-runs) per landed ticket. */
   suiteRunsPerLanded: number;
+  /** Each ticket that did not land: its status, the owner gate's marker and its last events, to say why. */
+  unlanded: Array<{ id: string; status: string; gate: string | null; events: string[] }>;
 }
 
 /** How long a run may take before the bench gives up on it. */
@@ -126,10 +129,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
     }).id);
     sched.start();
     const deadline = Date.now() + DEADLINE_MS;
-    const settled = (): boolean => ids.every((id) => {
-      const status = store.getTask(id)!.status;
-      return status === 'failed' || status === 'rejected' || status === 'canceled' || (status === 'done' && !store.isLanding(id));
-    });
+    const settled = (): boolean => ids.every((id) => outcome(store, id) !== 'pending');
     while (!settled()) {
       if (Date.now() > deadline) throw new Error(`gate batch ${gateBatch}: not settled after ${DEADLINE_MS / 60_000} min`);
       await new Promise((r) => setTimeout(r, 50));
@@ -137,6 +137,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
     const dispatch: number[] = [];
     const gate: number[] = [];
     const landing: number[] = [];
+    const unlanded: PipelineResult['unlanded'] = [];
     let landed = 0;
     let first = Infinity;
     let last = 0;
@@ -149,7 +150,10 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
       const parked = events.find((e) => e.type === 'status' && e.message === 'awaiting-approval');
       const approved = events.find((e) => e.message.startsWith('owner-gate: approved'));
       const decision = store.decisionsForTask(id).find((d) => d.action === 'approve');
-      if (task.status !== 'done' || !decision || !approved) continue;
+      if (outcome(store, id) !== 'landed' || !decision || !approved) {
+        unlanded.push({ id, status: task.status, gate: store.gateDecision(id), events: events.slice(-5).map((e) => `${e.type}: ${e.message.slice(0, 200)}`) });
+        continue;
+      }
       landed++;
       last = Math.max(last, approved.ts);
       if (parked) gate.push(decision.at - parked.ts);
@@ -166,6 +170,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
       gateMs: spread(gate),
       landingMs: spread(landing),
       suiteRunsPerLanded: landed ? Math.round((lines(suiteRuns) / landed) * 100) / 100 : 0,
+      unlanded,
     };
   } finally {
     await sched.stop();

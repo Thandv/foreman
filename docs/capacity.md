@@ -36,6 +36,8 @@ It reports, per run, from the ledger:
 | suite runs/landed | fake suite runs (own checks, post-merge checks, re-runs) per landed ticket |
 | gate/review calls | owner-gate calls (a batch is one) and reviewer calls the fake model answered |
 
+A ticket counts as landed once the owner gate has logged its approval and the ticket's landing has settled. The post-merge check can end the landing hold before the approval's decision row and the gate's verdict are written (both wait on git after the merge), so the bench waits for the verdict rather than for the hold. A ticket that does not land is listed under `unlanded` in `--json` output, with its status, the gate's marker and its last events.
+
 ## First numbers
 
 Machine class: an 8-core Apple M2 laptop with 16 GB of memory, macOS 14, Node 26, otherwise idle. Defaults as above. With 20 samples a p99 is the slowest sample, so one pause (a WAL checkpoint, a GC) shows there: the 100k `claimable` p99 is one such sample.
