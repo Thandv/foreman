@@ -241,29 +241,33 @@ test('every MergeCode in the union is an outcome a row above produces', () => {
 
 test("no code outside src/merge.ts decides on a MergeResult's reason text", () => {
   const files: string[] = [];
-  const walk = (dir: string): void => {
+  const walk = (dir: string, ext: string): void => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (p.endsWith('.ts')) files.push(p);
+      if (e.isDirectory()) walk(p, ext);
+      else if (p.endsWith(ext)) files.push(p);
     }
   };
-  const root = fileURLToPath(SRC);
-  walk(root);
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  walk(fileURLToPath(SRC), '.ts');
+  const srcCount = files.length;
+  walk(fileURLToPath(new URL('../board/', import.meta.url)), '.js');
   // A reason compared, matched or searched; or a regex tested against one.
   const decides = [
     /merge\??\.reason\s*(===|!==|==|!=)/,
     /merge\??\.reason\)?\.(startsWith|endsWith|includes|match|search|indexOf)\(/,
     /\.(test|match)\((String\()?[\w.?!]*merge\??\.reason/,
     /\bNOT_REVIEWED\b/,
+    /\bBENIGN_MERGE\b/,
   ];
   const hits: string[] = [];
   for (const file of files) {
-    if (path.relative(root, file) === 'merge.ts') continue;
+    if (path.relative(root, file) === path.join('src', 'merge.ts')) continue;
     fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
       if (decides.some((re) => re.test(line))) hits.push(`${path.relative(root, file)}:${i + 1}: ${line.trim()}`);
     });
   }
-  assert.ok(files.length > 50, 'the src tree was walked');
+  assert.ok(srcCount > 50, 'the src tree was walked');
+  assert.ok(files.length - srcCount > 10, 'the board tree was walked');
   assert.deepEqual(hits, []);
 });

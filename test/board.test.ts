@@ -610,28 +610,27 @@ test('an approval whose merge was aborted reports the abort, not "Approved"', as
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  // The other shapes the same 200 can carry.
+  // The other shapes the same 200 can carry. The board decides on the typed code
+  // (MergeResult in src/merge.ts); the reason is only the words shown.
   assert.deepEqual(
-    approvalOutcome({ merge: { merged: true, reason: 'merged 1 commit(s)', branch: 'foreman/y' } }),
+    approvalOutcome({ merge: { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'foreman/y' } }),
     { ok: true, message: 'Approved — merged foreman/y' },
   );
   // A deliberate skip is not a failure and must not shout like one.
-  assert.equal(
-    approvalOutcome({ merge: { merged: false, reason: 'merge-on-approve disabled for this task', branch: 'b' } }).ok,
-    true,
-  );
-  assert.equal(approvalOutcome({ merge: { merged: false, reason: 'nothing to merge', branch: null } }).ok, true);
+  for (const code of ['not-approved', 'nothing-to-merge', 'merge-disabled', 'nothing-ahead', 'nothing-to-change-closed']) {
+    assert.equal(approvalOutcome({ merge: { merged: false, code, reason: 'whatever words', branch: 'b' } }).ok, true, code);
+  }
   // An approval that closes a run which changed nothing (gate.ts): the reason is the outcome, not a branch that went missing.
   assert.deepEqual(
-    approvalOutcome({ merge: { merged: false, reason: NOTHING_TO_CHANGE_CLOSED, branch: 'foreman/z' } }),
+    approvalOutcome({ merge: { merged: false, code: 'nothing-to-change-closed', reason: NOTHING_TO_CHANGE_CLOSED, branch: 'foreman/z' } }),
     { ok: true, message: 'Approved — closed: nothing to change' },
   );
-  // Only as the whole reason's start: a real failure that merely quotes the words still shouts.
-  assert.equal(
-    approvalOutcome({ merge: { merged: false, reason: 'merge conflict, aborted — resolve foreman/z by hand (was closed: nothing to change)', branch: 'foreman/z' } }).ok,
-    false,
-  );
-  assert.equal(approvalOutcome({ merge: { merged: false, reason: 'not closed: nothing to change', branch: 'foreman/z' } }).ok, false);
+  // A real failure shouts whatever its words say — even words that read like a skip.
+  for (const code of ['conflict', 'not-reviewed', 'core-refused', 'branch-gone', 'uncommitted']) {
+    assert.equal(approvalOutcome({ merge: { merged: false, code, reason: 'nothing to merge', branch: 'foreman/z' } }).ok, false, code);
+  }
+  // No code at all is not a skip either: an un-landed branch must never read as fine.
+  assert.equal(approvalOutcome({ merge: { merged: false, reason: 'nothing to merge', branch: 'foreman/z' } }).ok, false);
   // A tool task lands by registration; a refused registration is a failure too.
   assert.equal(
     approvalOutcome({ registration: { registered: false, reason: 'registration refused: bad manifest' } }).ok,
