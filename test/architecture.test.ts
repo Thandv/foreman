@@ -144,6 +144,38 @@ const QUEUE_IMPORTS = [
   'src/schedule.ts', 'src/skills.ts', 'src/types.ts', 'src/verify/followUpChain.ts',
 ];
 
+// (d) Value edges into src/align/ and src/prose/ from the rest of src/, with why. The core reaches the alignment and
+// prose features only through these.
+const ALIGN_PROSE_EDGES: Record<string, string> = {
+  'src/assistant/repoBrief.ts -> src/align/redact.ts': 'the repo brief redacts secrets before it leaves the machine',
+  'src/cli.ts -> src/align/dataset.ts': '`align` builds its datasets (dynamic import)',
+  'src/cli.ts -> src/align/extract.ts': '`align` extracts its samples (dynamic import)',
+  'src/cli.ts -> src/align/governor.ts': '`persona train` runs under the machine governor (dynamic import)',
+  'src/cli.ts -> src/align/localLock.ts': '`persona lock` reports the local model lock (dynamic import)',
+  'src/cli.ts -> src/align/manuscript.ts': '`persona ingest` builds training pairs from a manuscript (dynamic import)',
+  'src/cli.ts -> src/align/personaAdopt.ts': '`persona adopt` gates a persona (dynamic import)',
+  'src/cli.ts -> src/align/personaData.ts': '`persona ingest` and `persona build` write its datasets (dynamic import)',
+  'src/cli.ts -> src/align/personaServe.ts': '`persona serve` starts and stops a persona server (dynamic import)',
+  'src/cli.ts -> src/align/personas.ts': '`persona` commands read the persona registry (dynamic import)',
+  'src/cli.ts -> src/align/train.ts': '`align train` and `align status` train and check adapters (dynamic import)',
+  'src/cli.ts -> src/prose/audit.ts': '`prose audit` audits a manuscript directory',
+  'src/cli.ts -> src/prose/ingest.ts': '`prose import` splits a manuscript into chapters',
+  'src/cli.ts -> src/prose/tics.ts': '`persona ingest` leaves out passages with tics (dynamic import)',
+  'src/drill.ts -> src/align/personaHealth.ts': 'the drill reports adopted personas that do not answer',
+  'src/models.ts -> src/align/personas.ts': 'a persona model resolves to its server URL',
+  'src/roles.ts -> src/align/personas.ts': 'a role picks the persona for a task',
+  'src/runners/api.ts -> src/align/personaHealth.ts': 'the api runner refuses an unreachable persona',
+  'src/runners/api.ts -> src/prose/contextPack.ts': 'the api runner briefs a prose ticket with its context pack',
+  'src/scheduler.ts -> src/align/localLock.ts': 'the scheduler holds local work while training holds the lock',
+  'src/scheduler.ts -> src/align/personaHealth.ts': 'the scheduler starts adopted persona servers',
+  'src/scheduler.ts -> src/prose/auditWorker.ts': 'the scheduler audits prose off the main thread',
+  'src/scheduler.ts -> src/prose/linecheck.ts': 'the scheduler checks a prose change for fact drift',
+  'src/server.ts -> src/align/personaHealth.ts': 'the API reports persona health',
+  'src/server.ts -> src/align/personas.ts': 'the API reports persona server URLs',
+  'src/server.ts -> src/prose/audit.ts': 'the API formats a prose audit report',
+  'src/server.ts -> src/prose/auditWorker.ts': 'the API runs a prose audit off the main thread',
+};
+
 // (e) FOREMAN_* names read outside config.ts, per file: each module's own tuning, read where it is used.
 const ENV_READS: Record<string, string[]> = {
   'src/agents.ts': ['FOREMAN_AGENTS_DIR'],
@@ -219,6 +251,16 @@ test('src/security value imports stay inside config, types, localOnly, security 
     }
   }
   assert.deepEqual(stray.sort(), Object.keys(SECURITY_EDGES).sort(), 'update SECURITY_EDGES (stale or new edge)');
+});
+
+test('value imports into src/align and src/prose from the rest of src are exactly the allowlisted edges', () => {
+  const feature = (f: string) => f.startsWith('src/align/') || f.startsWith('src/prose/');
+  const edges: string[] = [];
+  for (const [from, tos] of value) {
+    if (!feature(from)) for (const to of tos) if (feature(to)) edges.push(`${from} -> ${to}`);
+  }
+  assert.deepEqual(edges.sort(), Object.keys(ALIGN_PROSE_EDGES).sort(), 'update ALIGN_PROSE_EDGES (stale or new edge)');
+  for (const reason of Object.values(ALIGN_PROSE_EDGES)) assert.ok(reason.length > 0);
 });
 
 test('admit.ts does not reach improve.ts, models.ts, personas.ts, bench.ts or the tool catalog through value imports', () => {
