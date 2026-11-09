@@ -367,6 +367,11 @@ const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   // about who ruled, once a retry has cleared the task's owner-gate marker.
   ['runs', 'decision', 'TEXT'],
   ['runs', 'verify_wait_ms', 'INTEGER NOT NULL DEFAULT 0'],
+  // Time this run's gate suites ran, slot wait excluded: the sum over every
+  // daemon suite command (gate, its timeout re-run, each playbook check, the
+  // revert check) of its wall time less its verify-slot wait. 0 on a run that
+  // ran none, or from before it was recorded. Read by `doctor --latency`.
+  ['runs', 'suite_ms', 'INTEGER NOT NULL DEFAULT 0'],
   // Daemon stops that requeued this ticket since its last fresh start (Retry,
   // a repair round, Give to AI). On the row, not in `events`: pruneEvents would
   // erase the count that bounds a daemon that keeps stopping mid-run.

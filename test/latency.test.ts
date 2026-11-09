@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
-import { computeLatencyReport, formatDuration, LATENCY_STAGES, type RunLatencyInput } from '../src/latency.ts';
+import { computeLatencyReport, computeSuiteStat, formatDuration, LATENCY_STAGES, type RunLatencyInput } from '../src/latency.ts';
+import fs from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
 // --------------------------------------------------------- computeLatencyReport (pure)
 
@@ -156,12 +158,15 @@ test('Store.recentRunsForLatency on an empty database returns no runs', () => {
 
 // ------------------------------------------------------- doctor --latency (the printed report)
 
-/** A ledger file with two finished runs on fixed timestamps; the gate stage is followed by a decision 1 s later. */
+/**
+ * A ledger file with two finished runs on fixed timestamps; the gate stage is followed by a decision 1 s later.
+ * Their suites ran 2 s and 3 s; the second queued 500 ms for a verify slot.
+ */
 function seededLedger(): string {
   const file = path.join(scratchDir('foreman-latency-db-'), 'foreman.db');
   const store = new Store(file);
   const base = 1_700_000_000_000;
-  for (const [i, work] of [[1, 2_000], [2, 4_000]] as const) {
+  for (const [i, work, suiteMs, waitMs] of [[1, 2_000, 2_000, 0], [2, 4_000, 3_000, 500]] as const) {
     const at = base + i * 100_000;
     const gateAt = at + 1_000 + work + 1_000;
     store.db
@@ -170,7 +175,9 @@ function seededLedger(): string {
           "VALUES (?,'x','do it','code','echo','S1','done',2,?,?)",
       )
       .run(`t${i}`, at, gateAt + 1_000);
-    store.db.prepare("INSERT INTO runs (id,task_id,status,stage,started_at) VALUES (?,?,'succeeded','gate',?)").run(`r${i}`, `t${i}`, at);
+    store.db
+      .prepare("INSERT INTO runs (id,task_id,status,stage,started_at,suite_ms,verify_wait_ms) VALUES (?,?,'succeeded','gate',?,?,?)")
+      .run(`r${i}`, `t${i}`, at, suiteMs, waitMs);
     for (const [stage, ts] of [['isolate', at], ['work', at + 1_000], ['test', at + 1_000 + work], ['gate', gateAt]] as const) {
       store.db
         .prepare("INSERT INTO events (task_id, run_id, ts, type, stage, message) VALUES (?,?,?,'stage',?,?)")
@@ -190,7 +197,7 @@ function doctorLatency(dbFile: string): string {
   return r.stdout;
 }
 
-test('doctor --latency prints the per-stage table for a seeded ledger', () => {
+test('doctor --latency prints the per-stage table, then suite time and slot wait, for a seeded ledger', () => {
   assert.equal(
     doctorLatency(seededLedger()),
     [
@@ -204,6 +211,32 @@ test('doctor --latency prints the per-stage table for a seeded ledger', () => {
       'verify     0    0ms      0ms      —',
       'gate-wait  2    1.0s     1.0s     20.0%',
       '',
+      'SUITE      p50 2.0s  p95 3.0s  over 2 run(s), slot wait excluded',
+      'SLOT WAIT  p95 500ms  over 2 run(s)',
+      '',
     ].join('\n'),
   );
+});
+
+test('suite percentiles leave out runs with no suite time; slot wait is over every run', () => {
+  const runs = [0, 1_000, 2_000, 3_000, 4_000].map((suiteMs, i) => ({ suiteMs, verifyWaitMs: i * 100 }));
+  assert.deepEqual(computeSuiteStat(runs), { suiteRuns: 4, suiteP50Ms: 2_000, suiteP95Ms: 4_000, slotWaitP95Ms: 400 });
+  assert.deepEqual(computeSuiteStat([]), { suiteRuns: 0, suiteP50Ms: 0, suiteP95Ms: 0, slotWaitP95Ms: 0 });
+});
+
+test('a ledger without runs.suite_ms migrates twice cleanly and reads 0', () => {
+  const file = path.join(scratchDir('foreman-latency-mig-'), 'f.db');
+  const first = new Store(file);
+  const runId = first.startRun(first.addTask({ title: 't', prompt: 'p', runner: 'echo' }).id).id;
+  first.close();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE runs DROP COLUMN suite_ms');
+  raw.close();
+  for (let i = 0; i < 2; i++) {
+    const store = new Store(file);
+    assert.equal(store.recentRunsForLatency(5)[0]!.suiteMs, i === 0 ? 0 : 7);
+    if (i === 0) store.addSuiteMs(runId, 7);
+    store.close();
+  }
+  fs.rmSync(path.dirname(file), { recursive: true, force: true });
 });

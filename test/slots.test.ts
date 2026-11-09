@@ -184,18 +184,21 @@ test('a crew test gate (a playbook check) takes a slot', () =>
     }
   }));
 
-test('a run whose two playbook checks take 1 s each records no suite time today', () =>
+test('a run whose two playbook checks take 1 s each records about 2 s of suite time, slot wait excluded', () =>
   withCap('1', async () => {
     const dir = crewPlaybook(['sleep 1', 'sleep 1']);
     const store = new Store(':memory:');
     const repo = fixtureRepo();
     try {
       const t = store.addTask({ title: 'crew', prompt: WORK, kind: 'code', runner: 'shell', repo, playbook: 'slots-pb', role: 'worker' });
+      const startedAt = Date.now();
       await runBehindHeldSlot(store, t.id, 1_000);
-      const runId = store.latestRun(t.id)!.id;
-      const row = store.db.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as Record<string, unknown>;
-      assert.equal('suite_ms' in row, false, 'no suite time is recorded');
-      assert.ok(Number(row['verify_wait_ms']) >= 1_000, 'the slot wait is recorded');
+      const wallMs = Date.now() - startedAt;
+      const [run] = store.recentRunsForLatency(1);
+      assert.ok(run!.verifyWaitMs >= 1_000, `the slot wait is recorded, got ${run!.verifyWaitMs}`);
+      assert.ok(run!.suiteMs >= 1_990, `both checks' run time is recorded, got ${run!.suiteMs}`);
+      // Counted into suite_ms as well, the wait would make the two add up to more than the whole drain took.
+      assert.ok(run!.suiteMs + run!.verifyWaitMs <= wallMs, `suite ${run!.suiteMs} + wait ${run!.verifyWaitMs} > wall ${wallMs}`);
     } finally {
       delete process.env['FOREMAN_PLAYBOOKS_DIR'];
       store.close();

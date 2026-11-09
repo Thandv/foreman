@@ -1,7 +1,7 @@
 ## Speed and consistency
 
 ```bash
-foreman doctor --latency          # per-stage medians and p90 over recent runs
+foreman doctor --latency          # per-stage medians and p90, suite time and slot wait, over recent runs
 foreman receipts                  # spend and stage medians together
 foreman prune --days 90           # worktrees, branches, old ledger rows, dep caches
 ```

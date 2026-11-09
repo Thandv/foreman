@@ -1280,9 +1280,10 @@ export class Store extends EventEmitter {
   recentRunsForLatency(limit: number): {
     runId: string; taskId: string; taskStatus: string; taskUpdatedAt: number;
     events: { stage: string; ts: number }[];
+    suiteMs: number; verifyWaitMs: number;
   }[] {
     const runs = this.db
-      .prepare('SELECT id, task_id FROM runs ORDER BY started_at DESC LIMIT ?')
+      .prepare('SELECT id, task_id, suite_ms, verify_wait_ms FROM runs ORDER BY started_at DESC LIMIT ?')
       .all(Math.max(0, limit)) as Record<string, unknown>[];
     return runs.map((r) => {
       const runId = String(r['id']);
@@ -1299,6 +1300,8 @@ export class Store extends EventEmitter {
         taskStatus: task ? String(task['status']) : '',
         taskUpdatedAt: task ? Number(task['updated_at']) : 0,
         events: events.map((e) => ({ stage: String(e['stage']), ts: Number(e['ts']) })),
+        suiteMs: Number(r['suite_ms']),
+        verifyWaitMs: Number(r['verify_wait_ms']),
       };
     });
   }
@@ -2344,6 +2347,11 @@ export class Store extends EventEmitter {
   /** Accumulate time a run's test commands queued for a verify slot. */
   addVerifyWait(runId: string, ms: number): void {
     this.db.prepare('UPDATE runs SET verify_wait_ms = verify_wait_ms + ? WHERE id = ?').run(Math.round(ms), runId);
+  }
+
+  /** Accumulate time a run's test commands ran, their slot wait excluded. */
+  addSuiteMs(runId: string, ms: number): void {
+    this.db.prepare('UPDATE runs SET suite_ms = suite_ms + ? WHERE id = ?').run(Math.round(ms), runId);
   }
 
   setTestsPassed(runId: string, passed: boolean): void {

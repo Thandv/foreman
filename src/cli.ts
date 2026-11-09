@@ -31,7 +31,7 @@ import { Tracer } from './trace.ts';
 import { benchModels, benchPath } from './bench.ts';
 import { Broker } from './budget.ts';
 import { checkOllamaParallelism, prewarmRoster, residentSummary } from './warm.ts';
-import { computeLatencyReport, formatDuration } from './latency.ts';
+import { computeLatencyReport, computeSuiteStat, formatDuration } from './latency.ts';
 import { formatPlaybookWarning, getPlaybook, playbooksDir } from './playbooks.ts';
 import { planNoteHome } from './assistant/crewPlan.ts';
 import { crewAdvisories, formatDroppedIssues } from './verify/crewReview.ts';
@@ -1959,6 +1959,11 @@ async function main(): Promise<number> {
               `${formatDuration(s.p90Ms).padEnd(9)}${s.count ? `${s.shareOfTotalPct.toFixed(1)}%` : '—'}\n`,
           );
         }
+        const suite = computeSuiteStat(raw);
+        process.stdout.write(
+          `\nSUITE      ${suite.suiteRuns ? `p50 ${formatDuration(suite.suiteP50Ms)}  p95 ${formatDuration(suite.suiteP95Ms)}  over ${suite.suiteRuns} run(s), slot wait excluded` : '— no run has a recorded suite time'}\n` +
+            `SLOT WAIT  p95 ${formatDuration(suite.slotWaitP95Ms)}  over ${raw.length} run(s)\n`,
+        );
         return 0;
       }
       // Read before /api/doctor: its liveness pings load every local model, so residency read after them reported

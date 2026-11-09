@@ -1404,6 +1404,18 @@ export class Scheduler {
       this.store.addVerifyWait(runId, ms);
       emit(`waited ${ms}ms for a verify slot`);
     };
+    // Every suite command this run starts goes through here: its wall time, less what it queued for a slot, is
+    // summed onto the run as suite_ms (doctor --latency), stopped or not.
+    const suiteSlotted = async (...args: Parameters<typeof runTestsSlotted>): ReturnType<typeof runTestsSlotted> => {
+      const [dir, cmd, signal, onLine, onSpawn, onWaited, onQueue, sandbox] = args;
+      const startedAt = Date.now();
+      let waitedMs = 0;
+      try {
+        return await runTestsSlotted(dir, cmd, signal, onLine, onSpawn, (ms) => { waitedMs += ms; onWaited?.(ms); }, onQueue, sandbox);
+      } finally {
+        this.store.addSuiteMs(runId, Math.max(0, Date.now() - startedAt - waitedMs));
+      }
+    };
 
     try {
       fs.mkdirSync(config.artifactRoot, { recursive: true });
@@ -1762,7 +1774,7 @@ export class Scheduler {
             });
             if (behind) emit(behindLine(behind));
           }
-          const runGate = (): ReturnType<typeof runTestsSlotted> => runTestsSlotted(
+          const runGate = (): ReturnType<typeof runTestsSlotted> => suiteSlotted(
             jail!.dir, cmd, controller.signal,
             (line) => emit(`test: ${line}`),
             (pid) => this.store.setRunPid(runId, pid),
@@ -1830,7 +1842,7 @@ export class Scheduler {
           for (const check of pb.checks) {
             if (controller.signal.aborted) { checksPassed = false; break; }
             this.store.setRunStage(runId, task.id, 'test', check);
-            const r = await runTestsSlotted(
+            const r = await suiteSlotted(
               jail.dir, check, controller.signal,
               (line) => emit(`check: ${line}`),
               (pid) => this.store.setRunPid(runId, pid),
@@ -1976,7 +1988,7 @@ export class Scheduler {
             // Every line: the TAP report is read off the whole output, not the tail runTests keeps.
             const lines: string[] = [];
             let waitedMs = 0;
-            const r = await runTestsSlotted(
+            const r = await suiteSlotted(
               dir, cmd, controller.signal,
               (line) => { if (lines.length < 100_000) lines.push(line); },
               (pid) => this.store.setRunPid(runId, pid),

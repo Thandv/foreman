@@ -3,8 +3,9 @@
  * records: the `stage` events written by `Store.setRunStage` (one per run,
  * timestamped), plus the owning task's current status/updated_at for the
  * one stage (`gate`) whose "end" is a human decision rather than another
- * stage event. No new instrumentation — `foreman doctor --latency` is a
- * read-only report over the events table.
+ * stage event; and the per-run suite time and slot wait (runs.suite_ms,
+ * runs.verify_wait_ms). `foreman doctor --latency` is a read-only report
+ * over those rows.
  */
 
 /** The stage rail as reported by `doctor --latency`; `admit` is omitted (near-instant, not interesting) and `gate` is reported as the human wait, not the instant it was reached. */
@@ -106,6 +107,27 @@ export function computeLatencyReport(runs: RunLatencyInput[]): LatencyReport {
   });
 
   return { sampleRuns: runs.length, stages };
+}
+
+export interface SuiteStat {
+  /** Runs with a recorded suite time (suite_ms > 0); runs that ran no suite, or predate it, are left out. */
+  suiteRuns: number;
+  suiteP50Ms: number;
+  suiteP95Ms: number;
+  /** p95 of the time each run queued for a verify slot (verify_wait_ms), over every run in the sample. */
+  slotWaitP95Ms: number;
+}
+
+/** Suite run time (slot wait excluded) and slot wait over the sampled runs, from runs.suite_ms and runs.verify_wait_ms. */
+export function computeSuiteStat(runs: { suiteMs: number; verifyWaitMs: number }[]): SuiteStat {
+  const suites = runs.map((r) => r.suiteMs).filter((ms) => ms > 0).sort((a, b) => a - b);
+  const waits = runs.map((r) => r.verifyWaitMs).sort((a, b) => a - b);
+  return {
+    suiteRuns: suites.length,
+    suiteP50Ms: percentile(suites, 0.5),
+    suiteP95Ms: percentile(suites, 0.95),
+    slotWaitP95Ms: percentile(waits, 0.95),
+  };
 }
 
 /** e.g. `340ms`, `1.2s`, `4.5m` — plain, no external formatting deps. */
