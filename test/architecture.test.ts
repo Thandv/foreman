@@ -91,6 +91,16 @@ export function runtimeDependencies(pkg: Record<string, unknown>): string[] {
   );
 }
 
+/**
+ * Each unprotected module whose value importers are all protected (and there is at least one), sorted: a helper only
+ * protected code uses, whose behaviour a run can change without touching a protected file.
+ */
+export function protectedOnlyHelpers(graph: Map<string, Set<string>>, isProtected: (f: string) => boolean): string[] {
+  const importers = new Map<string, string[]>();
+  for (const [from, tos] of graph) for (const to of tos) importers.set(to, [...(importers.get(to) ?? []), from]);
+  return [...importers].filter(([to, froms]) => !isProtected(to) && froms.every(isProtected)).map(([to]) => to).sort();
+}
+
 function listTs(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
@@ -335,6 +345,16 @@ test('the process.env scan counts code and strings, and not a comment', () => {
   assert.equal(touchesProcessEnv('const e = process\n  .env;'), true);
   assert.equal(touchesProcessEnv("// process.env['X']\n/* process.env.Y */\nconst a = 1;"), false);
   assert.equal(touchesProcessEnv('const a = process.envelope;'), false);
+});
+
+test('the protected-closure scan flags a helper only protected files import, and not one an unprotected file shares', () => {
+  const graph = new Map<string, Set<string>>([
+    ['src/gate.ts', new Set(['src/newHelper.ts', 'src/shared.ts'])],
+    ['src/cli.ts', new Set(['src/shared.ts'])],
+    ['src/security/admit.ts', new Set(['src/security/coreGuard.ts'])],
+  ]);
+  const isProtected = (f: string) => f === 'src/gate.ts' || f.startsWith('src/security/');
+  assert.deepEqual(protectedOnlyHelpers(graph, isProtected), ['src/newHelper.ts']);
 });
 
 test('the runtime has no dependencies: package.json lists none and src value-imports only node:* built-ins', () => {
