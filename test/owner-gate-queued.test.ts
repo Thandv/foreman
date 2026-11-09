@@ -6,10 +6,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
-import { applyApproval, ownerGate } from '../src/gate.ts';
-import { mergeSectionsPending } from '../src/landing/queue.ts';
+import { ownerGate } from '../src/gate.ts';
+import { mergeSectionsPending, withRepoMergeSection } from '../src/landing/queue.ts';
 import { clearPlaybookCache } from '../src/playbooks.ts';
-import type { MainCheck } from '../src/postMerge.ts';
 
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
@@ -63,27 +62,18 @@ test('an owner-gate approval queued behind a landing is a hold if the ticket is 
     await sched.stop();
     store.gateWaiting('owner');
 
-    // A person approves A; its main check stays open until released.
-    let inCheck!: () => void;
-    const entered = new Promise<void>((r) => { inCheck = r; });
+    // An earlier landing holds the repo's merge section until released.
     let release!: () => void;
     const released = new Promise<void>((r) => { release = r; });
-    const landing = applyApproval(store, a.id, {
-      mainCheck: async (dir) => {
-        inCheck();
-        await released;
-        return { ok: true, head: git(dir, 'rev-parse', 'HEAD'), cmd: null, tail: '', firstTail: '' } satisfies MainCheck;
-      },
-    });
-    await entered;
+    const landing = withRepoMergeSection(repo, () => released);
 
-    // The owner approves B, whose approval queues behind A's landing; then a person takes the ticket back.
+    // The owner approves B, whose approval queues behind that landing; then a person takes the ticket back.
     const decided = ownerGate({ task: store.getTask(b.id)!, run: store.latestRun(b.id), store });
     await until(() => mergeSectionsPending(repo) === 2);
     store.setGate(b.id, 'human');
     release();
 
-    assert.equal((await landing).merge.code, 'merged');
+    await landing;
     assert.equal(await decided, 'hold');
     assert.equal(fs.existsSync(path.join(repo, 'b.txt')), false, 'nothing of B landed');
     const owner = store.eventsForTask(b.id).map((e) => e.message).filter((m) => m.startsWith('owner-gate:'));

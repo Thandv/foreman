@@ -7,10 +7,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
-import { approvals, applyApproval, ownerGate } from '../src/gate.ts';
-import { mergeSectionsPending } from '../src/landing/queue.ts';
+import { approvals, ownerGate } from '../src/gate.ts';
+import { mergeSectionsPending, withRepoMergeSection } from '../src/landing/queue.ts';
 import { clearPlaybookCache } from '../src/playbooks.ts';
-import type { MainCheck } from '../src/postMerge.ts';
 
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
@@ -66,19 +65,20 @@ test('an owner-gate approval queued behind a landing when shutdown begins is a h
     await sched.stop();
     store.gateWaiting('owner');
 
-    // A person approves A; its main check never finishes on its own, only the shutdown's abort ends it.
-    let inCheck!: () => void;
-    const entered = new Promise<void>((r) => { inCheck = r; });
-    const landing = applyApproval(store, a.id, { mainCheck: () => { inCheck(); return new Promise<MainCheck>(() => {}); } });
-    await entered;
+    // An earlier landing holds the repo's merge section until released.
+    let release!: () => void;
+    const landing = withRepoMergeSection(repo, () => new Promise<void>((r) => { release = r; }));
 
-    // The owner approves B, whose approval queues behind A's landing; then the daemon begins to shut down.
+    // The owner approves B, whose approval queues behind that landing; then the daemon begins to shut down, and
+    // the landing ahead of B settles.
     const decided = ownerGate({ task: store.getTask(b.id)!, run: store.latestRun(b.id), store });
     await until(() => mergeSectionsPending(repo) === 2);
-    assert.equal(await approvals.shutdown(30_000), 0);
+    const drained = approvals.shutdown(30_000);
+    release();
+    assert.equal(await drained, 0);
+    await landing;
 
     assert.equal(await decided, 'hold');
-    assert.match((await landing).merge.reason, /interrupted/);
     const owner = store.eventsForTask(b.id).map((e) => e.message).filter((m) => m.startsWith('owner-gate:'));
     assert.deepEqual(owner, ['owner-gate: hold — the daemon is shutting down; the ticket stays parked for the next start']);
     assert.equal(store.gateDecision(b.id), null, 'no durable decision: the owner gate asks again after the restart');

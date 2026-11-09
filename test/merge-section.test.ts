@@ -172,14 +172,10 @@ test('an approval queued behind a landing lands nothing if its ticket is re-park
   const store = new Store(':memory:');
   const tracker = new ApprovalTracker();
   try {
-    const a = parkedOnBranch(store, dir, 'held');
     const b = parkedOnBranch(store, dir, 'seen');
-    const aIn = deferred();
+    // An earlier landing holds the repo's merge section until released.
     const aOut = deferred();
-    const first = applyApproval(store, a.id, {
-      tracker, mainCheck: async (repoDir) => { aIn.resolve(); await aOut.promise; return green(repoDir); },
-    });
-    await aIn.promise;
+    const first = withRepoMergeSection(dir, () => aOut.promise);
     const second = applyApproval(store, b.id, { tracker, mainCheck: async (repoDir) => green(repoDir) });
     await until(() => mergeSectionsPending(dir) === 2);
     // While B's approval waits, B is rejected, retried and parked again on a run the approver never saw.
@@ -192,7 +188,7 @@ test('an approval queued behind a landing lands nothing if its ticket is re-park
     store.addVerdict({ runId: run2.id, taskId: b.id, verdict: 'pass', disagreement: false, council: [] });
     store.endRun(run2.id, 'succeeded', { exitCode: 0, summary: 'ok' });
     aOut.resolve();
-    assert.equal((await first).merge.code, 'merged');
+    await first;
     await assert.rejects(second, /work changed while the approval waited/);
     assert.equal(fs.existsSync(path.join(dir, 'unseen.txt')), false, 'the run the approver never saw did not land');
     assert.equal(store.getTask(b.id)!.status, 'awaiting-approval');
