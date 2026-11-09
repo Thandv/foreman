@@ -38,10 +38,10 @@ const COUNCIL_CTX_CEILING = (() => {
  */
 export const RUBRIC_VERSION = 2;
 
-/** Cache key for one advisor's opinion: (model, rubric version, exact prompt). */
 /** Decoding settings the council pins, so a verdict is reproducible. */
 export const COUNCIL_TEMPERATURE = 0;
 
+/** Cache key for one advisor's opinion: (model, rubric version, decoding settings, exact prompt). */
 function opinionKey(
   model: string,
   messages: ChatMessage[],
@@ -52,15 +52,15 @@ function opinionKey(
   // prompt decoded differently is a different answer, and conflating them
   // would let the cache serve a verdict produced under other settings.
   //
-  // So are the WINDOW and the output ceiling, and they were missing. A verdict
-  // reached with no num_ctx set was reached with the system message and the
-  // rubric silently dropped off the front — the model judged a chapter it had
-  // never been told how to judge. Raising num_ctx fixes new calls and does
-  // nothing about the cache, which would keep serving those blind verdicts
-  // forever under a key that says they were decoded at temperature 0.
+  // So are the WINDOW and the output ceiling. A verdict reached under a
+  // smaller window may have had the system message and the rubric dropped off
+  // the front — the model judged work it had never been told how to judge —
+  // and one reached under a tighter output cap may be cut short. Changing
+  // either must ask the models again, not replay the old verdict.
   return createHash('sha256')
     .update(
-      `${model}\u0000${RUBRIC_VERSION}\u0000t${decoding.temperature}\u0000s${decoding.seed}\u0000${content}`,
+      `${model}\u0000${RUBRIC_VERSION}\u0000t${decoding.temperature}\u0000s${decoding.seed}` +
+        `\u0000n${decoding.numCtx}\u0000m${decoding.maxTokens}\u0000${content}`,
     )
     .digest('hex');
 }

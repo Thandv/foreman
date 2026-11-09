@@ -53,7 +53,7 @@ test('an identical second review is served from the opinion cache', async () => 
   }
 });
 
-test('pin: changing the council output ceiling still replays the cached opinions', async () => {
+test('changing the council output ceiling misses the opinion cache', async () => {
   const store = ledger();
   const cap = config as { councilMaxOutputTokens: number };
   const before = cap.councilMaxOutputTokens;
@@ -62,14 +62,15 @@ test('pin: changing the council output ceiling still replays the cached opinions
     assert.ok(first > 0);
     // A one-line diff sits under the 4096-token window floor either way, so only maxTokens differs.
     cap.councilMaxOutputTokens = before + 50;
-    assert.equal(await review(store), 0, 'today a new output ceiling is a cache hit');
+    assert.equal(await review(store), first, 'a new output ceiling asks the models again');
+    assert.equal(await review(store), 0, 'and is then cached under its own key');
   } finally {
     cap.councilMaxOutputTokens = before;
     store.close();
   }
 });
 
-test('pin: changing FOREMAN_COUNCIL_NUM_CTX still replays the cached opinions', async () => {
+test('changing FOREMAN_COUNCIL_NUM_CTX misses the opinion cache', async () => {
   const store = ledger();
   try {
     const first = await review(store);
@@ -80,7 +81,8 @@ test('pin: changing FOREMAN_COUNCIL_NUM_CTX still replays the cached opinions', 
     process.env['FOREMAN_COUNCIL_NUM_CTX'] = '2048';
     const fresh = new URL('../src/verify/council.ts?num-ctx=2048', import.meta.url).href;
     const { runCouncil: restarted } = await import(fresh) as { runCouncil: Council };
-    assert.equal(await review(store, restarted), 0, 'today a new window is a cache hit');
+    assert.equal(await review(store, restarted), first, 'a new window asks the models again');
+    assert.equal(await review(store, restarted), 0, 'and is then cached under its own key');
   } finally {
     delete process.env['FOREMAN_COUNCIL_NUM_CTX'];
     store.close();
