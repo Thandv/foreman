@@ -59,7 +59,7 @@ test('the schema fingerprint matches the row for SCHEMA_VERSION, the newest row'
   assert.equal(sha, FINGERPRINTS[SCHEMA_VERSION], 'the schema changed: bump SCHEMA_VERSION and add its row');
 });
 
-test('a new ledger carries SCHEMA_VERSION; an older one opens as before and is stamped', (t) => {
+test('a new ledger carries SCHEMA_VERSION; serve opens an older one as before and stamps it', (t) => {
   const home = scratch(t);
   const fresh = path.join(home, 'fresh.db');
   new Store(fresh).close();
@@ -67,7 +67,7 @@ test('a new ledger carries SCHEMA_VERSION; an older one opens as before and is s
 
   const older = path.join(home, 'older.db');
   ledgerAt(older, 0);
-  const store = new Store(older);
+  const store = new Store(older, { migrate: true });
   const task = store.addTask({ title: 'still opens', prompt: 'x' });
   assert.equal(store.getTask(task.id)!.title, 'still opens');
   store.close();
@@ -126,10 +126,29 @@ function hasColumn(dbPath: string, table: string, column: string): boolean {
   }
 }
 
-test('a plain new Store() migrates a ledger one schema version older (pin)', (t) => {
-  const dbPath = path.join(scratch(t), 'foreman.db');
+test('only a migrating opener (serve) upgrades a ledger one schema version older; others refuse it unchanged', (t) => {
+  const home = scratch(t);
+  const dbPath = path.join(home, 'foreman.db');
   olderLedger(dbPath);
-  new Store(dbPath).close();
+  const before = snapshot(home);
+  assert.throws(
+    () => new Store(dbPath),
+    (err: Error) => err.name === 'OlderSchemaError' && err.message.includes(dbPath) &&
+      err.message.includes(`schema version ${SCHEMA_VERSION - 1}`) && err.message.includes('run foreman serve once'),
+  );
+  assert.deepEqual(snapshot(home), before);
+
+  new Store(dbPath, { migrate: true }).close();
   assert.equal(userVersion(dbPath), SCHEMA_VERSION);
   assert.ok(hasColumn(dbPath, 'tasks', 'repair_notes'));
+  new Store(dbPath).close();
+});
+
+test('any opener creates a brand-new ledger, including an empty file already on disk', (t) => {
+  const home = scratch(t);
+  const empty = path.join(home, 'empty.db');
+  fs.writeFileSync(empty, '');
+  new Store(empty).close();
+  assert.equal(userVersion(empty), SCHEMA_VERSION);
+  assert.ok(hasColumn(empty, 'tasks', 'repair_notes'));
 });

@@ -492,6 +492,14 @@ export class NewerSchemaError extends Error {
   }
 }
 
+/** A ledger written by an older Foreman, opened by something other than `foreman serve`: only serve migrates. */
+export class OlderSchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OlderSchemaError';
+  }
+}
+
 /** Throws NewerSchemaError when `db`'s stamp is ahead of SCHEMA_VERSION; returns the stamp otherwise. */
 export function requireKnownSchema(db: DatabaseSync, label: string): number {
   const version = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
@@ -504,13 +512,24 @@ export function requireKnownSchema(db: DatabaseSync, label: string): number {
   return version;
 }
 
-export function openDb(dbPath: string): DatabaseSync {
+/**
+ * Opens (creating when missing) the ledger at `dbPath`. A brand-new empty file is given the schema by any caller;
+ * an existing ledger stamped older than SCHEMA_VERSION is migrated only with `migrate: true` (`foreman serve`), so a
+ * CLI from another checkout never rewrites the live ledger's schema.
+ */
+export function openDb(dbPath: string, opts: { migrate?: boolean } = {}): DatabaseSync {
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
-  // Before any pragma or DDL: a newer ledger is left exactly as it was.
+  // Before any pragma or DDL: a newer ledger, or an older one this caller may not migrate, is left exactly as it was.
   let version: number;
   try {
     version = requireKnownSchema(db, dbPath);
+    if (version < SCHEMA_VERSION && !opts.migrate && !isEmptyDb(db)) {
+      throw new OlderSchemaError(
+        `${dbPath} has schema version ${version}, older than this Foreman's ${SCHEMA_VERSION}: ` +
+          'run foreman serve once to upgrade it. Nothing was changed',
+      );
+    }
   } catch (err) {
     db.close();
     throw err;
@@ -529,6 +548,11 @@ export function openDb(dbPath: string): DatabaseSync {
   db.exec(MIGRATED_INDEXES);
   if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return db;
+}
+
+/** True for a file with no schema objects yet: a database this open is creating, not one it would migrate. */
+function isEmptyDb(db: DatabaseSync): boolean {
+  return db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get() === undefined;
 }
 
 type Row = Record<string, unknown>;

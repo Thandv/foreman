@@ -42,8 +42,10 @@ a parent also cancels its descendants.
   Stop the daemon first (`foreman stop`), restore, then `foreman serve`.
 - **Schema version.** The database carries its schema version in its header (`PRAGMA user_version`); Foreman stamps it
   when it opens and migrates the file. A database stamped by a newer Foreman is refused when the store opens it and by
-  `restore`, before anything in it is touched: upgrade Foreman, or restore a backup taken before the upgrade. Older
-  databases open and migrate as before.
+  `restore`, before anything in it is touched: upgrade Foreman, or restore a backup taken before the upgrade. Only
+  `foreman serve` migrates an older database; every other command refuses one, before anything in it is touched, with
+  "run foreman serve once to upgrade it" (so a CLI from another checkout never rewrites the live ledger's schema).
+  A missing or empty database file is created by any command.
 - **Doctor.** `foreman doctor` probes the models, runners, agents and budget, and runs a scratch-jail check that the
   suite wrapper a worker uses works from inside a jail. `--bench` scores each local model and re-points the roster;
   `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20), then a SUITE line (p50

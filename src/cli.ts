@@ -489,7 +489,8 @@ async function main(): Promise<number> {
       return 1;
     }
     const releaseLock = acquireDaemonLock();
-    const store = new Store(config.dbPath);
+    // The one opener that migrates an older ledger; every other command refuses it.
+    const store = new Store(config.dbPath, { migrate: true });
     const scheduler = new Scheduler(store);
     const tracer = new Tracer(store);
     tracer.start();

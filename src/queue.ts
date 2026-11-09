@@ -278,10 +278,11 @@ export function safeRecord(store: Store, event: Parameters<Store['record']>[0]):
 export class Store extends EventEmitter {
   readonly db: DatabaseSync;
 
-  constructor(dbPath: string) {
+  /** `migrate: true` only for `foreman serve`: any other opener refuses a ledger with an older schema (see openDb). */
+  constructor(dbPath: string, opts: { migrate?: boolean } = {}) {
     super();
     this.setMaxListeners(0);
-    this.db = openDb(dbPath);
+    this.db = openDb(dbPath, opts);
     this.loadRedRepos();
   }
 

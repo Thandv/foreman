@@ -177,7 +177,8 @@ test('migration: a database created by the previous schema (its own db.ts) gains
     db.close();
     assert.ok(!taskColumns(file).includes('skills'), 'the old schema has no skills column');
 
-    const store = new Store(file);
+    // An unstamped older ledger: only serve's opener migrates it.
+    const store = new Store(file, { migrate: true });
     try {
       assert.ok(taskColumns(file).includes('skills'));
       const row = store.getTask('t_old')!;
