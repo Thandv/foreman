@@ -74,6 +74,11 @@ export function scanSource(text: string): Spec[] {
   return out;
 }
 
+/** True when the source text references process.env outside a comment (a read, a write or a whole-env pass). */
+export function touchesProcessEnv(text: string): boolean {
+  return /\bprocess\s*\.\s*env\b/.test(stripComments(text));
+}
+
 /** Each value import in `specs` that is neither relative nor a node:* built-in, as "<file>: '<specifier>'". */
 export function bareValueImports(file: string, specs: Spec[]): string[] {
   return specs.filter((s) => !s.typeOnly && !s.spec.startsWith('.') && !s.spec.startsWith('node:')).map((s) => `${file}: '${s.spec}'`);
@@ -249,6 +254,7 @@ const ENV_READS: Record<string, string[]> = {
   'src/warm.ts': ['FOREMAN_OLLAMA_KEEP_ALIVE', 'FOREMAN_OLLAMA_URL', 'FOREMAN_PREWARM', 'FOREMAN_PREWARM_TIMEOUT_MS'],
 };
 
+
 test('the value-import cycles are exactly the allowlisted components', () => {
   const actual = cycles(value).map((c) => c.join(' + '));
   const allowed = CYCLES.map((c) => [...c.files].sort().join(' + ')).sort();
@@ -299,6 +305,14 @@ test('FOREMAN_* reads outside config.ts match the per-file allowlist', () => {
   const actual = Object.fromEntries([...envReads].sort().map(([f, s]) => [f, [...s].sort()]));
   const allowed = Object.fromEntries(Object.entries(ENV_READS).sort().map(([f, a]) => [f, [...a].sort()]));
   assert.deepEqual(actual, allowed, 'update ENV_READS (new read, or a stale entry)');
+});
+
+test('the process.env scan counts code and strings, and not a comment', () => {
+  assert.equal(touchesProcessEnv("const x = process.env['X'];"), true);
+  assert.equal(touchesProcessEnv('spawn(cmd, args, { env: process.env });'), true);
+  assert.equal(touchesProcessEnv('const e = process\n  .env;'), true);
+  assert.equal(touchesProcessEnv("// process.env['X']\n/* process.env.Y */\nconst a = 1;"), false);
+  assert.equal(touchesProcessEnv('const a = process.envelope;'), false);
 });
 
 test('the runtime has no dependencies: package.json lists none and src value-imports only node:* built-ins', () => {
