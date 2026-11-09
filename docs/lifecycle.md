@@ -35,9 +35,14 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    `code` beside its `reason` (`MergeResult` in `src/merge.ts`: `merged`, `conflict`,
    `not-reviewed`, `core-refused` and the rest). The gate, the owner gate, the CLI and the board
    decide on the code; the reason is the words you are shown and is never matched.
-   Landings in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
-   same repo waits until the first one's merge and post-merge check have settled, whether they
-   passed, failed or threw. While it waits its ticket stays at `awaiting-approval` and nothing is
+   Merges in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
+   same repo waits until the first one's checks, decision and merge have settled, whether they
+   passed, failed or threw. The post-merge check runs after that, at the HEAD its own merge made,
+   so the next approval in the repo merges while it is tested, and a red names the merge whose
+   HEAD failed. A dependent stays `blocked` until its parent's check passes; it is released at
+   once when no check runs for that landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing
+   merged), and a red or interrupted check holds it with the repo. One check runs per landing.
+   While it waits its ticket stays at `awaiting-approval` and nothing is
    decided: its checks, the decision and the merge all run when its turn comes, so approving the
    same ticket twice lands it once, and an approval whose turn comes after a daemon shutdown began
    is refused (approve again after restart). A queued approval is for the run that was parked when

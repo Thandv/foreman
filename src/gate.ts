@@ -255,7 +255,10 @@ export async function pruneStaleMainWorktrees(store: Store): Promise<string[]> {
   return removed;
 }
 
-type MainChecker = (repo: string, testCmd: string | null, signal: AbortSignal) => Promise<MainCheck>;
+/** Runs the repo's tests at `head`, the HEAD a landing's merge made (postMerge.ts checkMain). */
+type MainChecker = (repo: string, testCmd: string | null, signal: AbortSignal, head: string) => Promise<MainCheck>;
+
+const checkMergedHead: MainChecker = (repo, testCmd, signal, head) => checkMain(repo, testCmd, signal, undefined, head);
 
 /** Resolves when `signal` aborts, never otherwise: a check that ignores its signal must not hold a shutdown. */
 function onAbort(signal: AbortSignal): Promise<'interrupted'> {
@@ -316,10 +319,14 @@ type ApproveOpts = {
   stale?: () => string | null;
 } & ApprovalStatement;
 
+/** Where an approval's checks, decision and merge run: in its repo's merge section, or at once. */
+type Section = <T>(fn: () => Promise<T>) => Promise<T>;
+
 /**
- * An approval of work parked at the gate in a repo runs whole inside that
- * repo's merge section (src/landing/queue.ts): every check, the decision and
- * the landing. Queued behind another landing, the ticket stays parked and
+ * An approval of work parked at the gate in a repo runs inside that repo's
+ * merge section (src/landing/queue.ts): every check, the decision and the
+ * merge; the post-merge check runs after the section, so the next landing in
+ * the repo merges while it is tested. Queued behind another landing, the ticket stays parked and
  * nothing is decided, so a crash while it waits leaves no ticket done whose
  * work never merged; when its turn comes everything is read afresh, so a
  * second approval of the same ticket finds it decided and is refused, and one
@@ -330,9 +337,9 @@ type ApproveOpts = {
  */
 async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker): Promise<ApprovalResult> {
   const parked = store.getTask(taskId);
-  if (!parked?.repo || parked.status !== 'awaiting-approval') return approveNow(store, taskId, opts, tracker);
+  if (!parked?.repo || parked.status !== 'awaiting-approval') return approveNow(store, taskId, opts, tracker, (fn) => fn());
   const runId = store.latestRun(taskId)?.id ?? null;
-  return withRepoMergeSection(parked.repo, () => {
+  return approveNow(store, taskId, opts, tracker, (fn) => withRepoMergeSection(parked.repo!, () => {
     tracker.admit(taskId);
     const now = store.getTask(taskId);
     const why = now?.status !== 'awaiting-approval'
@@ -341,16 +348,68 @@ async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker:
         ? `the work changed while the approval waited for its turn to land: run ${runId} was approved, another is parked`
         : opts.stale?.() ?? null;
     if (why) throw new StaleApprovalError(`approval of ${taskId} not applied, nothing decided: ${why}`);
-    return approveNow(store, taskId, opts, tracker);
-  });
+    return fn();
+  }));
 }
 
-async function approveNow(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker): Promise<ApprovalResult> {
+/** A decided approval whose merge has settled, ready for its post-merge check. */
+interface Settled {
+  before: Task | null;
+  run: Run | null;
+  task: Task;
+  merge: MergeResult;
+  landable: boolean;
+  /** The HEAD the merge made, to be tested; null when no post-merge check runs for this landing. */
+  checkAt: string | null;
+}
+
+async function approveNow(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker, section: Section): Promise<ApprovalResult> {
+  const settled = await section(() => decideAndMerge(store, taskId, opts));
+  if ('result' in settled) return settled.result;
+  const { before, run, task, landable } = settled;
+  let merge = settled.merge;
+  try {
+    if (settled.checkAt !== null) merge = await checkLanded(store, settled, settled.checkAt, opts.mainCheck ?? checkMergedHead, tracker);
+  } finally {
+    // The landing hold ends here: a dependent is released by a passing check
+    // at the HEAD its parent's merge made, or at once when no check ran.
+    if (landable) store.endLanding(taskId);
+  }
+  if (merge.branch) {
+    store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
+  }
+  if (merge.merged && merge.note) {
+    store.record({ taskId, runId: run?.id ?? null, type: 'warning', message: merge.note });
+  }
+  // A tool task lands by being registered, the way a code task lands by merging.
+  const registration: RegisterResult = landable
+    ? registerApprovedTool(task, run)
+    : task.kind === 'tool'
+      ? { registered: false, reason: 'nothing to register: no run was approved', tool: null }
+      : { registered: false, reason: 'not a tool task', tool: null };
+  if (task.kind === 'tool') {
+    store.record({
+      taskId,
+      runId: run?.id ?? null,
+      type: registration.registered ? 'status' : 'error',
+      message: `tool: ${registration.reason}`,
+    });
+  }
+  // The ledger's own record of this decision: written once, when the outcome is known.
+  return recordApproval(store, opts, before, run, { task, merge, registration });
+}
+
+/**
+ * Every check, the decision and the merge (the part of an approval that runs
+ * in the repo's merge section). An approval refused or unlandable before
+ * anything is decided comes back as its final `result`.
+ */
+async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): Promise<Settled | { result: ApprovalResult }> {
   const source = opts.source ?? 'human';
   const before = store.getTask(taskId);
   const run = before ? store.latestRun(taskId) : null;
-  // The ledger's own record of this decision (recordApproval below): written once, when the outcome is known.
-  const recorded = (result: ApprovalResult): Promise<ApprovalResult> => recordApproval(store, opts, before, run, result);
+  const recorded = async (result: ApprovalResult): Promise<{ result: ApprovalResult }> =>
+    ({ result: await recordApproval(store, opts, before, run, result) });
   // A conflict round that is not a clean, finished result is never approved
   // into main, nor is the task marked done on top of it: it goes back to the
   // gate on the approved run, with the hand-merge message.
@@ -397,19 +456,17 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
   // like it carries an error (and changes what dpoFromGate reads as `reason`).
   // The note's homes are the memory preference, the `decisions` row and its
   // timeline event (recordApproval).
-  // Held from BEFORE decide() until the merge settles: decide() marks the task
+  // Held from BEFORE decide() until the merged HEAD is shown to pass (approveNow): decide() marks the task
   // done, and the scheduler's next tick (250ms) would otherwise release its
   // dependents and cut their worktrees from a main the merge has not reached
   // yet. Observed on an earlier crew run: the executor started in the same
   // second its dependency was approved, one second before that merge landed,
   // and failed its typecheck on the missing module.
   if (landable) store.beginLanding(taskId);
-  let task: Task;
-  let merge: ApprovalResult['merge'];
   try {
-    task = store.decide(taskId, true, undefined, source);
+    let task = store.decide(taskId, true, undefined, source);
     recordDecision(store, task, true, note, source);
-    merge = landable
+    let merge: MergeResult = landable
       ? await mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who }).catch((err: Error): MergeResult => ({
         merged: false,
         code: 'failed',
@@ -460,80 +517,72 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
       store.setStatus(taskId, 'awaiting-approval', store.withCoreGuard(taskId, `approved, but not landed: ${merge.reason} — ${next}`));
       task = store.getTask(taskId)!;
     }
-    // Still inside the landing hold, so no dependent is released before the
-    // merged main has been shown to pass its own tests; and inside the merge
-    // section (see approve), so no other approval merges into the repo while it is tested.
-    if (landable && merge.merged && task.repo && postMergeCheckEnabled()) {
-      const { signal, release } = tracker.checkSignal();
-      const repo = task.repo;
-      const ran = await Promise.race([
-        (opts.mainCheck ?? checkMain)(repo, task.testCmd ?? null, signal)
-          .catch((err: Error): MainCheck => ({ ok: false, head: '', cmd: null, tail: err.message, firstTail: '' })),
-        onAbort(signal),
-      ]).finally(release);
-      // A shutdown aborted the check: it did not run, so the repo is not known
-      // green. Held like a red main, due for a re-check at once (the
-      // scheduler's red re-check verifies HEAD and releases it), so no
-      // dependent is cut from an untested HEAD; and the scratch worktree is
-      // taken down rather than left registered in the repo.
-      if (ran === 'interrupted') {
-        await pruneMainWorktrees(repo);
-        store.markRepoRed(repo, {
-          head: await repoHead(repo), taskId, testCmd: task.testCmd ?? null,
-          reason: 'post-merge check interrupted — untested', nextCheckAt: Date.now(),
-        });
-        store.record({
-          taskId, runId: run?.id ?? null, type: 'warning',
-          message: `main check after merging ${taskId} was interrupted by a daemon shutdown and did not run: ` +
-            'the merged HEAD is untested; new work for this repo is held until a re-check passes',
-        });
-        merge = { ...merge, reason: `${merge.reason}; main check interrupted by shutdown — untested, dependents held` };
-      }
-      const check: MainCheck = ran === 'interrupted'
-        ? { ok: true, head: '', cmd: null, tail: '', firstTail: '' } // already held above
-        : ran;
-      const firstRun = check.firstTail ? `\n--- first run (failed) ---\n${check.firstTail.slice(-2_000)}\n--- second run ---\n` : '\n';
-      if (check.ok && check.firstTail) {
-        store.record({
-          taskId, runId: run?.id ?? null, type: 'status',
-          message: `main check after ${taskId} failed once, then passed on an immediate re-run at the same HEAD (flaky; repo not marked red)` +
-            `${firstRun}${check.tail.slice(-2_000)}`,
-        });
-      }
-      if (!check.ok) {
-        store.markRepoRed(task.repo, { head: check.head, taskId, testCmd: task.testCmd ?? null, reason: check.tail.slice(-2_000) });
-        store.record({
-          taskId, runId: run?.id ?? null, type: 'error',
-          message: `MAIN IS RED after merging ${taskId}${check.cmd ? ` (${check.cmd})` : ''}: new work for this repo is held ` +
-            `until HEAD moves and its tests pass.${firstRun}${check.tail.slice(-2_000)}`,
-        });
-        merge = { ...merge, reason: `${merge.reason}; MAIN IS RED after the merge — dependents held` };
-      }
-    }
-  } finally {
+    // Read inside the section: the next landing may move HEAD while this one is tested.
+    const checkAt = landable && merge.merged && task.repo && postMergeCheckEnabled() ? await repoHead(task.repo) : null;
+    return { before, run, task, merge, landable, checkAt };
+  } catch (err) {
     if (landable) store.endLanding(taskId);
+    throw err;
   }
-  if (merge.branch) {
-    store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
-  }
-  if (merge.merged && merge.note) {
-    store.record({ taskId, runId: run?.id ?? null, type: 'warning', message: merge.note });
-  }
-  // A tool task lands by being registered, the way a code task lands by merging.
-  const registration: RegisterResult = landable
-    ? registerApprovedTool(task, run)
-    : task.kind === 'tool'
-      ? { registered: false, reason: 'nothing to register: no run was approved', tool: null }
-      : { registered: false, reason: 'not a tool task', tool: null };
-  if (task.kind === 'tool') {
+}
+
+/**
+ * The post-merge check of a landing, at the HEAD its merge made. Outside the
+ * merge section but still inside the landing hold, so no dependent is
+ * released before that HEAD has been shown to pass its own tests. A red or
+ * an interrupted check marks the repo red at that HEAD and names this task.
+ * Returns the merge result with what the check found appended to its reason.
+ */
+async function checkLanded(store: Store, landed: Settled, head: string, mainCheck: MainChecker, tracker: ApprovalTracker): Promise<MergeResult> {
+  const { task, run } = landed;
+  const taskId = task.id;
+  const repo = task.repo!;
+  let merge = landed.merge;
+  const { signal, release } = tracker.checkSignal();
+  const ran = await Promise.race([
+    mainCheck(repo, task.testCmd ?? null, signal, head)
+      .catch((err: Error): MainCheck => ({ ok: false, head: '', cmd: null, tail: err.message, firstTail: '' })),
+    onAbort(signal),
+  ]).finally(release);
+  // A shutdown aborted the check: it did not run, so the repo is not known
+  // green. Held like a red main, due for a re-check at once (the
+  // scheduler's red re-check verifies HEAD and releases it), so no
+  // dependent is cut from an untested HEAD; and the scratch worktree is
+  // taken down rather than left registered in the repo.
+  if (ran === 'interrupted') {
+    await pruneMainWorktrees(repo);
+    store.markRepoRed(repo, {
+      head, taskId, testCmd: task.testCmd ?? null,
+      reason: 'post-merge check interrupted — untested', nextCheckAt: Date.now(),
+    });
     store.record({
-      taskId,
-      runId: run?.id ?? null,
-      type: registration.registered ? 'status' : 'error',
-      message: `tool: ${registration.reason}`,
+      taskId, runId: run?.id ?? null, type: 'warning',
+      message: `main check after merging ${taskId} was interrupted by a daemon shutdown and did not run: ` +
+        'the merged HEAD is untested; new work for this repo is held until a re-check passes',
+    });
+    merge = { ...merge, reason: `${merge.reason}; main check interrupted by shutdown — untested, dependents held` };
+  }
+  const check: MainCheck = ran === 'interrupted'
+    ? { ok: true, head: '', cmd: null, tail: '', firstTail: '' } // already held above
+    : ran;
+  const firstRun = check.firstTail ? `\n--- first run (failed) ---\n${check.firstTail.slice(-2_000)}\n--- second run ---\n` : '\n';
+  if (check.ok && check.firstTail) {
+    store.record({
+      taskId, runId: run?.id ?? null, type: 'status',
+      message: `main check after ${taskId} failed once, then passed on an immediate re-run at the same HEAD (flaky; repo not marked red)` +
+        `${firstRun}${check.tail.slice(-2_000)}`,
     });
   }
-  return recorded({ task, merge, registration });
+  if (!check.ok) {
+    store.markRepoRed(repo, { head: check.head, taskId, testCmd: task.testCmd ?? null, reason: check.tail.slice(-2_000) });
+    store.record({
+      taskId, runId: run?.id ?? null, type: 'error',
+      message: `MAIN IS RED after merging ${taskId}${check.cmd ? ` (${check.cmd})` : ''}: new work for this repo is held ` +
+        `until HEAD moves and its tests pass.${firstRun}${check.tail.slice(-2_000)}`,
+    });
+    merge = { ...merge, reason: `${merge.reason}; MAIN IS RED after the merge — dependents held` };
+  }
+  return merge;
 }
 
 /**

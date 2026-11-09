@@ -199,6 +199,20 @@ test('the main-check re-run sees the same HEAD as the first run', async () => {
   assert.equal(result.tail, 'second boom');
 });
 
+test('a main check given a HEAD tests that commit, not where HEAD has moved since', async () => {
+  const { checkMain } = await import('../src/postMerge.ts');
+  const dir = repo({ 'a.txt': 'one\n' });
+  const landed = git(dir, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'two\n'); git(dir, 'commit', '-qam', 'a later merge');
+  const seen: string[] = [];
+  const result = await checkMain(dir, 'fake', undefined, async (wt) => {
+    seen.push(git(wt, 'rev-parse', 'HEAD'));
+    return { passed: true, output: '' };
+  }, landed);
+  assert.deepEqual(seen, [landed]);
+  assert.equal(result.head, landed);
+});
+
 // ------------------------------------------------ the reviewed tree (FA1)
 //
 // The landing merges the tree the run's reviewers were shown, or nothing. These

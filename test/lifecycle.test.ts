@@ -11,6 +11,7 @@ import { sweepJails } from '../src/archive.ts';
 import { createJail } from '../src/isolate.ts';
 import { ApprovalTracker, applyApproval, pruneStaleMainWorktrees, ShuttingDownError } from '../src/gate.ts';
 import type { MainCheck } from '../src/postMerge.ts';
+import { withRepoMergeSection } from '../src/landing/queue.ts';
 import { Tracer } from '../src/trace.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import type { TaskStatus } from '../src/types.ts';
@@ -254,20 +255,22 @@ test('an approval queued behind a landing when shutdown begins does not merge: i
   const store = new Store(':memory:');
   const tracker = new ApprovalTracker();
   try {
-    const a = parkedOnBranch(store, dir, 'first');
     const b = parkedOnBranch(store, dir, 'queued');
-    let entered!: () => void;
-    const inCheck = new Promise<void>((r) => { entered = r; });
-    // A's check never finishes on its own: only the shutdown's abort ends it.
-    const blocking = (): Promise<MainCheck> => { entered(); return new Promise<MainCheck>(() => {}); };
-    const first = applyApproval(store, a.id, { tracker, mainCheck: blocking });
-    await inCheck;
+    // A landing under way holds the repo's merge section until it settles, after the shutdown began.
+    let settle!: () => void;
+    const settled = new Promise<void>((r) => { settle = r; });
+    const first = withRepoMergeSection(dir, () => settled);
     let bChecked = false;
-    const second = applyApproval(store, b.id, { tracker, mainCheck: () => { bChecked = true; return blocking(); } });
+    const second = applyApproval(store, b.id, {
+      tracker, mainCheck: () => { bChecked = true; return new Promise<MainCheck>(() => {}); },
+    });
+    const refused = assert.rejects(second, (err: Error) => err instanceof ShuttingDownError && /approve again after restart/.test(err.message));
 
-    assert.equal(await tracker.shutdown(30_000), 0, 'both approvals settled within the cap');
-    assert.match((await first).merge.reason, /interrupted/, 'the landing under way finished its merge');
-    await assert.rejects(second, (err: Error) => err instanceof ShuttingDownError && /approve again after restart/.test(err.message));
+    const drained = tracker.shutdown(30_000);
+    settle();
+    assert.equal(await drained, 0, 'the queued approval settled within the cap');
+    await first;
+    await refused;
     assert.equal(bChecked, false);
     assert.equal(store.getTask(b.id)!.status, 'awaiting-approval', 'the queued ticket is still parked at the gate');
     assert.equal(fs.existsSync(path.join(dir, 'queued.txt')), false, 'its branch was not merged');

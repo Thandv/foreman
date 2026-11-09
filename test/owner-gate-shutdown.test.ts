@@ -67,7 +67,8 @@ test('an owner-gate approval queued behind a landing when shutdown begins is a h
 
     // An earlier landing holds the repo's merge section until released.
     let release!: () => void;
-    const landing = withRepoMergeSection(repo, () => new Promise<void>((r) => { release = r; }));
+    const released = new Promise<void>((r) => { release = r; });
+    const landing = withRepoMergeSection(repo, () => released);
 
     // The owner approves B, whose approval queues behind that landing; then the daemon begins to shut down, and
     // the landing ahead of B settles.

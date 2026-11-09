@@ -791,14 +791,15 @@ export class Store extends EventEmitter {
     return [...this.redRepos];
   }
 
-  /** Tasks approved whose merge has not settled yet; see beginLanding. */
+  /** Tasks approved whose landing has not settled yet; see beginLanding. */
   private readonly landing = new Set<string>();
 
   /**
-   * An approved task whose work is still being merged. It is already `done`,
-   * but its dependents must not start until the merge lands — they are cut
-   * from the repo's HEAD. In-process only: a daemon that dies mid-merge holds
-   * nothing, exactly as it holds no merge.
+   * An approved task whose work is still landing. It is already `done`, but
+   * its dependents must not start until the merge lands and the HEAD it made
+   * passes its post-merge check (gate.ts) — they are cut from the repo's HEAD.
+   * In-process only: a daemon that dies mid-merge holds nothing, exactly as
+   * it holds no merge.
    */
   beginLanding(taskId: string): void {
     this.landing.add(taskId);

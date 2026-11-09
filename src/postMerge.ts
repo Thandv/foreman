@@ -56,14 +56,15 @@ export async function repoHead(repo: string): Promise<string> {
   return git(repo, ['rev-parse', 'HEAD']).catch(() => '');
 }
 
-/** Run the repo's tests on its current HEAD in a throwaway detached worktree. */
+/** Run the repo's tests on `at` (default: its current HEAD) in a throwaway detached worktree. */
 export async function checkMain(
   repo: string,
   testCmd: string | null,
   signal?: AbortSignal,
   run: MainTestRunner = runSandboxed,
+  at?: string,
 ): Promise<MainCheck> {
-  const head = await repoHead(repo);
+  const head = at ?? await repoHead(repo);
   // The pid in the name tells a startup prune whose check this is (gate.ts pruneMainWorktrees).
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `foreman-main-${process.pid}-`));
   try {

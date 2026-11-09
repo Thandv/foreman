@@ -47,45 +47,24 @@ async function until(cond: () => boolean): Promise<void> {
 
 const green = (dir: string): MainCheck => ({ ok: true, head: git(dir, 'rev-parse', 'HEAD'), cmd: null, tail: '', firstTail: '' });
 
-test('two approvals in one repo land one after the other: the second waits, still parked, for the first landing to settle', async () => {
+test('an approval queued behind a merge in its repo waits, still parked and unmerged, until that merge section settles', async () => {
   delete process.env['FOREMAN_POSTMERGE_CHECK'];
   const dir = repo();
   const store = new Store(':memory:');
   const tracker = new ApprovalTracker();
   try {
-    const a = parkedOnBranch(store, dir, 'first');
     const b = parkedOnBranch(store, dir, 'second');
-    const aIn = deferred();
-    const open = new Set<string>();
-    let overlapped = false;
-    let whileQueued: { status: string; merged: boolean } | null = null;
-    // A's landing stays open until B reaches its own main check (the landings overlap), or until B, queued behind
-    // it, has had ample time to merge if it were not waiting. What B looks like then is kept to assert on.
-    const aHold = async (): Promise<void> => {
-      await until(() => overlapped || mergeSectionsPending(dir) === 2);
-      const deadline = Date.now() + 1_500;
-      await until(() => overlapped || Date.now() > deadline);
-      whileQueued = { status: store.getTask(b.id)!.status, merged: fs.existsSync(path.join(dir, 'second.txt')) };
-    };
-    const check = (id: string, entered: () => void, hold: () => Promise<unknown>) => async (repoDir: string): Promise<MainCheck> => {
-      open.add(id);
-      if (open.size > 1) overlapped = true;
-      entered();
-      await hold();
-      open.delete(id);
-      return green(repoDir);
-    };
-    const first = applyApproval(store, a.id, { tracker, mainCheck: check('a', aIn.resolve, aHold) });
-    await aIn.promise;
-    const second = applyApproval(store, b.id, { tracker, mainCheck: check('b', () => {}, () => Promise.resolve()) });
-    const [one, two] = await Promise.all([first, second]);
-    assert.equal(overlapped, false, 'the second landing ran inside the first: two merges on one checkout at once');
-    assert.deepEqual(whileQueued, { status: 'awaiting-approval', merged: false },
-      'while queued the second approval has neither merged nor marked its ticket done');
-    assert.equal(one.merge.code, 'merged');
-    assert.equal(two.merge.code, 'merged');
+    // An earlier landing holds the repo's merge section until released.
+    const held = deferred();
+    const first = withRepoMergeSection(dir, () => held.promise);
+    const second = applyApproval(store, b.id, { tracker, mainCheck: async (repoDir) => green(repoDir) });
+    await until(() => mergeSectionsPending(dir) === 2);
+    assert.equal(store.getTask(b.id)!.status, 'awaiting-approval', 'nothing decided while queued');
+    assert.equal(fs.existsSync(path.join(dir, 'second.txt')), false, 'nothing merged while queued');
+    held.resolve();
+    await first;
+    assert.equal((await second).merge.code, 'merged');
     assert.equal(store.getTask(b.id)!.status, 'done');
-    assert.equal(fs.existsSync(path.join(dir, 'first.txt')) && fs.existsSync(path.join(dir, 'second.txt')), true, 'both landed');
   } finally {
     store.close();
   }
@@ -103,8 +82,9 @@ test('a second approval of the same ticket waits its turn and is then refused: t
     const first = applyApproval(store, a.id, { tracker, mainCheck });
     const again = applyApproval(store, a.id, { tracker, mainCheck });
     assert.equal(mergeSectionsPending(dir), 2, 'both approvals are in the repo\'s queue');
+    const refused = assert.rejects(again, /is done, not awaiting-approval/);
     assert.equal((await first).merge.code, 'merged');
-    await assert.rejects(again, /is done, not awaiting-approval/);
+    await refused;
     assert.equal(checks, 1, 'the merged main was checked once');
     assert.equal(store.getTask(a.id)!.status, 'done');
   } finally {
