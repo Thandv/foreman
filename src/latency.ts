@@ -45,7 +45,8 @@ export interface LatencyReport {
   stages: StageStat[];
 }
 
-function percentile(sorted: number[], p: number): number {
+/** The nearest-rank percentile `p` (0..1) of an ascending list; 0 when it is empty. */
+export function percentile(sorted: number[], p: number): number {
   if (!sorted.length) return 0;
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
   return sorted[idx]!;

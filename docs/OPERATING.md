@@ -112,6 +112,14 @@ Set `FOREMAN_DEBUG=1` in the daemon's environment (in the launchd plist's `Envir
   wait rather than the work done at once.
 - `FOREMAN_DAILY_USD_CAP` (default 5) is the spend cap per day.
 
+**Metrics.** `GET /api/metrics` reports what Foreman already measures, as JSON, or as Prometheus text with
+`?format=prom` (every metric a gauge). It reads and never writes. It has the event loop's p99 delay since the daemon
+started (`eventLoopLagP99Ms`, `null` before the first sample), how long each tick stage took the last time it ran, in
+tick order (`tickStageMs`), tasks by status, suite runs waiting for a verify slot, the gate wait p50 and p90 over the
+last 100 runs (as `foreman doctor --latency` computes it), per repo the p95 age of its tickets at `awaiting-approval`
+(counted from each ticket's last update; tickets with no repo under `(none)`), and the whole minutes each red repo has
+been red. Any other `format` is a 400.
+
 Start low: four workers with two suite runners fits a laptop. Raise `FOREMAN_MAX_VERIFIES` only when suite runs are
 the wait and the machine has cores to spare. Settings are read at `foreman serve`; restart to change them. See
 [Configuration](configuration.md) for the full list.

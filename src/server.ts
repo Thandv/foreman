@@ -22,6 +22,7 @@ import {
 } from './agreement.ts';
 import { pruneDepsCache } from './deps.ts';
 import { computeLatencyReport } from './latency.ts';
+import { collectMetrics, toProm } from './metrics.ts';
 import { gatherEvidence, proposeImprovement, queueImprovement } from './improve.ts';
 import { consolidate } from './assistant/memory.ts';
 import { applyApproval, applyRejection, envGate, ShuttingDownError } from './gate.ts';
@@ -1507,6 +1508,16 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       if (method === 'POST' && seg[2] && (seg[3] === 'quarantine' || seg[3] === 'release')) {
         return json(res, 200, setQuarantine(seg[2], seg[3] === 'quarantine'));
       }
+    }
+
+    if (seg[1] === 'metrics' && !seg[2] && method === 'GET') {
+      const format = url.searchParams.get('format') ?? 'json';
+      if (format !== 'json' && format !== 'prom') return json(res, 400, { error: 'format must be json or prom' });
+      const metrics = collectMetrics(store, scheduler.tickStageMs(), Date.now());
+      if (format === 'json') return json(res, 200, metrics);
+      res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(toProm(metrics));
+      return;
     }
 
     if (seg[1] === 'latency' && method === 'GET') {

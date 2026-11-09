@@ -161,10 +161,12 @@ export function dirtyBackoffMs(probes: number): number {
 const TICK_ERROR_QUIET_MS = 5 * 60_000;
 
 /** The stages of one tick, each contained on its own, in the order a tick runs them. */
-export type TickStage =
-  | 'runDueSchedules' | 'runDueArchiveSweep' | 'runDueAsks' | 'runDueImprovements' | 'runDueGates'
-  | 'reconcileBlocked' | 'reconcileLostRuns' | 'dispatchGate' | 'dispatch'
-  | 'runDueRechecks' | 'recheckRedRepos' | 'probeDirtyRepos';
+export const TICK_STAGES = [
+  'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates',
+  'reconcileBlocked', 'reconcileLostRuns', 'dispatchGate', 'dispatch',
+  'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
+] as const;
+export type TickStage = (typeof TICK_STAGES)[number];
 
 export interface VerifyArgs {
   task: Task;
@@ -676,6 +678,8 @@ export class Scheduler {
   private readonly tickErrors = new Map<TickStage | 'tick', { message: string; at: number; suppressed: number }>();
   /** Every failure of each tick stage since start, recorded or suppressed. */
   private readonly stageErrorCounts = new Map<TickStage, number>();
+  /** The synchronous wall-clock ms each tick stage took the last time it ran (GET /api/metrics). */
+  private readonly stageMs = new Map<TickStage, number>();
   /** restoreAgentSettings, said in the timeline; a jail whose settings cannot be checked does not start a round. */
   private async restoreAgentSettingsOrThrow(jail: Jail, emit: (line: string) => void): Promise<void> {
     let changed: string[];
@@ -999,6 +1003,11 @@ export class Scheduler {
     return new Map(this.stageErrorCounts);
   }
 
+  /** How long each tick stage took, in ms, the last time it ran (a copy; stages that never ran are absent). */
+  tickStageMs(): ReadonlyMap<TickStage, number> {
+    return new Map(this.stageMs);
+  }
+
   private noteTickError(err: unknown, stage: TickStage | 'tick' = 'tick'): void {
     const message = (err instanceof Error ? err.message : String(err)).slice(0, 1000);
     const now = this.now();
@@ -1019,16 +1028,19 @@ export class Scheduler {
   }
 
   /**
-   * One tick stage, contained: its throw is recorded (naming the stage) and counted, and the tick goes on to the
-   * next stage. Returns the stage's result, or undefined when it threw.
+   * One tick stage, contained and timed: its throw is recorded (naming the stage) and counted, and the tick goes on
+   * to the next stage. Returns the stage's result, or undefined when it threw.
    */
   private stage<T>(name: TickStage, run: () => T): T | undefined {
+    const start = performance.now();
     try {
       return run();
     } catch (err) {
       this.stageErrorCounts.set(name, (this.stageErrorCounts.get(name) ?? 0) + 1);
       this.noteTickError(err, name);
       return undefined;
+    } finally {
+      this.stageMs.set(name, performance.now() - start);
     }
   }
 
