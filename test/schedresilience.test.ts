@@ -166,13 +166,68 @@ test('the tick runs its stages in a fixed order', async () => {
   };
   for (const name of ['runDueSchedules', 'reconcileBlocked']) spy(store, name);
   spy(store, 'claimable', 'dispatch');
+  spy(sched, 'dispatchSlots', 'dispatchGate');
   for (const name of ['runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileLostRuns', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos']) spy(sched, name);
   try {
     await sched.tick();
     assert.deepEqual(order, [
       'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileBlocked',
-      'reconcileLostRuns', 'dispatch', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
+      'reconcileLostRuns', 'dispatchGate', 'dispatch', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
     ]);
+  } finally {
+    await sched.stop();
+    store.close();
+  }
+});
+
+/** Records each call of the scheduler's idle-time stages (re-checks and the dirty-checkout probe) into `calls`. */
+function spyIdleStages(sched: Scheduler, calls: string[]): void {
+  const obj = sched as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const name of ['runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos']) {
+    const real = obj[name]!.bind(sched);
+    obj[name] = (...args: unknown[]) => { calls.push(name); return real(...args); };
+  }
+}
+
+test('a throwing dispatch is named, counted, and the idle-time stages still run in the same tick', async () => {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, now: () => 1_700_000_000_000 });
+  store.claimable = (() => { throw new Error('claim boom'); }) as Store['claimable'];
+  const calls: string[] = [];
+  spyIdleStages(sched, calls);
+  try {
+    const t = store.addTask({ title: 'not claimed', prompt: 'x', runner: 'echo' });
+    await sched.tick();
+    // A deliberate trade-off: free slots the throw left unfilled go to the idle-time stages this tick.
+    assert.deepEqual(calls, ['runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos']);
+    assert.equal(store.getTask(t.id)!.status, 'queued');
+    const errors = store.eventsSince(0, 10_000).filter((e) => e.type === 'error').map((e) => e.message);
+    assert.deepEqual(errors, ['scheduler tick failed in dispatch: claim boom']);
+    assert.deepEqual(Object.fromEntries(sched.tickStageErrors()), { dispatch: 1 });
+  } finally {
+    await sched.stop();
+    store.close();
+  }
+});
+
+test('a throwing dispatch gate defers dispatch and the idle-time stages, as a gate that says no does', async () => {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, now: () => 1_700_000_000_000 });
+  (sched as unknown as { deferForLocalModelLock: () => boolean }).deferForLocalModelLock = () => { throw new Error('gate boom'); };
+  let claims = 0;
+  const realClaimable = store.claimable.bind(store);
+  store.claimable = ((...args: Parameters<Store['claimable']>) => { claims++; return realClaimable(...args); }) as Store['claimable'];
+  const calls: string[] = [];
+  spyIdleStages(sched, calls);
+  try {
+    const t = store.addTask({ title: 'not claimed', prompt: 'x', runner: 'echo' });
+    await sched.tick();
+    assert.equal(claims, 0, 'dispatch never ran');
+    assert.equal(store.getTask(t.id)!.status, 'queued');
+    assert.deepEqual(calls, [], 'nor did the stages after it');
+    const errors = store.eventsSince(0, 10_000).filter((e) => e.type === 'error').map((e) => e.message);
+    assert.deepEqual(errors, ['scheduler tick failed in dispatchGate: gate boom']);
+    assert.deepEqual(Object.fromEntries(sched.tickStageErrors()), { dispatchGate: 1 });
   } finally {
     await sched.stop();
     store.close();
