@@ -4,7 +4,8 @@ import { terms } from './assistant/memory.ts';
 import { config } from './config.ts';
 import { swallowed } from './debug.ts';
 import { sweepOrphanStaging } from './deps.ts';
-import { jailChanges, pinnedGit, type Jail } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
+import { jailChanges, type Jail } from './isolate.ts';
 // Type-only: the Store is always the caller's, so archive.ts keeps no runtime
 // edge to queue.ts (which imports this module).
 import type { Store } from './queue.ts';
@@ -262,7 +263,7 @@ export async function sweepJails(
       if (repo) {
         if (protect.has(dir)) {
           // Fails closed: a git error (a moved repo, a dangling .git) proves nothing.
-          // Pinned, drivers off (isolate.ts pinnedGit): `status` hashes the files a worker changed, through any clean
+          // Pinned, drivers off (gitExec.ts pinnedGit): `status` hashes the files a worker changed, through any clean
           // filter the repo's config — which the jail can write — names.
           const pending = await pinnedGit(dir, ['status', '--porcelain'])
             .then((r) => r.stdout.trim())

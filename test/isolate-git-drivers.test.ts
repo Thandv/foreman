@@ -5,8 +5,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  carryDiff, changedFiles, createJail, diffJail, driverlessEnv, jailTree, leftoverMarkers, removeJail, unmergedPaths, type Jail,
+  carryDiff, changedFiles, createJail, diffJail, jailTree, leftoverMarkers, removeJail, unmergedPaths, type Jail,
 } from '../src/isolate.ts';
+import { driverlessEnv } from '../src/gitExec.ts';
 import type { Task } from '../src/types.ts';
 import { hermeticGitEnv } from './helpers/git.ts';
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-import { jailChanges, jailTree, pinnedGit } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
+import { jailChanges, jailTree } from './isolate.ts';
 import { changedPaths, coreRefusal, isProtectedPath, isSelfTaskFresh } from './security/coreGuard.ts';
 import type { Run, Task } from './types.ts';
 

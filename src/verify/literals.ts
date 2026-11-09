@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PINNED, pinnedEnv } from '../isolate.ts';
+import { PINNED, pinnedEnv } from '../gitExec.ts';
 import { gitTimeoutOpts } from '../gitTimeout.ts';
 
 /**
@@ -48,7 +48,7 @@ export const isTestPath = (rel: string): boolean =>
 function sourceTexts(dir: string): string[] {
   let listing: string;
   try {
-    // Pinned (isolate.ts): `dir` is a jail, whose config the worker can write; `ls-files` ran its core.fsmonitor.
+    // Pinned (gitExec.ts): `dir` is a jail, whose config the worker can write; `ls-files` ran its core.fsmonitor.
     listing = execFileSync('git', [...PINNED, 'ls-files', '-co', '--exclude-standard', '-z'], { cwd: dir, env: pinnedEnv(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...gitTimeoutOpts() });
   } catch {
     return [];

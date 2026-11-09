@@ -16,7 +16,8 @@ import { extractJson } from './models.ts';
 import { cloudFallback, localOnly } from './localOnly.ts';
 import { getPlaybook } from './playbooks.ts';
 import { isSelfTask } from './security/coreGuard.ts';
-import { leftoverMarkers, pinnedGit, unmergedPaths } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
+import { leftoverMarkers, unmergedPaths } from './isolate.ts';
 // Type-only, like ownerCall.ts: the Store is always the caller's, so gate.ts
 // keeps no runtime edge to queue.ts and cannot form a cycle with it.
 import type { Store } from './queue.ts';
@@ -609,7 +610,7 @@ async function checkLanded(store: Store, landed: Settled, head: string, mainChec
  * branch anywhere by then (merge.ts reads the branch once for the same
  * reason). Null when git cannot say.
  *
- * Through isolate.ts's `pinnedGit`: the repo's config is the one every jail
+ * Through gitExec.ts's `pinnedGit`: the repo's config is the one every jail
  * can write, and with `log.showSignature` set there, `git log` ran the
  * `gpg.program` it also names on a signed merge commit. Exported for its test.
  */

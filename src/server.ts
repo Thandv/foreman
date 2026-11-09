@@ -48,7 +48,7 @@ import { withDroppedIssues } from './verify/crewReview.ts';
 import { acquireVerifySlot, claimRunLease, slotsAhead, VerifyWaitAborted } from './verify/slots.ts';
 import { testTimeoutMs } from './verify/tests.ts';
 import { checkRepo } from './gitTripwire.ts';
-import { pinnedGit } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
 import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
 import { probeTask, STAGES } from './types.ts';
 import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';

@@ -42,6 +42,7 @@ Boundaries:
 - **Runners share one interface.** `src/runners/` holds the API runner, the CLI runners, the shell runner and the echo (demo) runner behind the `Runner` interface in `src/runners/index.ts`. The scheduler goes by each runner's declared traits (`takesBrief`, `verifiable`) and names a runner only for a few things: `claude-code`'s session resume, provider-limit hold, agent settings and shell allowlist, and the api runner's tool brief.
 - **Verification is its own lane.** `src/verify/` (tests, council, crew review, assertion and revert checks) runs after a worker finishes, in a lane with its own limit (`maxVerifying` in `src/config.ts`).
 - **The security code is guarded.** `src/security/` holds the sandbox, the admission scan and the core guard; see [Protected paths](#protected-paths).
+- **No import cycles.** `test/architecture.test.ts` fails on any cycle of value imports in `src/` (`CYCLES` is empty) and on any edge out of `src/security/` beyond config, types, `src/localOnly.ts` and `src/gitTimeout.ts` that `SECURITY_EDGES` does not list with its reason (one today: the core guard takes `driverlessEnv` from `src/gitExec.ts`). The pinned git lives in `src/gitExec.ts`, which imports no protected module, so the jail (`src/isolate.ts`) and the core guard both import it rather than each other.
 - **Alignment and prose sit behind a fixed set of edges.** The rest of `src/` reaches `src/align/` and `src/prose/` only through the value imports listed, each with its reason, in `ALIGN_PROSE_EDGES` in `test/architecture.test.ts`; a new edge, or a listed one that is gone, fails the test until the list changes in the same diff.
 - **No runtime dependencies.** `package.json` lists no `dependencies`, `optionalDependencies` or `peerDependencies`, and every `src/` value import is relative or a `node:*` built-in; `test/architecture.test.ts` fails naming the field or the file and specifier. Tooling goes in `devDependencies`.
 - **The environment is read in known places.** `ENV_READS` in `test/architecture.test.ts` lists the `FOREMAN_*` names each file outside `src/config.ts` reads, and `PROCESS_ENV_FILES` lists every `src/` file that references `process.env` outside a comment, `src/config.ts` and whole-environment passes to a child included. A new file or name, or a listed one that is gone, fails the test until the list changes in the same diff.
@@ -193,6 +194,7 @@ Not every entry exists on a fresh install: the module that uses a path creates i
 - `src/merge.ts`
 - `src/landing/`
 - `src/isolate.ts`
+- `src/gitExec.ts`
 - `src/tools/catalog.ts`
 - `src/lock.ts`
 - `src/gate.ts`
@@ -206,7 +208,7 @@ Not every entry exists on a fresh install: the module that uses a path creates i
 
 Why they are guarded, from the comment above the list:
 
-- **They define what Foreman may do.** The security scanner and the guard itself, the landing check (`src/merge.ts`) and the per-repo merge queue (`src/landing/`), tool registration (`src/tools/catalog.ts`), the jail (`src/isolate.ts`, which says what a run changed), the lock, and the tests that pin the guard. A change that widened these would widen Foreman's own permissions.
+- **They define what Foreman may do.** The security scanner and the guard itself, the landing check (`src/merge.ts`) and the per-repo merge queue (`src/landing/`), tool registration (`src/tools/catalog.ts`), the jail (`src/isolate.ts`, which says what a run changed) and the pinned git every daemon-side git call goes through (`src/gitExec.ts`), the lock, and the tests that pin the guard. A change that widened these would widen Foreman's own permissions.
 - **They hold the rules around the guard.** The gate, the scheduler's check, the queue's reopen path, the HTTP API and the store's schema. The approve endpoint takes no proof of who is calling, so a process a run left behind could approve its own ticket; "a person approves it" alone does not keep a worker's change out of these files.
 
 A ticket may change a protected path only if it carries `allowCore`, which Foreman never sets on its own.

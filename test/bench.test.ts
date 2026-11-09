@@ -100,7 +100,7 @@ test('the pipeline bench waits for the owner gate to finish a landing before it 
 });
 
 test('the pipeline bench keeps the end of a not-landed ticket\'s events, where the error says why', () => {
-  // A failed git command's message starts with the long pinned `-c` argument list (src/isolate.ts) and ends with git's
+  // A failed git command's message starts with the long pinned `-c` argument list (src/gitExec.ts) and ends with git's
   // stderr, the cause; the start alone cannot say why the ticket did not land.
   const store = new Store(path.join(scratchDir('foreman-bench-why-'), 'foreman.db'));
   try {

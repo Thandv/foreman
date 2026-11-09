@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { config } from './config.ts';
-/** The daemon's pinned git (isolate.ts `pinnedGit`), passed in: isolate.ts calls this module, so it cannot import it. */
+/** The daemon's pinned git (gitExec.ts `pinnedGit`), passed in. */
 export type GitRun = (cwd: string, args: string[]) => Promise<{ stdout: string }>;
 
 export interface TripwireSnapshot {

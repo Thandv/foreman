@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { redact } from '../align/redact.ts';
-import { PINNED, pinnedEnv } from '../isolate.ts';
+import { PINNED, pinnedEnv } from '../gitExec.ts';
 import { gitTimeoutOpts } from '../gitTimeout.ts';
 
 /**
@@ -72,7 +72,7 @@ export function trackedListing(dir: string): string {
 
 function trackedFiles(root: string): string[] {
   try {
-    // Pinned (isolate.ts): the reviewer's tree is a jail, whose config the worker can write; `ls-files` ran its core.fsmonitor.
+    // Pinned (gitExec.ts): the reviewer's tree is a jail, whose config the worker can write; `ls-files` ran its core.fsmonitor.
     const raw = execFileSync('git', ['-C', root, ...PINNED, 'ls-files', '-z'], {
       env: pinnedEnv(),
       encoding: 'utf8',

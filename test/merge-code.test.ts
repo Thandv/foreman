@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from '../src/queue.ts';
 import { applyApproval, type ApprovalResult } from '../src/gate.ts';
 import { recordBaseline } from '../src/gitTripwire.ts';
-import { pinnedGit } from '../src/isolate.ts';
+import { pinnedGit } from '../src/gitExec.ts';
 import { mergeApproved, type MergeCode } from '../src/merge.ts';
 import { NOTHING_TO_CHANGE_CLOSED } from '../src/verify/gateOutcome.ts';
 import type { Task } from '../src/types.ts';

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config } from './config.ts';
-import { PINNED, pinnedEnv } from './isolate.ts';
+import { PINNED, pinnedEnv } from './gitExec.ts';
 import { gitTimeoutOpts } from './gitTimeout.ts';
 import { sandboxMode } from './security/sandbox.ts';
 
@@ -85,7 +85,7 @@ function isTracked(repoDir: string, rel: string): Promise<boolean | null> {
 /** Is node_modules ignored here? */
 async function isIgnored(repoDir: string, rel: string): Promise<boolean> {
   try {
-    // Pinned (isolate.ts): the repo's config is the one every jail can write, and `check-ignore` reads the index,
+    // Pinned (gitExec.ts): the repo's config is the one every jail can write, and `check-ignore` reads the index,
     // which runs the program `core.fsmonitor` names.
     await exec('git', [...PINNED, 'check-ignore', '-q', rel], { cwd: repoDir, env: pinnedEnv(), ...gitTimeoutOpts() });
     return true;

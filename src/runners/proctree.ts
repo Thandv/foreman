@@ -135,7 +135,7 @@ export function signalGroups(groups: Iterable<number>, sig: NodeJS.Signals): num
  * signalled on a normal 'close' otherwise, so a `cmd >/dev/null 2>&1 &` kept
  * running after the run was handed on — and could, for one, rewrite the jail's
  * git config between the daemon's driver listing and its git call
- * (isolate.ts driverlessEnv / pinnedGit).
+ * (gitExec.ts driverlessEnv / pinnedGit).
  *
  * Once the command has exited its pid is gone and anything it orphaned is
  * launchd's child, so the ppid walk alone finds nothing. What still ties a

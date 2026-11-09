@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { provisionDeps } from './deps.ts';
-import { checkoutWorktree, pinnedGit } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
+import { checkoutWorktree } from './isolate.ts';
 import { withVerifySlot } from './verify/slots.ts';
 import { detectTestCmd, runTests, type SandboxRunOpts } from './verify/tests.ts';
 
@@ -48,7 +49,7 @@ const runSandboxed: MainTestRunner = (dir, cmd, signal, sandbox) => runTests(dir
 const tailOf = (output: string): string => output.split('\n').slice(-25).join('\n');
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  // Pinned, drivers off (isolate.ts pinnedGit): the repo's config is the one every jail can write.
+  // Pinned, drivers off (gitExec.ts pinnedGit): the repo's config is the one every jail can write.
   return (await pinnedGit(cwd, args)).stdout.trim();
 }
 

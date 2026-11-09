@@ -17,7 +17,8 @@ import {
   effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
   ownerGateBatch, quotedPathsInDiff, type GateBatchItem,
 } from './gate.ts';
-import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
 import { checkRepo, recordBaseline } from './gitTripwire.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
@@ -2684,7 +2685,7 @@ export class Scheduler {
         try {
           let dirty: string;
           try {
-            // Pinned, drivers off (isolate.ts pinnedGit): the repo's config is the one every jail can write, and
+            // Pinned, drivers off (gitExec.ts pinnedGit): the repo's config is the one every jail can write, and
             // `status` hashes changed files through any clean filter it names.
             dirty = (await pinnedGit(repo, ['status', '--porcelain'])).stdout.trim();
           } catch (err) {

@@ -141,11 +141,11 @@ export function timedOutTwiceNote(first: GateTimeout, second: GateTimeout, outpu
 // --- a jail behind main ---------------------------------------------------------------------------------------------
 
 /**
- * The same pins as every git call in isolate.ts (its `gitExec` is not exported, and that file is not this one's to
- * change): no hooks, no fsmonitor program, no extra attributes file, objects read as stored, and none of the GIT_*
+ * The same pins as every git call through gitExec.ts (which this file does not import: that file is not this one's
+ * to change): no hooks, no fsmonitor program, no extra attributes file, objects read as stored, and none of the GIT_*
  * variables that would point the call at another repository. Run in the REAL repo only, and read-only.
  *
- * One more than isolate.ts needs, because this file is the first to run `git log`: the repo's config (which a jail
+ * One more than gitExec.ts pins, because this file is the first to run `git log`: the repo's config (which a jail
  * can write) may set `log.showSignature`, and `git log` then starts `gpg.program` — any program the config names —
  * for every commit in the range that carries a signature header. Switched off here and again on the command itself.
  *

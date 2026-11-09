@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { driverlessEnv } from '../isolate.ts';
+import { driverlessEnv } from '../gitExec.ts';
 import { gitTimeoutOpts, timedGit } from '../gitTimeout.ts';
 import type { Task } from '../types.ts';
 
@@ -19,7 +19,7 @@ export function foremanRoot(): string {
  * Foreman widening its own permissions: the security scanner and this guard,
  * the merge logic (the landing check and the per-repo merge queue in
  * src/landing/), the tool-registration path, the jail (which says what a run
- * changed), the lock, the file that re-exports this list, and the tests that
+ * changed) and the pinned git it and this guard run (src/gitExec.ts), the lock, the file that re-exports this list, and the tests that
  * pin the guard. Also the files that hold the rules
  * around it — the gate (a person lands a self-change; a refused landing is not
  * done), the scheduler (the run's check), the queue (reopen), the HTTP API and
@@ -35,6 +35,7 @@ export const PROTECTED_PATHS = [
   'src/merge.ts',
   'src/landing/',
   'src/isolate.ts',
+  'src/gitExec.ts',
   'src/tools/catalog.ts',
   'src/lock.ts',
   'src/gate.ts',
@@ -233,14 +234,14 @@ export function isProtectedPath(p: string): boolean {
  * treat that as a refusal.
  */
 export async function changedPaths(cwd: string, from: string, to?: string): Promise<string[]> {
-  // The same pins as every git call in isolate.ts (gitExec there), for the
+  // The same pins as every git call through gitExec.ts, for the
   // same reason: the jail can write the config this runs under. Without them
   // this listing — the one the core guard decides on — ran the jail's
   // fsmonitor program, and a `git replace` of a protected file's base blob
   // took that file out of it. Compared with the working tree (no `to`), it
   // also hashes the files the worker changed, through any clean filter the
   // config names — and starts a git in each submodule that does the same — so
-  // those drivers are switched off by name (isolate.ts driverlessEnv); two
+  // those drivers are switched off by name (gitExec.ts driverlessEnv); two
   // trees are compared without reading a file. No lazy fetch: a promisor
   // remote the config names ran its `uploadpack` program for a dropped object.
   const drivers = to ? {} : await driverlessEnv(cwd);

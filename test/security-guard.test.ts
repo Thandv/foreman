@@ -833,7 +833,7 @@ test('landing: a commit added to the branch between the check and the merge does
 });
 
 // The driver is repo config, which the jail can write. git used to run it in the checkout, during the prediction
-// and the merge; the landing's git calls now name git's own line merge in its place (isolate.ts driverlessEnv), so
+// and the merge; the landing's git calls now name git's own line merge in its place (gitExec.ts driverlessEnv), so
 // whatever the driver would do, it never runs, and the protected file is never touched.
 for (const [what, driver] of [
   // Would hand back the branch's side, after writing the protected file.

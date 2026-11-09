@@ -21,7 +21,8 @@ import { assertTicketSkills } from './skills.ts';
 import type {
   AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Run, RunEvent, Stage, Task, TaskStatus, Verdict,
 } from './types.ts';
-import { pinnedGit, removeJail } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
+import { removeJail } from './isolate.ts';
 import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
 
 /** The most of a decision's note the ledger keeps, in UTF-8 bytes, marker included. */
