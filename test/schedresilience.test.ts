@@ -107,6 +107,78 @@ test('a failing tick is recorded once, rate-limited, and the next tick still dis
   }
 });
 
+// ------------------------------------------------- one throwing tick stage does not stop the others
+
+/** A queued echo ticket and a scheduler whose `breakStage` throws on every call. */
+async function tickWithBrokenStage(breakStage: (store: Store) => void): Promise<void> {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, now: () => 1_700_000_000_000 });
+  try {
+    const t = store.addTask({ title: 'claimed past the broken stage', prompt: 'x', runner: 'echo' });
+    breakStage(store);
+    await sched.pulse();
+    assert.notEqual(store.getTask(t.id)!.status, 'queued', 'claimed in the same tick as the throw');
+    assert.ok(store.latestRun(t.id), 'and launched');
+  } finally {
+    await sched.stop();
+    store.close();
+  }
+}
+
+test('a throwing runDueSchedules does not stop claim and launch in the same tick, and is named', () =>
+  tickWithBrokenStage((store) => {
+    store.runDueSchedules = (() => { throw new Error('schedules boom'); }) as Store['runDueSchedules'];
+  }));
+
+test('a throwing reconcileBlocked does not stop claim and launch in the same tick', () =>
+  tickWithBrokenStage((store) => {
+    store.reconcileBlocked = (() => { throw new Error('reconcile boom'); }) as Store['reconcileBlocked'];
+  }));
+
+test('a stage failure is recorded as "scheduler tick failed" naming the stage, and counted per stage', async () => {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, now: () => 1_700_000_000_000 });
+  store.runDueSchedules = (() => { throw new Error('schedules boom'); }) as Store['runDueSchedules'];
+  store.reconcileBlocked = (() => { throw new Error('reconcile boom'); }) as Store['reconcileBlocked'];
+  try {
+    await sched.pulse();
+    await sched.pulse();
+    const errors = store.eventsSince(0, 10_000).filter((e) => e.type === 'error').map((e) => e.message);
+    assert.deepEqual(errors, [
+      'scheduler tick failed in runDueSchedules: schedules boom',
+      'scheduler tick failed in reconcileBlocked: reconcile boom',
+    ], 'each stage recorded once, rate-limited per stage');
+    assert.deepEqual(Object.fromEntries(sched.tickStageErrors()), { runDueSchedules: 2, reconcileBlocked: 2 });
+  } finally {
+    await sched.stop();
+    store.close();
+  }
+});
+
+test('the tick runs its stages in a fixed order', async () => {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, now: () => 1_700_000_000_000 });
+  const order: string[] = [];
+  const spy = (target: object, name: string, label = name): void => {
+    const obj = target as Record<string, (...args: unknown[]) => unknown>;
+    const real = obj[name]!.bind(target);
+    obj[name] = (...args: unknown[]) => { order.push(label); return real(...args); };
+  };
+  for (const name of ['runDueSchedules', 'reconcileBlocked']) spy(store, name);
+  spy(store, 'claimable', 'dispatch');
+  for (const name of ['runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileLostRuns', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos']) spy(sched, name);
+  try {
+    await sched.tick();
+    assert.deepEqual(order, [
+      'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileBlocked',
+      'reconcileLostRuns', 'dispatch', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
+    ]);
+  } finally {
+    await sched.stop();
+    store.close();
+  }
+});
+
 // ------------------------------------------------- held tickets never starve other repos
 
 async function dispatchesPastHeld(hold: (sched: Scheduler, store: Store, repo: string) => void): Promise<void> {
