@@ -291,10 +291,20 @@ export class Store extends EventEmitter {
 
   // ---------------------------------------------------------------- events
 
+  private listenerErrorCount = 0;
+  private readonly listenerErrorLoggedAt = new WeakMap<(ev: RunEvent) => void, number>();
+
+  /** Event listener throws caught by record() since this Store opened. */
+  get listenerErrors(): number {
+    return this.listenerErrorCount;
+  }
+
   /**
-   * Writes the event row, then emits it. The emit is after the INSERT, so a
-   * throw (a listener's, say) does not always mean the event was not written.
-   * Use safeRecord where the write is only informational.
+   * Writes the event row, then hands it to each 'event' listener in turn. A
+   * listener that throws is counted (listenerErrors) and reported on stderr at
+   * most once a minute per listener; it fails neither record() nor the
+   * listeners after it. A throw from record() is the INSERT's. Use safeRecord
+   * where the write is only informational.
    */
   record(
     e: { taskId?: string | null; runId?: string | null; type: RunEvent['type']; stage?: Stage | null; message: string },
@@ -312,8 +322,29 @@ export class Store extends EventEmitter {
       stage: e.stage ?? null,
       message: e.message,
     };
-    this.emit('event', ev);
+    this.deliver(ev);
     return ev;
+  }
+
+  // rawListeners, not listeners: a once() wrapper must run to remove itself.
+  // A failure goes to stderr, not record(): recording it would recurse.
+  private deliver(ev: RunEvent): void {
+    for (const listener of this.rawListeners('event') as ((ev: RunEvent) => void)[]) {
+      try {
+        listener.call(this, ev);
+      } catch (err) {
+        this.listenerErrorCount++;
+        const now = Date.now();
+        const last = this.listenerErrorLoggedAt.get(listener);
+        if (last !== undefined && now - last < 60_000) continue;
+        this.listenerErrorLoggedAt.set(listener, now);
+        try {
+          process.stderr.write(`foreman: event listener failed on event ${ev.id} (${ev.type}): ${err instanceof Error ? err.message : String(err)}\n`);
+        } catch {
+          /* stderr is gone; nothing left to tell */
+        }
+      }
+    }
   }
 
   eventsSince(sinceId: number, limit = 500): RunEvent[] {

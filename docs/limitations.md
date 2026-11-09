@@ -14,6 +14,10 @@
   pointed at different homes but the same `FOREMAN_DB` are not caught.
 - Slow SSE readers get a bounded buffer (1000 events past socket saturation), then are dropped;
   a dropped board reconnects with `?since=` and catches up from SQLite.
+- An event listener (SSE stream, tracer) that throws is isolated: the event row is still written,
+  the other listeners still get it, and the throw is counted on `Store.listenerErrors` and logged to
+  stderr at most once a minute per listener. That listener misses the event; a board catches it up
+  from SQLite with `?since=` on reconnect.
 - Each runner child's pid (which is its process-group id, since it is detached) is recorded on its
   run row. On SIGINT, SIGTERM or SIGHUP `foreman serve` stops dispatching and aborts every post-merge
   check. It gives approvals already landing up to 60 s, then waits up to 60 s for the scheduler to
