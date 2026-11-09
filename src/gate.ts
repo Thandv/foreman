@@ -1,12 +1,9 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { ownerCall } from './assistant/ownerCall.ts';
 import { recordDecision } from './assistant/memory.ts';
 import { dailyCapUsd, subscriptionCapUsd } from './budget.ts';
 import { config } from './config.ts';
-import { gitTimeoutOpts } from './gitTimeout.ts';
 import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
 import { landingRefusal, mergeApproved, type MergeCode, type MergeResult } from './merge.ts';
@@ -125,8 +122,6 @@ export function gateOptIn(task: Pick<Task, 'gate' | 'playbook'>, houseDefault?: 
   return houseDefault === 'owner';
 }
 
-const execGit = promisify(execFile);
-
 /** Thrown by applyApproval once the daemon has begun shutting down. */
 export class ShuttingDownError extends Error {}
 
@@ -208,10 +203,11 @@ const MAIN_WORKTREE_PREFIX = 'foreman-main-';
  * scratch checkouts), then prune registrations whose directory is gone. Used
  * after an interrupted check and at startup, after a crash. A worktree named
  * for another process that is still alive is that process's running check
- * and is left alone. Returns the paths removed.
+ * and is left alone. Returns the paths removed. Through `pinnedGit`, so an
+ * inherited GIT_DIR cannot point the listing and removals at another repo.
  */
 export async function pruneMainWorktrees(repo: string): Promise<string[]> {
-  const list = await execGit('git', ['worktree', 'list', '--porcelain'], { cwd: repo, ...gitTimeoutOpts() })
+  const list = await pinnedGit(repo, ['worktree', 'list', '--porcelain'])
     .then((r) => r.stdout)
     .catch(() => '');
   const removed: string[] = [];
@@ -223,11 +219,11 @@ export async function pruneMainWorktrees(repo: string): Promise<string[]> {
     // foreman-main-<pid>-…: another live daemon's (or CLI's) check in progress.
     const owner = Number(/^foreman-main-(\d+)-/.exec(name)?.[1]);
     if (owner && owner !== process.pid && pidAlive(owner)) continue;
-    await execGit('git', ['worktree', 'remove', '--force', dir], { cwd: repo, ...gitTimeoutOpts() }).catch(() => {});
+    await pinnedGit(repo, ['worktree', 'remove', '--force', dir]).catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
     removed.push(dir);
   }
-  await execGit('git', ['worktree', 'prune'], { cwd: repo, ...gitTimeoutOpts() }).catch(() => {});
+  await pinnedGit(repo, ['worktree', 'prune']).catch(() => {});
   return removed;
 }
 
