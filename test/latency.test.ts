@@ -1,6 +1,8 @@
-import './env.ts';
+import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
 import { computeLatencyReport, formatDuration, LATENCY_STAGES, type RunLatencyInput } from '../src/latency.ts';
 
@@ -150,4 +152,58 @@ test('Store.recentRunsForLatency on an empty database returns no runs', () => {
   const report = computeLatencyReport(store.recentRunsForLatency(20));
   assert.equal(report.sampleRuns, 0);
   store.close();
+});
+
+// ------------------------------------------------------- doctor --latency (the printed report)
+
+/** A ledger file with two finished runs on fixed timestamps; the gate stage is followed by a decision 1 s later. */
+function seededLedger(): string {
+  const file = path.join(scratchDir('foreman-latency-db-'), 'foreman.db');
+  const store = new Store(file);
+  const base = 1_700_000_000_000;
+  for (const [i, work] of [[1, 2_000], [2, 4_000]] as const) {
+    const at = base + i * 100_000;
+    const gateAt = at + 1_000 + work + 1_000;
+    store.db
+      .prepare(
+        'INSERT INTO tasks (id,title,prompt,kind,runner,sensitivity,status,max_attempts,created_at,updated_at) ' +
+          "VALUES (?,'x','do it','code','echo','S1','done',2,?,?)",
+      )
+      .run(`t${i}`, at, gateAt + 1_000);
+    store.db.prepare("INSERT INTO runs (id,task_id,status,stage,started_at) VALUES (?,?,'succeeded','gate',?)").run(`r${i}`, `t${i}`, at);
+    for (const [stage, ts] of [['isolate', at], ['work', at + 1_000], ['test', at + 1_000 + work], ['gate', gateAt]] as const) {
+      store.db
+        .prepare("INSERT INTO events (task_id, run_id, ts, type, stage, message) VALUES (?,?,?,'stage',?,?)")
+        .run(`t${i}`, `r${i}`, ts, stage, stage);
+    }
+  }
+  store.close();
+  return file;
+}
+
+function doctorLatency(dbFile: string): string {
+  const r = spawnSync(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'cli.ts'), 'doctor', '--latency'], {
+    encoding: 'utf8',
+    env: { ...process.env, FOREMAN_DB: dbFile, FOREMAN_HOME: path.dirname(dbFile) },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout;
+}
+
+test('doctor --latency prints the per-stage table for a seeded ledger', () => {
+  assert.equal(
+    doctorLatency(seededLedger()),
+    [
+      'per-stage latency — last 2 run(s)',
+      '',
+      'STAGE      N    MEDIAN   P90      SHARE',
+      'isolate    2    1.0s     1.0s     20.0%',
+      'plan       0    0ms      0ms      —',
+      'work       2    2.0s     4.0s     40.0%',
+      'test       2    1.0s     1.0s     20.0%',
+      'verify     0    0ms      0ms      —',
+      'gate-wait  2    1.0s     1.0s     20.0%',
+      '',
+    ].join('\n'),
+  );
 });

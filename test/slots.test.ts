@@ -123,13 +123,13 @@ function fixtureRepo(): string {
 const WORK = 'printf "changed\\n" > README.md';
 
 /** Hold the only slot, queue `task`, and release once the run is parked behind it. */
-async function runBehindHeldSlot(store: Store, taskId: string): Promise<void> {
+async function runBehindHeldSlot(store: Store, taskId: string, holdMs = 30): Promise<void> {
   const held = await acquireVerifySlot();
   const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
   const drained = sched.drain(30_000);
   await until(() => verifySlotStats().waiting === 1);
   assert.equal(store.latestRun(taskId)?.verifyWaitMs, 0, 'nothing is recorded until the wait ends');
-  await sleep(30);
+  await sleep(holdMs);
   held.release();
   await drained;
 }
@@ -151,18 +151,24 @@ test('a gate check takes a slot, and the run records the time it waited as verif
     }
   }));
 
+/** A playbook `slots-pb` with these checks, in a fresh FOREMAN_PLAYBOOKS_DIR; returns the dir. */
+function crewPlaybook(checks: string[]): string {
+  const dir = scratchDir('foreman-slots-pb-');
+  process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
+  const fm = {
+    id: 'slots-pb', description: 'checks', triggers: ['x'],
+    roles: { lead: { tier: 'owner' }, worker: { tier: 'worker' } },
+    reviewers: [{ role: 'lead', style: 'code-review' }],
+    escalation: { chair: 'lead', afterFailures: 2 },
+    checks, gate: { default: 'human', hardHuman: ['S2'] }, constraints: ['Never do the bad thing.'],
+  };
+  fs.writeFileSync(path.join(dir, 'slots-pb.md'), `---\n${JSON.stringify(fm, null, 2)}\n---\n\n## pipeline\n\nPlan then execute.\n\n## role: lead\n\nYou lead the work and review it.\n\n## role: worker\n\nYou execute what the lead assigns.\n`);
+  return dir;
+}
+
 test('a crew test gate (a playbook check) takes a slot', () =>
   withCap('1', async () => {
-    const dir = scratchDir('foreman-slots-pb-');
-    process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
-    const fm = {
-      id: 'slots-pb', description: 'one check', triggers: ['x'],
-      roles: { lead: { tier: 'owner' }, worker: { tier: 'worker' } },
-      reviewers: [{ role: 'lead', style: 'code-review' }],
-      escalation: { chair: 'lead', afterFailures: 2 },
-      checks: ['true'], gate: { default: 'human', hardHuman: ['S2'] }, constraints: ['Never do the bad thing.'],
-    };
-    fs.writeFileSync(path.join(dir, 'slots-pb.md'), `---\n${JSON.stringify(fm, null, 2)}\n---\n\n## pipeline\n\nPlan then execute.\n\n## role: lead\n\nYou lead the work and review it.\n\n## role: worker\n\nYou execute what the lead assigns.\n`);
+    const dir = crewPlaybook(['true']);
     const store = new Store(':memory:');
     const repo = fixtureRepo();
     try {
@@ -170,6 +176,26 @@ test('a crew test gate (a playbook check) takes a slot', () =>
       await runBehindHeldSlot(store, t.id);
       const run = store.latestRun(t.id)!;
       assert.ok(run.verifyWaitMs! > 0, `expected a recorded wait, got ${run.verifyWaitMs}`);
+    } finally {
+      delete process.env['FOREMAN_PLAYBOOKS_DIR'];
+      store.close();
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+test('a run whose two playbook checks take 1 s each records no suite time today', () =>
+  withCap('1', async () => {
+    const dir = crewPlaybook(['sleep 1', 'sleep 1']);
+    const store = new Store(':memory:');
+    const repo = fixtureRepo();
+    try {
+      const t = store.addTask({ title: 'crew', prompt: WORK, kind: 'code', runner: 'shell', repo, playbook: 'slots-pb', role: 'worker' });
+      await runBehindHeldSlot(store, t.id, 1_000);
+      const runId = store.latestRun(t.id)!.id;
+      const row = store.db.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as Record<string, unknown>;
+      assert.equal('suite_ms' in row, false, 'no suite time is recorded');
+      assert.ok(Number(row['verify_wait_ms']) >= 1_000, 'the slot wait is recorded');
     } finally {
       delete process.env['FOREMAN_PLAYBOOKS_DIR'];
       store.close();
