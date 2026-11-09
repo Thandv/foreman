@@ -143,6 +143,11 @@ class Store {
       this.scheduleRefresh();
     };
 
+    // The daemon replays a bounded number of missed events; further behind, it
+    // sends one `gap` frame instead. Only a fresh snapshot is whole again, and
+    // refresh() resumes lastEventId from it.
+    src.addEventListener('gap', () => void this.refresh());
+
     src.onerror = () => {
       // EventSource would retry this URL itself, with the stale `since` baked
       // in; close it and own the retry so the next attempt resumes correctly.

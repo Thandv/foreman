@@ -46,7 +46,7 @@ Boundaries:
 - **Alignment and prose sit behind a fixed set of edges.** The rest of `src/` reaches `src/align/` and `src/prose/` only through the value imports listed, each with its reason, in `ALIGN_PROSE_EDGES` in `test/architecture.test.ts`; a new edge, or a listed one that is gone, fails the test until the list changes in the same diff.
 - **No runtime dependencies.** `package.json` lists no `dependencies`, `optionalDependencies` or `peerDependencies`, and every `src/` value import is relative or a `node:*` built-in; `test/architecture.test.ts` fails naming the field or the file and specifier. Tooling goes in `devDependencies`.
 - **The environment is read in known places.** `ENV_READS` in `test/architecture.test.ts` lists the `FOREMAN_*` names each file outside `src/config.ts` reads, and `PROCESS_ENV_FILES` lists every `src/` file that references `process.env` outside a comment, `src/config.ts` and whole-environment passes to a child included. A new file or name, or a listed one that is gone, fails the test until the list changes in the same diff.
-- **The board is static files.** `board/` is plain HTML, CSS and JS served by `src/server.ts`; it holds no state of its own.
+- **The board is static files.** `board/` is plain HTML, CSS and JS served by `src/server.ts`; it holds no state of its own. It reads one `/api/state` snapshot and then follows `GET /api/events?since=<id>`. A reconnect at most 500 events behind replays the missed rows; further behind, the stream sends one `event: gap` frame carrying the newest event id instead, and the board reloads the snapshot (`board/lib/store.js`).
 
 ## Database tables
 

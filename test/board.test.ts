@@ -366,12 +366,71 @@ async function replayAfter(behind: number): Promise<{ text: string; cursor: numb
   }
 }
 
-test('a reconnect 600 events behind replays only 500 of them and says nothing about the rest', async () => {
-  const { text, store } = await replayAfter(600);
-  const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
-  assert.equal(ids.length, 501, '500 replayed rows plus the live one');
-  assert.doesNotMatch(text, /^event: gap$/m);
+const frame = (ev: { id: number }): string => `id: ${ev.id}\ndata: ${JSON.stringify(ev)}\n\n`;
+
+test('a reconnect more than 500 events behind gets one gap frame with the newest id, not a partial replay', async () => {
+  const { text, cursor, newest, store } = await replayAfter(600);
+  const live = store.eventsSince(newest);
+  assert.equal(live.length, 1);
+  assert.equal(text, `event: gap\ndata: ${JSON.stringify({ lastEventId: newest })}\n\n${frame(live[0]!)}`);
+  assert.ok(newest - cursor > 500);
   store.close();
+});
+
+test('a reconnect 500 events behind replays every one of them, frame for frame', async () => {
+  const { text, cursor, store } = await replayAfter(500);
+  const rows = store.eventsSince(cursor, 1000);
+  assert.equal(rows.length, 501, '500 missed rows plus the live one');
+  assert.equal(text, rows.map(frame).join(''));
+  store.close();
+});
+
+/*
+ * The board's half: a `gap` frame means the stream skipped rows, so the store
+ * reloads the /api/state snapshot and resumes from its lastEventId.
+ */
+test('the board reloads its snapshot on a gap frame and resumes from its lastEventId', async () => {
+  type Listener = (msg: { data: string }) => void;
+  class FakeEventSource {
+    static last: FakeEventSource | null = null;
+    readonly listeners = new Map<string, Listener>();
+    readonly url: string;
+    constructor(url: string) {
+      this.url = url;
+      FakeEventSource.last = this;
+    }
+    addEventListener(type: string, fn: Listener): void { this.listeners.set(type, fn); }
+    close(): void {}
+  }
+  type BoardStore = { lastEventId: number; _connect(): void; refresh(): Promise<unknown> };
+  const { store } = (await import(new URL('../board/lib/store.js', import.meta.url).href)) as { store: BoardStore };
+  const fetched: string[] = [];
+  const g = globalThis as Record<string, unknown>;
+  const saved = { EventSource: g['EventSource'], fetch: g['fetch'] };
+  g['EventSource'] = FakeEventSource;
+  g['fetch'] = async (url: string): Promise<Response> => {
+    fetched.push(url);
+    return new Response(JSON.stringify({ tasks: [], lastEventId: 900 }), { status: 200 });
+  };
+  const refresh = store.refresh.bind(store);
+  let refreshed: Promise<unknown> | null = null;
+  store.refresh = () => (refreshed = refresh());
+  try {
+    store.lastEventId = 7;
+    store._connect();
+    assert.equal(FakeEventSource.last?.url, '/api/events?since=7');
+    const gap = FakeEventSource.last.listeners.get('gap');
+    assert.ok(gap, 'no gap listener on the stream');
+    gap({ data: JSON.stringify({ lastEventId: 900 }) });
+    assert.ok(refreshed, 'a gap frame did not call refresh()');
+    await refreshed;
+    assert.deepEqual(fetched, ['/api/state']);
+    assert.equal(store.lastEventId, 900);
+  } finally {
+    delete (store as Partial<BoardStore>).refresh;
+    g['EventSource'] = saved.EventSource;
+    g['fetch'] = saved.fetch;
+  }
 });
 
 /*

@@ -68,6 +68,13 @@ const MIME: Record<string, string> = {
  */
 export const SSE_MAX_PENDING = 1000;
 
+/**
+ * The most rows a reconnect with ?since= replays. A client further behind gets
+ * one `gap` frame carrying the newest event id instead of a partial replay, and
+ * reloads its snapshot (board/lib/store.js).
+ */
+const SSE_REPLAY_MAX = 500;
+
 /** Per-client SSE write policy: bounded buffering, then disconnection. */
 export class SseClient {
   private readonly res: Pick<http.ServerResponse, 'write' | 'destroy' | 'writableEnded'>;
@@ -265,6 +272,12 @@ function stub(text: string | null, len: number): { value: string | null; truncat
   return { value: text.slice(0, len), truncated: true };
 }
 
+/** Id of the newest event row, 0 on an empty ledger. */
+function newestEventId(store: Store): number {
+  const row = store.db.prepare('SELECT MAX(id) AS id FROM events').get() as Record<string, unknown> | undefined;
+  return Number(row?.['id'] ?? 0);
+}
+
 function landedSummary(d: Decision): { commit: string | null; landedTree: string | null; by: string | null; actor: string; at: number } {
   const extra = d.extra ?? {};
   return {
@@ -338,7 +351,6 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       landed: landed.has(task.id) ? landedSummary(landed.get(task.id)!) : null,
     };
   });
-  const lastEvent = store.db.prepare('SELECT MAX(id) AS id FROM events').get() as Record<string, unknown> | undefined;
   const today = new Date().toISOString().slice(0, 10);
   const callsByLocal = store.receiptCallCountsByLocal(today);
   return {
@@ -392,7 +404,7 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       nonLocalCallsToday: callsByLocal.nonLocal,
     },
     roster: readBench()?.roster ?? null,
-    lastEventId: Number(lastEvent?.['id'] ?? 0),
+    lastEventId: newestEventId(store),
     serverTime: Date.now(),
   };
 }
@@ -577,7 +589,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       const send = (ev: RunEvent): void => {
         client.write(`id: ${ev.id}\ndata: ${JSON.stringify(ev)}\n\n`);
       };
-      if (Number.isFinite(since) && since > 0) for (const ev of store.eventsSince(since)) send(ev);
+      if (Number.isFinite(since) && since > 0) {
+        // No await between this read and store.on below, so no event falls between them.
+        const missed = store.eventsSince(since, SSE_REPLAY_MAX + 1);
+        if (missed.length > SSE_REPLAY_MAX) client.write(`event: gap\ndata: ${JSON.stringify({ lastEventId: newestEventId(store) })}\n\n`);
+        else for (const ev of missed) send(ev);
+      }
       const onEvent = (ev: RunEvent): void => send(ev);
       store.on('event', onEvent);
       const beat = setInterval(() => {
