@@ -43,6 +43,7 @@ Boundaries:
 - **Verification is its own lane.** `src/verify/` (tests, council, crew review, assertion and revert checks) runs after a worker finishes, in a lane with its own limit (`maxVerifying` in `src/config.ts`).
 - **The security code is guarded.** `src/security/` holds the sandbox, the admission scan and the core guard; see [Protected paths](#protected-paths).
 - **Alignment and prose sit behind a fixed set of edges.** The rest of `src/` reaches `src/align/` and `src/prose/` only through the value imports listed, each with its reason, in `ALIGN_PROSE_EDGES` in `test/architecture.test.ts`; a new edge, or a listed one that is gone, fails the test until the list changes in the same diff.
+- **No runtime dependencies.** `package.json` lists no `dependencies`, `optionalDependencies` or `peerDependencies`, and every `src/` value import is relative or a `node:*` built-in; `test/architecture.test.ts` fails naming the field or the file and specifier. Tooling goes in `devDependencies`.
 - **The board is static files.** `board/` is plain HTML, CSS and JS served by `src/server.ts`; it holds no state of its own.
 
 ## Database tables

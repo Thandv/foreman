@@ -74,6 +74,18 @@ export function scanSource(text: string): Spec[] {
   return out;
 }
 
+/** Each value import in `specs` that is neither relative nor a node:* built-in, as "<file>: '<specifier>'". */
+export function bareValueImports(file: string, specs: Spec[]): string[] {
+  return specs.filter((s) => !s.typeOnly && !s.spec.startsWith('.') && !s.spec.startsWith('node:')).map((s) => `${file}: '${s.spec}'`);
+}
+
+/** Each package a package.json object would install at runtime, as "package.json <field>: <name>". */
+export function runtimeDependencies(pkg: Record<string, unknown>): string[] {
+  return ['dependencies', 'optionalDependencies', 'peerDependencies'].flatMap((field) =>
+    Object.keys(pkg[field] ?? {}).map((name) => `package.json ${field}: ${name}`),
+  );
+}
+
 function listTs(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
@@ -86,11 +98,14 @@ const known = new Set(files);
 const value = new Map<string, Set<string>>();
 const typeOnly = new Map<string, Set<string>>();
 const envReads = new Map<string, Set<string>>();
+const bareImports: string[] = [];
 for (const f of files) {
   const text = fs.readFileSync(path.join(SRC, '..', f), 'utf8');
   value.set(f, new Set());
   typeOnly.set(f, new Set());
-  for (const { spec, typeOnly: t } of scanSource(text)) {
+  const specs = scanSource(text);
+  bareImports.push(...bareValueImports(f, specs));
+  for (const { spec, typeOnly: t } of specs) {
     if (!spec.startsWith('.')) continue;
     const base = path.posix.normalize(path.posix.join(path.posix.dirname(f), spec));
     const target = [base, `${base}.ts`, `${base}/index.ts`].find((c) => known.has(c));
@@ -284,6 +299,22 @@ test('FOREMAN_* reads outside config.ts match the per-file allowlist', () => {
   const actual = Object.fromEntries([...envReads].sort().map(([f, s]) => [f, [...s].sort()]));
   const allowed = Object.fromEntries(Object.entries(ENV_READS).sort().map(([f, a]) => [f, [...a].sort()]));
   assert.deepEqual(actual, allowed, 'update ENV_READS (new read, or a stale entry)');
+});
+
+test('the runtime has no dependencies: package.json lists none and src value-imports only node:* built-ins', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(SRC, '..', 'package.json'), 'utf8')) as Record<string, unknown>;
+  assert.deepEqual(runtimeDependencies(pkg), [], 'Foreman is dependency-free at runtime; use a devDependency');
+  assert.deepEqual(bareImports, [], 'src may import only node:* built-ins and relative files');
+});
+
+test('the dependency checks name a bare import with its file and a runtime dependency with its field', () => {
+  const specs = scanSource("import x from 'lodash';\nimport fs from 'node:fs';\nimport type { Y } from 'typescript';\nexport { z } from 'left-pad';\nconst w = await import('chalk');\nimport { a } from './a.ts';");
+  assert.deepEqual(bareValueImports('src/x.ts', specs), ["src/x.ts: 'lodash'", "src/x.ts: 'left-pad'", "src/x.ts: 'chalk'"]);
+  assert.deepEqual(runtimeDependencies({ dependencies: { lodash: '^4' }, optionalDependencies: { a: '1' }, peerDependencies: { b: '2' }, devDependencies: { c: '3' } }), [
+    'package.json dependencies: lodash',
+    'package.json optionalDependencies: a',
+    'package.json peerDependencies: b',
+  ]);
 });
 
 /**
