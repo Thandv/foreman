@@ -36,7 +36,7 @@ import { recordEpisode, relevantFacts, scopeOf } from './assistant/memory.ts';
 import { planAsk, queuePlan } from './assistant/plan.ts';
 import { deterministicFindings } from './verify/determinism.ts';
 import { getPlaybook } from './playbooks.ts';
-import { resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
+import { modelForTask, resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
 import { checkBuiltTool, toolEvidence, toolTestCommand } from './tools/forge.ts';
 import { migrateLegacyToolbox } from './tools/catalog.ts';
 import { buildPrompt, councilAliases, councilNumCtx, MAX_RUNG, rungFor, reviewLabel, runCouncil, wasReviewed, type Evidence } from './verify/council.ts';
@@ -1218,6 +1218,8 @@ export class Scheduler {
     let expiredIn: string | null = null;
     // What this run records about itself on its own row (runFacts.ts): filled in as it goes, written in the finally.
     const facts = newRunFacts();
+    // Set once the claude-code CLI has been started: its spend is then settled into one receipt in the finally.
+    let workerStarted = false;
     const clock = this.runClockFn(runTimeoutMs, () => {
       // Read from a timer: a ledger that cannot answer must not stop the abort.
       try {
@@ -1457,6 +1459,7 @@ export class Scheduler {
       };
       // Before the CLI starts: what the worker wrote into its own permission files last round is undone (isolate.ts).
       if (task.runner === 'claude-code' && jail.repo) await this.restoreAgentSettingsOrThrow(jail, emit);
+      workerStarted = task.runner === 'claude-code';
       let result = await runner.run(ctx);
       noteResult(facts, result);
       // A provider quota refusal is not a verdict on the work: hold, don't fail.
@@ -2310,6 +2313,14 @@ export class Scheduler {
       } catch (err) {
         writeLog(`run facts not recorded: ${causeOf(err, 1000)}`);
       }
+      // The worker's own spend reaches only the run row through ctx.usage; the receipt makes it part of the ledger.
+      if (workerStarted) {
+        try {
+          this.recordWorkerReceipt(task, runId);
+        } catch (err) {
+          writeLog(`worker receipt not recorded: ${causeOf(err, 1000)}`);
+        }
+      }
       try {
         this.pruneEvents(task.id);
       } catch (err) {
@@ -2318,6 +2329,27 @@ export class Scheduler {
       // Last: writeLog is a no-op once the fd is cleared, so no later line lands in a file that reuses its number.
       closeLog();
     }
+  }
+
+  /**
+   * One receipt for a claude-code run, at its end: what the CLI reported over the whole run (a resume included), at
+   * list price. Kind 'worker', which spentTodaySubscription() and spentOnTask() leave out, so no cap moves.
+   */
+  private recordWorkerReceipt(task: Task, runId: string): void {
+    const run = this.store.getRun(runId);
+    if (!run) throw new Error(`run ${runId} is not in the ledger`);
+    this.store.addReceipt({
+      taskId: task.id,
+      runId,
+      kind: 'worker',
+      provider: 'claude-cli',
+      model: modelForTask(task) ?? 'cli-default',
+      local: false,
+      tokensIn: run.tokensIn,
+      tokensOut: run.tokensOut,
+      costUsd: run.costUsd,
+      latencyMs: Date.now() - run.startedAt,
+    });
   }
 
   /**

@@ -2458,10 +2458,13 @@ export class Store extends EventEmitter {
    * own much larger ceiling. The thing worth stopping here is a runaway loop —
    * a gate re-deciding the same ticket every tick — and a loop is just as
    * expensive against a subscription's rate limits as against a card.
+   *
+   * A claude-code worker's own spend (kind 'worker', one receipt per run) is
+   * left out: it is recorded, not capped. Capping it is a separate decision.
    */
   spentTodaySubscription(): number {
     const row = this.db
-      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE day = ? AND provider = 'claude-cli'")
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE day = ? AND provider = 'claude-cli' AND kind <> 'worker'")
       .get(new Date().toISOString().slice(0, 10)) as Record<string, unknown> | undefined;
     return Number(row?.['n'] ?? 0);
   }
@@ -2474,9 +2477,10 @@ export class Store extends EventEmitter {
     return Number(row?.['n'] ?? 0);
   }
 
+  /** What the per-task cap (`--budget`) counts: every receipt of the task but its claude-code worker's own spend. */
   spentOnTask(taskId: string): number {
     const row = this.db
-      .prepare('SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE task_id = ?')
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE task_id = ? AND kind <> 'worker'")
       .get(taskId) as Record<string, unknown> | undefined;
     return Number(row?.['n'] ?? 0);
   }
