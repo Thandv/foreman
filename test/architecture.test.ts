@@ -6,8 +6,8 @@ import path from 'node:path';
 
 // Architecture guard: the shape of src/ as the import graph and the environment reads show it.
 //
-// UPDATE RULE: a change that adds an import edge covered below, a FOREMAN_* read outside config.ts, or an import
-// cycle updates the allowlist in this file in its own diff, with a one-line reason, and its reviewer checks that
+// UPDATE RULE: a change that adds an import edge covered below, a FOREMAN_* read outside config.ts, a new src file
+// that touches process.env, or an import cycle updates the allowlist in this file in its own diff, with a one-line reason, and its reviewer checks that
 // entry. An entry that no longer matches anything fails too, so a fixed cycle or a removed read leaves the list in
 // the same diff that fixes it.
 
@@ -103,6 +103,7 @@ const known = new Set(files);
 const value = new Map<string, Set<string>>();
 const typeOnly = new Map<string, Set<string>>();
 const envReads = new Map<string, Set<string>>();
+const processEnvFiles: string[] = [];
 const bareImports: string[] = [];
 for (const f of files) {
   const text = fs.readFileSync(path.join(SRC, '..', f), 'utf8');
@@ -110,6 +111,7 @@ for (const f of files) {
   typeOnly.set(f, new Set());
   const specs = scanSource(text);
   bareImports.push(...bareValueImports(f, specs));
+  if (touchesProcessEnv(text)) processEnvFiles.push(f);
   for (const { spec, typeOnly: t } of specs) {
     if (!spec.startsWith('.')) continue;
     const base = path.posix.normalize(path.posix.join(path.posix.dirname(f), spec));
@@ -254,6 +256,22 @@ const ENV_READS: Record<string, string[]> = {
   'src/warm.ts': ['FOREMAN_OLLAMA_KEEP_ALIVE', 'FOREMAN_OLLAMA_URL', 'FOREMAN_PREWARM', 'FOREMAN_PREWARM_TIMEOUT_MS'],
 };
 
+// (f) Every src file that references process.env outside a comment, config.ts and whole-env passes to a child
+// included: a new file reading any variable, or handing the daemon's environment on, is a reviewed change.
+const PROCESS_ENV_FILES: string[] = [
+  'src/agents.ts', 'src/agreement.ts', 'src/align/extract.ts', 'src/align/governor.ts', 'src/align/localLock.ts',
+  'src/align/personaAdopt.ts', 'src/align/personaServe.ts', 'src/align/personas.ts', 'src/align/redact.ts',
+  'src/align/train.ts', 'src/assign.ts', 'src/assistant/crewPlan.ts', 'src/assistant/ownerCall.ts', 'src/backup.ts',
+  'src/budget.ts', 'src/cli.ts', 'src/config.ts', 'src/deps.ts', 'src/diskSpace.ts', 'src/gate.ts',
+  'src/gitTimeout.ts', 'src/improve.ts', 'src/isolate.ts', 'src/localOnly.ts', 'src/memory.ts', 'src/models.ts',
+  'src/playbooks.ts', 'src/postMerge.ts', 'src/providerLimit.ts', 'src/roles.ts', 'src/runClock.ts',
+  'src/runners/api.ts', 'src/runners/claudeIsolation.ts', 'src/runners/cliRunners.ts', 'src/runners/echo.ts',
+  'src/runners/freezeSweep.ts', 'src/runners/proc.ts', 'src/runners/proctree.ts', 'src/runners/shell.ts',
+  'src/scheduler.ts', 'src/security/coreGuard.ts', 'src/security/nodeRoot.ts', 'src/security/sandbox.ts',
+  'src/server.ts', 'src/tools/catalog.ts', 'src/tools/run.ts', 'src/trace.ts', 'src/verify/citedSource.ts',
+  'src/verify/council.ts', 'src/verify/crewReview.ts', 'src/verify/gateOutcome.ts', 'src/verify/slots.ts',
+  'src/verify/testSlot.ts', 'src/verify/tests.ts', 'src/verify/triage.ts', 'src/warm.ts',
+];
 
 test('the value-import cycles are exactly the allowlisted components', () => {
   const actual = cycles(value).map((c) => c.join(' + '));
@@ -305,6 +323,10 @@ test('FOREMAN_* reads outside config.ts match the per-file allowlist', () => {
   const actual = Object.fromEntries([...envReads].sort().map(([f, s]) => [f, [...s].sort()]));
   const allowed = Object.fromEntries(Object.entries(ENV_READS).sort().map(([f, a]) => [f, [...a].sort()]));
   assert.deepEqual(actual, allowed, 'update ENV_READS (new read, or a stale entry)');
+});
+
+test('the src files that touch process.env match the allowlist', () => {
+  assert.deepEqual(processEnvFiles, [...PROCESS_ENV_FILES].sort(), 'update PROCESS_ENV_FILES (new file, or a stale entry)');
 });
 
 test('the process.env scan counts code and strings, and not a comment', () => {
