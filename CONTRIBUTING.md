@@ -39,6 +39,13 @@ refuses to start and a sandboxed command is refused rather than run unsandboxed,
 there. The test suites set it to `off` themselves, so `npm run verify` does not need a sandbox. See
 "The sandbox" in [docs/security.md](docs/security.md#the-sandbox-foreman_sandbox).
 
+The sandbox tests (`test/sandbox.test.ts` and the macOS-only tests in a few other files) turn it on for
+themselves and skip, with the reason, wherever `sandbox-exec` cannot be exercised: off macOS, or when the
+suite already runs inside a sandbox (Foreman's own post-merge check). So CI runs `npm run verify` twice:
+on Ubuntu, and on macOS, where it then runs the suite again with its output kept and
+`node scripts/ci/sandbox-not-skipped.ts <output>` fails the job if any sandbox test skipped. That script is
+not a `scripts/checks/` check, because verify runs those inside the post-merge check, where the skips are expected.
+
 A version manager that puts a shim or symlink directory on `PATH` instead of a node install (volta, fnm)
 is not opened automatically: name that directory in `FOREMAN_SANDBOX_RO` before starting `foreman serve`
 (the directory itself, not your home); see [the sandbox](docs/security.md#the-sandbox-foreman_sandbox).

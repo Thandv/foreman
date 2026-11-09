@@ -30,3 +30,27 @@ jobs:
           git config --global user.email "foreman-ci@users.noreply.github.com"
       - name: typecheck + tests
         run: npm run verify
+
+  # The OS sandbox exists only on macOS (sandbox-exec), and its tests skip wherever it cannot be exercised, so the
+  # ubuntu job above proves nothing about it. This job runs verify on macOS, then the suite once more with its output
+  # kept (verify keeps only the counts), and fails if any sandbox test skipped.
+  verify-macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: |
+          git config --global user.name "foreman-ci"
+          git config --global user.email "foreman-ci@users.noreply.github.com"
+      - name: typecheck + tests
+        run: npm run verify
+      # A short TMPDIR under /tmp, as verify uses: unix socket paths under it are capped at 104 bytes on macOS.
+      - name: the sandbox tests ran, none skipped
+        run: |
+          TMPDIR="$(mktemp -d /tmp/v.XXXXXX)" npm test > "$RUNNER_TEMP/node-test.txt" 2>&1
+          node scripts/ci/sandbox-not-skipped.ts "$RUNNER_TEMP/node-test.txt"

@@ -68,7 +68,7 @@ test('fails closed: no summary (the suite did not run), or more skips counted th
   assert.match(sandboxSkipProblems(unread)[0] ?? '', /2 skipped/);
 });
 
-test('a missing or unreadable output file fails with a usage line, not a pass', () => {
+test('no output file named fails with a usage line, not a pass', () => {
   const r = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /usage/);
