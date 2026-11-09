@@ -9,7 +9,7 @@ import { Scheduler } from '../src/scheduler.ts';
 /*
  * Unclean restarts (the `daemon_starts` table): each scheduler start writes a row, an orderly stop marks it
  * clean_exit. A start that finds the previous row unmarked follows a crash. One run in flight across it keeps today's
- * path (its attempt is spent) and says how many crashes it was in flight for; several each get one stop refund; a
+ * path (its attempt is spent) and says how many crashes it was in flight for (its interrupted runs); several each get one stop refund; a
  * crash loop no single run accounts for starts the daemon under a dispatch hold.
  */
 
@@ -54,11 +54,30 @@ test('one run in flight across an unclean exit spends its attempt and names the 
   try {
     const t = store.getTask(spent)!;
     assert.equal(t.status, 'failed');
-    assert.match(t.error ?? '', /in flight across 2 daemon crashes/);
+    assert.match(t.error ?? '', /in flight across 1 daemon crash;/, 'the earlier crash had nothing of this task in flight');
     assert.deepEqual(attempts(store, spent), { attempts: 1, stops: 0 }, 'no refund');
     assert.equal(sched.dispatchHoldState?.reason, TEST_HOLD, 'a crash loop tied to one run holds nothing');
   } finally {
     await sched.stop();
+    store.close();
+  }
+});
+
+test('a task orphaned by two of three crashes in a row names the two it was in flight for', async () => {
+  const store = new Store(ledger());
+  priorStart(store, 3 * MIN, false);
+  priorStart(store, 2 * MIN, false);
+  const id = inFlight(store, 2);
+  const first = boot(store);
+  assert.equal(store.getTask(id)!.status, 'queued', 'one attempt left');
+  await first.stop(() => false);
+  assert.ok(store.claim(id));
+  store.startRun(id);
+  const second = boot(store);
+  try {
+    assert.match(store.getTask(id)!.error ?? '', /in flight across 2 daemon crashes;/);
+  } finally {
+    await second.stop();
     store.close();
   }
 });
