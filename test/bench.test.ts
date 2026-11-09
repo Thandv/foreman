@@ -8,21 +8,26 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 // The benchmarks in scripts/bench are too slow for the suite at their real sizes. These runs are the smallest sizes
-// that still exercise every path: each script runs from the checkout, with no network, and leaves the FOREMAN_HOME it
-// was started with untouched.
+// that still exercise every path: each script runs from the checkout, with no network, and writes nothing to the
+// caller's home. scripts/bench/env.ts drops any FOREMAN_HOME it inherits and sets a temp home of its own; without that
+// line src/config.ts would fall back to <HOME>/.foreman, the operator's (and a running daemon's) home. So each run gets
+// a scratch HOME, and the test asserts it, and the FOREMAN_HOME passed in, are both still empty when the bench exits.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const execFileAsync = promisify(execFile);
 
-async function bench(script: string, args: string[]): Promise<{ out: unknown; home: string }> {
-  // The caller's home: the bench must not write here (nor anywhere but its own temp dir).
-  const home = scratchDir('foreman-bench-caller-');
+async function bench(script: string, args: string[]): Promise<unknown> {
+  // The caller's homes: the bench must write to neither (nor anywhere but its own temp dirs).
+  const userHome = scratchDir('foreman-bench-caller-home-');
+  const foremanHome = scratchDir('foreman-bench-caller-foreman-');
   const { stdout } = await execFileAsync(process.execPath, [path.join(root, 'scripts', 'bench', script), ...args, '--json'], {
     cwd: root,
-    env: { ...process.env, FOREMAN_HOME: home },
+    env: { ...process.env, HOME: userHome, USERPROFILE: userHome, FOREMAN_HOME: foremanHome },
     timeout: 120_000,
   });
-  return { out: JSON.parse(stdout) as unknown, home };
+  assert.deepEqual(fs.readdirSync(userHome), [], 'the caller\'s HOME is untouched');
+  assert.deepEqual(fs.readdirSync(foremanHome), [], 'the caller\'s FOREMAN_HOME is untouched');
+  return JSON.parse(stdout) as unknown;
 }
 
 test('tsconfig typechecks scripts/bench, so npm run verify does', () => {
@@ -30,8 +35,8 @@ test('tsconfig typechecks scripts/bench, so npm run verify does', () => {
   assert.ok(tsconfig.include.includes('scripts/bench'), `include is ${JSON.stringify(tsconfig.include)}`);
 });
 
-test('the ledger bench reports p50 and p99 of each operation at each size, and writes nothing to FOREMAN_HOME', async () => {
-  const { out, home } = await bench('ledger.ts', ['--sizes', '50,100', '--iterations', '3']);
+test('the ledger bench reports p50 and p99 of each operation at each size, and writes nothing to the caller\'s home', async () => {
+  const out = await bench('ledger.ts', ['--sizes', '50,100', '--iterations', '3']);
   const rows = out as Array<{ tasks: number; op: string; p50Ms: number; p99Ms: number; samples: number }>;
   for (const tasks of [50, 100]) {
     assert.deepEqual(
@@ -44,11 +49,12 @@ test('the ledger bench reports p50 and p99 of each operation at each size, and w
     assert.equal(r.samples, 3);
     assert.ok(r.p50Ms >= 0 && r.p99Ms >= r.p50Ms, JSON.stringify(r));
   }
-  assert.deepEqual(fs.readdirSync(home), [], 'the caller\'s FOREMAN_HOME is untouched');
 });
 
 test('the pipeline bench lands every ticket with gate batching on and off, and batching makes fewer model calls', async () => {
-  const { out, home } = await bench('pipeline.ts', ['--tickets', '3', '--suite-ms', '10', '--model-ms', '10']);
+  // --model-ms widens the window in which the second and third tickets park while the first ticket's gate call (which
+  // it gets alone, being first) is still running, so they share one batched call: at most 2 calls with batching on.
+  const out = await bench('pipeline.ts', ['--tickets', '3', '--suite-ms', '10', '--model-ms', '300']);
   const runs = out as Array<{
     gateBatch: 'on' | 'off'; tickets: number; landed: number; modelCalls: number; ticketsPerHour: number;
     suiteRunsPerLanded: number; dispatchMs: { p50: number }; gateMs: { p50: number }; landingMs: { p50: number };
@@ -64,5 +70,4 @@ test('the pipeline bench lands every ticket with gate batching on and off, and b
   const [on, off] = runs as [(typeof runs)[0], (typeof runs)[0]];
   assert.equal(off.modelCalls, 3, 'batching off: one owner-gate call per ticket');
   assert.ok(on.modelCalls < off.modelCalls, `batching on made ${on.modelCalls} calls`);
-  assert.deepEqual(fs.readdirSync(home), [], 'the caller\'s FOREMAN_HOME is untouched');
 });
