@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/queue.ts';
-import { redBackoffMs, Scheduler } from '../src/scheduler.ts';
+import { redBackoffMs, Scheduler, TICK_STAGES } from '../src/scheduler.ts';
 import type { MainCheck } from '../src/postMerge.ts';
 import { acquireVerifySlot } from '../src/verify/slots.ts';
 
@@ -174,6 +174,7 @@ test('the tick runs its stages in a fixed order', async () => {
       'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileBlocked',
       'reconcileLostRuns', 'dispatchGate', 'dispatch', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
     ]);
+    assert.deepEqual(order, [...TICK_STAGES], 'TICK_STAGES names the stages in the order the tick runs them');
   } finally {
     await sched.stop();
     store.close();
