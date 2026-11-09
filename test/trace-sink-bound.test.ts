@@ -53,8 +53,11 @@ test('a hung sink is released by the post timeout and posting resumes', async (t
   for (let i = 0; i < 40; i++) store.record({ type: 'log', message: `noise ${i}` });
   assert.equal(tracer.sinkPending, 32);
   assert.equal(tracer.sinkDrops, 8);
-  // Each post's own timeout aborts it; wait on the counter, not on a fixed sleep.
-  while (tracer.sinkPending > 0) await new Promise((r) => setImmediate(r));
+  // Each post's own timeout aborts it; wait on the counter, not on a fixed sleep. The deadline only
+  // bounds the failure path, so a broken timeout fails the test instead of spinning its process forever.
+  const until = Date.now() + 4000;
+  while (tracer.sinkPending > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(tracer.sinkPending, 0, 'the post timeout released every hung post');
   assert.equal(sink.pending(), 0, 'every hung post was aborted');
   store.record({ type: 'log', message: 'after the timeout' });
   assert.equal(tracer.sinkPending, 1, 'a new event is posted once the hung ones are released');
