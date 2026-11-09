@@ -45,8 +45,8 @@ spelling or a linked worktree of it included — not just ones queued by
 waits for a person. That is a rule about the owner gate, not proof of a person:
 the approve endpoint takes no credential, and a jail is a git worktree, not a
 sandbox. A process a run leaves behind runs as the same user and can call
-`/approve` on its own ticket, queue a ticket carrying `allowCore`, or write the
-store's file. What such a call cannot do is land a protected path without
+`/approve` on its own ticket, read the host-admin secret and queue a ticket
+carrying `allowCore` (docs/security.md), or write the store's file. What such a call cannot do is land a protected path without
 `allowCore`: the landing check runs whoever approves, which is why the gate,
 scheduler, queue, API and schema sources are on the list. A change to any
 other foreman source can still be landed that way. A worker also shares the

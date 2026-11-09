@@ -13,6 +13,7 @@ import { APPROVAL_DRAIN_CAP_MS, approvals, pruneStaleMainWorktrees } from './gat
 import { runDrill } from './drill.ts';
 import { localOnly, modeSummary } from './localOnly.ts';
 import { sandboxMode, sandboxSummary, selfTest } from './security/sandbox.ts';
+import { ensureHostSecret, HOST_SECRET_HEADER } from './security/hostSecret.ts';
 import { probeCloud } from './models.ts';
 import { skillVariantFor, tierModel } from './roles.ts';
 import { workerSuiteInJail } from './doctorJail.ts';
@@ -363,12 +364,12 @@ function apiCallLong(path: string, body: unknown): Promise<any> {
   });
 }
 
-async function apiCall(path: string, init?: RequestInit): Promise<any> {
+async function apiCall(path: string, init?: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }): Promise<any> {
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
       ...init,
-      headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+      headers: { ...(init?.body ? { 'content-type': 'application/json' } : {}), ...init?.headers },
     });
   } catch (err) {
     // A bare `catch {}` here reported every failure as "is foreman serve
@@ -392,6 +393,11 @@ async function apiCall(path: string, init?: RequestInit): Promise<any> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   return body;
+}
+
+/** The header that lets a request carry allowCore (src/security/hostSecret.ts); the secret is created on first use. */
+function hostAdminHeaders(): Record<string, string> {
+  return { [HOST_SECRET_HEADER]: ensureHostSecret(config.home) };
 }
 
 function slugify(title: string): string {
@@ -713,8 +719,10 @@ async function main(): Promise<number> {
       if (!title) throw new Error('usage: foreman add <title> --prompt <text>');
       const after = flagStr(args, 'after');
       const skills = skillsFlag(args) ?? null;
+      const allowCore = Boolean(args.flags['allow-core']);
       const task = await apiCall('/api/tasks', {
         method: 'POST',
+        headers: allowCore ? hostAdminHeaders() : undefined,
         body: JSON.stringify({
           title,
           prompt,
@@ -728,7 +736,7 @@ async function main(): Promise<number> {
           testCmd: flagStr(args, 'test-cmd') ?? null,
           role: flagStr(args, 'role') ?? null,
           playbook: flagStr(args, 'playbook') ?? null,
-          allowCore: Boolean(args.flags['allow-core']),
+          allowCore,
           assignee: flagStr(args, 'assignee') ?? null,
           mergeOnApprove: args.flags['no-merge'] ? false : undefined,
           maxRepairs: flagStr(args, 'repairs') === undefined ? undefined : Number(flagStr(args, 'repairs')),
@@ -1369,6 +1377,7 @@ async function main(): Promise<number> {
       const allowCore = Boolean(args.flags['allow-core']);
       const d = await apiCall('/api/improve', {
         method: 'POST',
+        headers: allowCore && confirm ? hostAdminHeaders() : undefined,
         body: JSON.stringify({
           area: flagStr(args, 'area') ?? null,
           confirm,

@@ -11,6 +11,16 @@
   names no run: it is still slotted, never refused, and claims nothing, so another local process
   cannot make a run's lease busy or have a slot wait counted against its deadline. It is never
   answered 403, because the wrapper reads any non-200 answer as "no daemon" and runs unslotted.
+- `allowCore` (a ticket that may edit Foreman's own core) is honoured only from a request that
+  carries the host-admin secret in `x-foreman-host-secret`. The secret is 32 random bytes in
+  `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`
+  or `foreman improve --allow-core --yes`; `src/security/hostSecret.ts` is the only code that touches
+  that directory). `POST /api/tasks` and `POST /api/improve` compare it with `timingSafeEqual`; without
+  a match the task is still queued, without `allowCore`, and records the warning event
+  `allowCore dropped: request lacked the host-admin secret`. The secret is never logged, never in an
+  event and never in a worker's environment. This stops a process that can only reach the local API;
+  it is **not a boundary against a worker**: while workers run unsandboxed as the daemon's user, a
+  worker can read the file.
 - Runners work in a worktree or scratch dir, never in your checkout, and only an approval makes
   Foreman land anything in your repo. That keeps a worker's mistake out of your repo, not a hostile
   worker: the `claude-code` and `codex-cli` workers are not sandboxed (see "What it does NOT

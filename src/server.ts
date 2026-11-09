@@ -48,6 +48,7 @@ import { acquireVerifySlot, claimRunLease, slotsAhead, VerifyWaitAborted } from 
 import { testTimeoutMs } from './verify/tests.ts';
 import { checkRepo } from './gitTripwire.ts';
 import { pinnedGit } from './isolate.ts';
+import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
 import { probeTask, STAGES } from './types.ts';
 import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
 
@@ -101,6 +102,21 @@ export class SseClient {
     }
     return true;
   }
+}
+
+/**
+ * allowCore as a request may have it: only with the host-admin secret
+ * (src/security/hostSecret.ts). Without it the flag is dropped, never refused,
+ * and the created task records why (`noteAllowCoreDropped`).
+ */
+function allowCoreOf(req: http.IncomingMessage, body: Record<string, unknown>): { allowCore: boolean; dropped: boolean } {
+  if (body['allowCore'] !== true) return { allowCore: false, dropped: false };
+  const allowCore = hostSecretMatches(config.home, req.headers[HOST_SECRET_HEADER]);
+  return { allowCore, dropped: !allowCore };
+}
+
+function noteAllowCoreDropped(store: Store, taskId: string, core: { dropped: boolean }): void {
+  if (core.dropped) store.record({ taskId, type: 'warning', message: 'allowCore dropped: request lacked the host-admin secret' });
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -755,6 +771,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         } else if (rawAcceptance != null) {
           return json(res, 400, { error: 'acceptance must be text or a list of text' });
         }
+        const core = allowCoreOf(req, body);
         const task = store.addTask({
           title: String(body['title'] ?? ''),
           prompt: String(body['prompt'] ?? ''),
@@ -770,7 +787,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           playbook: (body['playbook'] as string) || null,
           points: body['points'] == null ? null : Number(body['points']),
           acceptance,
-          allowCore: body['allowCore'] === true,
+          allowCore: core.allowCore,
           mergeOnApprove: body['mergeOnApprove'] === undefined ? undefined : Boolean(body['mergeOnApprove']),
           maxRepairs: body['maxRepairs'] === undefined ? undefined : Number(body['maxRepairs']),
           maxAttempts: body['maxAttempts'] === undefined ? undefined : Number(body['maxAttempts']),
@@ -778,6 +795,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           assignee: (body['assignee'] as never) || null,
           skills: skills as string[] | null,
         });
+        noteAllowCoreDropped(store, task.id, core);
         void scheduler.tick().catch(() => {});
         return json(res, 201, task);
       }
@@ -1256,11 +1274,13 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         area: (body['area'] as string) || null,
       });
       if (body['confirm'] !== true) return json(res, 200, { proposal, evidence, queued: null });
+      const core = allowCoreOf(req, body);
       const task = queueImprovement(store, proposal, {
-        allowCore: body['allowCore'] === true,
+        allowCore: core.allowCore,
         budgetUsd: body['budgetUsd'] == null ? undefined : Number(body['budgetUsd']),
         runner: body['runner'] as never,
       });
+      noteAllowCoreDropped(store, task.id, core);
       void scheduler.tick().catch(() => {});
       return json(res, 201, { proposal, queued: task });
     }
