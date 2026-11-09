@@ -139,11 +139,16 @@ test('a gate check takes a slot, and the run records the time it waited as verif
     const store = new Store(':memory:');
     const repo = fixtureRepo();
     try {
-      const t = store.addTask({ title: 'gate', prompt: WORK, kind: 'code', runner: 'shell', repo, testCmd: 'true' });
+      const t = store.addTask({ title: 'gate', prompt: WORK, kind: 'code', runner: 'shell', repo, testCmd: 'sleep 0.2' });
+      const startedAt = Date.now();
       await runBehindHeldSlot(store, t.id);
+      const wallMs = Date.now() - startedAt;
       const run = store.latestRun(t.id)!;
       assert.equal(run.testsPassed, true);
       assert.ok(run.verifyWaitMs! > 0, `expected a recorded wait, got ${run.verifyWaitMs}`);
+      const [latency] = store.recentRunsForLatency(1);
+      assert.ok(latency!.suiteMs >= 200, `the gate's run time is recorded as suite time, got ${latency!.suiteMs}`);
+      assert.ok(latency!.suiteMs + latency!.verifyWaitMs <= wallMs, `suite ${latency!.suiteMs} + wait ${latency!.verifyWaitMs} > wall ${wallMs}`);
       assert.ok(store.eventsForTask(t.id).some((e) => /waited \d+ms for a verify slot/.test(e.message ?? '')));
     } finally {
       store.close();
@@ -204,6 +209,32 @@ test('a run whose two playbook checks take 1 s each records about 2 s of suite t
       store.close();
       fs.rmSync(repo, { recursive: true, force: true });
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+test('a run canceled while it queues for a slot records the wait as no suite time', () =>
+  withCap('1', async () => {
+    const store = new Store(':memory:');
+    const repo = fixtureRepo();
+    const held = await acquireVerifySlot();
+    try {
+      const t = store.addTask({ title: 'gate', prompt: WORK, kind: 'code', runner: 'shell', repo, testCmd: 'true' });
+      const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
+      const drained = sched.drain(30_000);
+      await until(() => verifySlotStats().waiting === 1);
+      const queuedAt = Date.now();
+      await sleep(300);
+      store.cancel(t.id);
+      await drained;
+      const queuedMs = Date.now() - queuedAt;
+      const [run] = store.recentRunsForLatency(1);
+      assert.ok(queuedMs >= 300);
+      // Counted as suite time, the 300 ms and more it queued would all be here.
+      assert.ok(run!.suiteMs < 300, `the queued time is not suite time, got ${run!.suiteMs}`);
+    } finally {
+      held.release();
+      store.close();
+      fs.rmSync(repo, { recursive: true, force: true });
     }
   }));
 

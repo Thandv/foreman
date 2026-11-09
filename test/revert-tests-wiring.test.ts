@@ -136,6 +136,9 @@ test('on: the reviewer gets the per-test table, the run keeps it, the owner gate
   const stub = ownerStub(t);
   const repo = fixtureRepo(t);
   const r = rig(t, repo, true);
+  const suiteRuns: number[] = [];
+  const addSuiteMs = r.store.addSuiteMs.bind(r.store);
+  r.store.addSuiteMs = (runId, ms) => { suiteRuns.push(ms); addSuiteMs(runId, ms); };
   const task = r.add(writes({ 'src/x.js': SRC_AFTER, 'test/new.test.js': MIXED }), { gate: 'owner' });
   await settle(r, () => parked(r, task.id)() && r.store.eventsForTask(task.id, 800).some((e) => e.message.startsWith('owner-gate:')));
 
@@ -149,6 +152,7 @@ test('on: the reviewer gets the per-test table, the run keeps it, the owner gate
 
   const run = r.store.latestRun(task.id)!;
   assert.equal(run.testsPassed, true, 'the test stage is not failed by it');
+  assert.ok(suiteRuns.length >= 2, `the gate and the check's runs are each recorded as suite time, got ${suiteRuns.length}`);
   const row = r.store.artifactsForTask(task.id).find((a) => a.type === 'revert-tests' && a.runId === run.id)!;
   assert.equal(row.summary, 'revert check: 1 fail, 1 pass, 0 could not run without the src change');
   assert.deepEqual(readRevertTests(row.path)?.tests.map((x) => [x.name, x.outcome]), [['triples', 'fails-without-change'], ['still doubles', 'passes-without-change']]);
