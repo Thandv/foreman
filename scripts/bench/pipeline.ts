@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { percentile } from '../../src/latency.ts';
 import { Store } from '../../src/queue.ts';
 import { Scheduler } from '../../src/scheduler.ts';
-import { mergedApproval, outcome } from './outcome.ts';
+import { mergedApproval, outcome, whyNotLanded } from './outcome.ts';
 
 interface Spread { p50: number; p90: number; max: number }
 
@@ -33,7 +33,7 @@ export interface PipelineResult {
   /** Fake suite runs (the ticket's own check, post-merge checks, re-runs) per landed ticket. */
   suiteRunsPerLanded: number;
   /** Each ticket that did not land: its status, the owner gate's marker and its last events, to say why. */
-  unlanded: Array<{ id: string; status: string; gate: string | null; events: string[] }>;
+  unlanded: Array<ReturnType<typeof whyNotLanded>>;
 }
 
 /** How long a run may take before the bench gives up on it. */
@@ -125,7 +125,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
     const epic = store.addTask({ title: 'bench epic', prompt: 'bench', runner: 'shell', isEpic: true, playbook: 'bench' });
     const ids = Array.from({ length: o.tickets }, (_, i) => store.addTask({
       title: `bench ticket ${i}`, prompt: `printf '${i}\\n' > ticket-${i}.txt`, kind: 'code', runner: 'shell',
-      repo, testCmd: suite, parentId: epic.id, playbook: 'bench', role: 'dev', maxAttempts: 1,
+      repo, testCmd: suite, parentId: epic.id, playbook: 'bench', role: 'dev',
     }).id);
     sched.start();
     const deadline = Date.now() + DEADLINE_MS;
@@ -150,7 +150,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
       const parked = events.find((e) => e.type === 'status' && e.message === 'awaiting-approval');
       const approved = events.find((e) => e.message.startsWith('owner-gate: approved'));
       if (outcome(store, id) !== 'landed' || !approved) {
-        unlanded.push({ id, status: task.status, gate: store.gateDecision(id), events: events.slice(-5).map((e) => `${e.type}: ${e.message.slice(0, 200)}`) });
+        unlanded.push(whyNotLanded(store, id));
         continue;
       }
       const decision = mergedApproval(store, id)!;

@@ -24,3 +24,16 @@ export function outcome(store: Store, id: string): 'pending' | 'landed' | 'not-l
   if (store.isLanding(id) || gate === null) return 'pending';
   return gate.startsWith('approved@') && mergedApproval(store, id) ? 'landed' : 'not-landed';
 }
+
+/**
+ * Why a ticket did not land: its status, the owner gate's marker and its last events. Each event keeps the end of its
+ * message, where a failed command's error is: a git command's message starts with the long pinned `-c` list.
+ */
+export function whyNotLanded(store: Store, id: string): { id: string; status: string; gate: string | null; events: string[] } {
+  return {
+    id,
+    status: store.getTask(id)!.status,
+    gate: store.gateDecision(id),
+    events: store.eventsForTask(id).slice(-5).map((e) => `${e.type}: ${e.message.slice(-300)}`),
+  };
+}

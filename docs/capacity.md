@@ -36,7 +36,7 @@ It reports, per run, from the ledger:
 | suite runs/landed | fake suite runs (own checks, post-merge checks, re-runs) per landed ticket |
 | gate/review calls | owner-gate calls (a batch is one) and reviewer calls the fake model answered |
 
-A ticket counts as landed once the owner gate has logged its approval, the approval's decision row records that it merged, and the ticket's landing has settled. The post-merge check can end the landing hold before the approval's decision row and the gate's verdict are written (both wait on git after the merge), so the bench waits for the verdict rather than for the hold. A ticket that does not land is listed under `unlanded` in `--json` output, with its status, the gate's marker and its last events.
+A ticket counts as landed once the owner gate has logged its approval, the approval's decision row records that it merged, and the ticket's landing has settled. The post-merge check can end the landing hold before the approval's decision row and the gate's verdict are written (both wait on git after the merge), so the bench waits for the verdict rather than for the hold. Tickets get the default two attempts, so a transient failure retries as it would in production. A ticket that does not land is listed under `unlanded` in `--json` output, with its status, the gate's marker and the end of its last events (a failed git command's message ends with git's error).
 
 ## First numbers
 
