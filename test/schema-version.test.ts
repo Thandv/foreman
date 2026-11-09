@@ -1,13 +1,25 @@
 import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { removeAfterStops } from './helpers/removal.ts';
 import { Store } from '../src/queue.ts';
 import { backupNow, restoreFrom } from '../src/backup.ts';
+import { COLUMNS, MIGRATED_INDEXES, SCHEMA, SCHEMA_VERSION } from '../src/db.ts';
 
 const NOW = new Date(2026, 9, 11, 12, 0, 0);
+
+/**
+ * One row per schema version: the sha256 of the schema that version stamps.
+ * A change to SCHEMA, COLUMNS or MIGRATED_INDEXES fails here until
+ * SCHEMA_VERSION is bumped and its row added; rows are never edited.
+ */
+const FINGERPRINTS: Record<number, string> = {
+  1: '846ef77b5af7182a0d1a35aa9a569615f6d574bb67cc6652e8f1110898a17600',
+};
 
 /** A scratch folder removed when the test ends, pass or fail. */
 function scratch(t: TestContext): string {
@@ -31,21 +43,68 @@ function ledgerAt(dbPath: string, v: number): void {
   db.close();
 }
 
-test('pin: a ledger stamped with a newer schema version is opened and migrated by Store today', (t) => {
-  const dbPath = path.join(scratch(t), 'foreman.db');
-  ledgerAt(dbPath, 99);
-  const store = new Store(dbPath);
-  store.addTask({ title: 'written by an older binary', prompt: 'x' });
-  store.close();
-  assert.equal(userVersion(dbPath), 99);
+/** Every file in `dir` with its bytes, so "nothing changed on disk" is one comparison. */
+function snapshot(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of fs.readdirSync(dir).sort()) {
+    const p = path.join(dir, name);
+    if (fs.statSync(p).isFile()) out[name] = fs.readFileSync(p).toString('base64');
+  }
+  return out;
+}
+
+test('the schema fingerprint matches the row for SCHEMA_VERSION, the newest row', () => {
+  const sha = createHash('sha256').update(SCHEMA + JSON.stringify(COLUMNS) + MIGRATED_INDEXES).digest('hex');
+  assert.equal(Math.max(...Object.keys(FINGERPRINTS).map(Number)), SCHEMA_VERSION, 'SCHEMA_VERSION has no fingerprint row');
+  assert.equal(sha, FINGERPRINTS[SCHEMA_VERSION], 'the schema changed: bump SCHEMA_VERSION and add its row');
 });
 
-test('pin: restore of an archive stamped with a newer schema version succeeds today', async (t) => {
+test('a new ledger carries SCHEMA_VERSION; an older one opens as before and is stamped', (t) => {
+  const home = scratch(t);
+  const fresh = path.join(home, 'fresh.db');
+  new Store(fresh).close();
+  assert.equal(userVersion(fresh), SCHEMA_VERSION);
+
+  const older = path.join(home, 'older.db');
+  ledgerAt(older, 0);
+  const store = new Store(older);
+  const task = store.addTask({ title: 'still opens', prompt: 'x' });
+  assert.equal(store.getTask(task.id)!.title, 'still opens');
+  store.close();
+  assert.equal(userVersion(older), SCHEMA_VERSION);
+
+  // Same version: opens, stamp unchanged.
+  new Store(older).close();
+  assert.equal(userVersion(older), SCHEMA_VERSION);
+});
+
+test('Store refuses a ledger stamped with a newer schema version and changes nothing on disk', (t) => {
+  const home = scratch(t);
+  const dbPath = path.join(home, 'foreman.db');
+  ledgerAt(dbPath, SCHEMA_VERSION + 1);
+  const before = snapshot(home);
+  assert.throws(
+    () => new Store(dbPath),
+    (err: Error) => err.name === 'NewerSchemaError' && err.message.includes(dbPath) &&
+      err.message.includes(`schema version ${SCHEMA_VERSION + 1}`) && err.message.includes('upgrade Foreman'),
+  );
+  assert.deepEqual(snapshot(home), before);
+});
+
+test('restore refuses an archive stamped with a newer schema version and changes nothing on disk', async (t) => {
   const home = scratch(t);
   const src = path.join(home, 'src', 'foreman.db');
-  ledgerAt(src, 99);
+  ledgerAt(src, SCHEMA_VERSION + 1);
   const made = await backupNow({ dbPath: src, dir: path.join(home, 'backups'), now: NOW });
   const dbPath = path.join(home, 'foreman.db');
-  await restoreFrom({ file: made.file, dbPath, home });
-  assert.equal(userVersion(dbPath), 99);
+  const store = new Store(dbPath);
+  store.addTask({ title: 'the current ledger', prompt: 'x' });
+  store.close();
+  const before = snapshot(home);
+
+  await assert.rejects(
+    restoreFrom({ file: made.file, dbPath, home }),
+    (err: Error) => err.name === 'NewerSchemaError' && err.message.includes(made.file),
+  );
+  assert.deepEqual(snapshot(home), before);
 });

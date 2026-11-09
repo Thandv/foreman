@@ -37,8 +37,13 @@ a parent also cancels its descendants.
   backup next to the database does not survive that disk, and Foreman warns when both are on one disk.
   `FOREMAN_BACKUP=off` turns the daily one off.
 - **Restore.** `foreman restore <file.gz>` replaces the database with a backup. It refuses while the daemon runs and
-  when the file fails its integrity check or is not a Foreman database (no `tasks`, `runs` or `events` table), and it moves the current database aside as `foreman.db.before-restore-<timestamp>` rather than deleting it.
+  when the file fails its integrity check, is not a Foreman database (no `tasks`, `runs` or `events` table) or carries
+  a newer schema version than this Foreman, and it moves the current database aside as `foreman.db.before-restore-<timestamp>` rather than deleting it.
   Stop the daemon first (`foreman stop`), restore, then `foreman serve`.
+- **Schema version.** The database carries its schema version in its header (`PRAGMA user_version`); Foreman stamps it
+  when it opens and migrates the file. A database stamped by a newer Foreman is refused when the store opens it and by
+  `restore`, before anything in it is touched: upgrade Foreman, or restore a backup taken before the upgrade. Older
+  databases open and migrate as before.
 - **Doctor.** `foreman doctor` probes the models, runners, agents and budget, and runs a scratch-jail check that the
   suite wrapper a worker uses works from inside a jail. `--bench` scores each local model and re-points the roster;
   `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20), then a SUITE line (p50

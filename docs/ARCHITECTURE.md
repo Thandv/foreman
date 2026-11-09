@@ -24,7 +24,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 | `src/isolate.ts` | The jail: a git worktree per run, and the record of what the run changed. |
 | `src/runners/proctree.ts` | Reads the process table so a run's whole process tree can be found and stopped. |
 | `src/skills.ts` | Skills a role may carry, and their per-ticket limits. |
-| `src/db.ts` | The SQLite schema and its migrations. |
+| `src/db.ts` | The SQLite schema, its migrations and its version stamp. |
 | `src/verify/assertionCheck.ts` | Compares a run's test assertions with the base to catch weakened tests. |
 | `src/verify/revertTests.ts` | Runs the new tests against the reverted change to show they fail without it. |
 | `src/playbooks.ts` | Loads playbooks (roles and their modes) and checks their skill lists. |

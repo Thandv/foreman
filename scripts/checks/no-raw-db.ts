@@ -21,7 +21,7 @@ export const ALLOW: Record<string, Partial<RawDbCounts>> = {
   'src/align/dataset.ts': { reads: 2 }, // training-set export queries
   'src/align/personaData.ts': { reads: 2 }, // persona corpus queries
   'src/archive.ts': { reads: 3 }, // landed and failed tickets and their runs, for archiving
-  'src/backup.ts': { reads: 3, readOnlyOpeners: 2 }, // integrity and ledger-table checks on a backup file
+  'src/backup.ts': { reads: 2, readOnlyOpeners: 2 }, // integrity and ledger-table checks on a backup file
   'src/cli.ts': { reads: 1 }, // count of active tickets
   // read-only debrief queries and openLedgerReadOnly; openLedgerForReceipt is the ONE writable opener (a probe
   // receipt through Store.prototype inside BEGIN IMMEDIATE, rolled back)

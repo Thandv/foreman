@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Artifact, Decision, MemoryFact, Run, RunEvent, Task, Verdict } from './types.ts';
 import type { ArchiveRecord } from './archive.ts';
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,
   title        TEXT NOT NULL,
@@ -281,7 +281,7 @@ CREATE INDEX IF NOT EXISTS idx_shadow_role   ON shadow_verdicts(playbook, role, 
 `;
 
 /** Additive-only migrations; each is skipped when the column already exists. */
-const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
+export const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ['tasks', 'test_cmd', 'TEXT'],
   ['tasks', 'merge_on_approve', 'INTEGER NOT NULL DEFAULT 0'],
   ['tasks', 'repair_notes', 'TEXT'],
@@ -460,7 +460,7 @@ export function backfillRunDecisions(db: DatabaseSync): number {
  * SCHEMA, this runs on every open and every statement is IF NOT EXISTS, so an
  * existing database picks the index up the next time it is opened.
  */
-const MIGRATED_INDEXES = `
+export const MIGRATED_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived_at, status, updated_at);
 `;
@@ -477,9 +477,44 @@ function migrate(db: DatabaseSync): void {
   }
 }
 
+/**
+ * The ledger's schema version, stamped in the file header (`PRAGMA
+ * user_version`). Bump it, and add its row to test/schema-version.test.ts,
+ * whenever SCHEMA, COLUMNS or MIGRATED_INDEXES change.
+ */
+export const SCHEMA_VERSION = 1;
+
+/** A ledger written by a newer Foreman: this binary must not touch it. */
+export class NewerSchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NewerSchemaError';
+  }
+}
+
+/** Throws NewerSchemaError when `db`'s stamp is ahead of SCHEMA_VERSION; returns the stamp otherwise. */
+export function requireKnownSchema(db: DatabaseSync, label: string): number {
+  const version = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+  if (version > SCHEMA_VERSION) {
+    throw new NewerSchemaError(
+      `${label} has schema version ${version}, newer than this Foreman's ${SCHEMA_VERSION}: ` +
+        'it was written by a newer Foreman; upgrade Foreman to open it. Nothing was changed',
+    );
+  }
+  return version;
+}
+
 export function openDb(dbPath: string): DatabaseSync {
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
+  // Before any pragma or DDL: a newer ledger is left exactly as it was.
+  let version: number;
+  try {
+    version = requireKnownSchema(db, dbPath);
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
@@ -492,6 +527,7 @@ export function openDb(dbPath: string): DatabaseSync {
   db.exec(SCHEMA);
   migrate(db);
   db.exec(MIGRATED_INDEXES);
+  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return db;
 }
 
