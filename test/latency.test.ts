@@ -160,13 +160,13 @@ test('Store.recentRunsForLatency on an empty database returns no runs', () => {
 
 /**
  * A ledger file with two finished runs on fixed timestamps; the gate stage is followed by a decision 1 s later.
- * Their suites ran 2 s and 3 s; the second queued 500 ms for a verify slot.
+ * Their suites ran 2 s and 3 s; the second queued 500 ms for a verify slot, and its worker's own suite 1.5 s.
  */
 function seededLedger(): string {
   const file = path.join(scratchDir('foreman-latency-db-'), 'foreman.db');
   const store = new Store(file);
   const base = 1_700_000_000_000;
-  for (const [i, work, suiteMs, waitMs] of [[1, 2_000, 2_000, 0], [2, 4_000, 3_000, 500]] as const) {
+  for (const [i, work, suiteMs, waitMs, workerWaitMs] of [[1, 2_000, 2_000, 0, 0], [2, 4_000, 3_000, 500, 1_500]] as const) {
     const at = base + i * 100_000;
     const gateAt = at + 1_000 + work + 1_000;
     store.db
@@ -176,8 +176,11 @@ function seededLedger(): string {
       )
       .run(`t${i}`, at, gateAt + 1_000);
     store.db
-      .prepare("INSERT INTO runs (id,task_id,status,stage,started_at,suite_ms,verify_wait_ms) VALUES (?,?,'succeeded','gate',?,?,?)")
-      .run(`r${i}`, `t${i}`, at, suiteMs, waitMs);
+      .prepare(
+        'INSERT INTO runs (id,task_id,status,stage,started_at,suite_ms,verify_wait_ms,worker_slot_wait_ms) ' +
+          "VALUES (?,?,'succeeded','gate',?,?,?,?)",
+      )
+      .run(`r${i}`, `t${i}`, at, suiteMs, waitMs, workerWaitMs);
     for (const [stage, ts] of [['isolate', at], ['work', at + 1_000], ['test', at + 1_000 + work], ['gate', gateAt]] as const) {
       store.db
         .prepare("INSERT INTO events (task_id, run_id, ts, type, stage, message) VALUES (?,?,?,'stage',?,?)")
@@ -213,15 +216,16 @@ test('doctor --latency prints the per-stage table, then suite time and slot wait
       '',
       'SUITE      p50 2.0s  p95 3.0s  over 2 run(s), slot wait excluded',
       'SLOT WAIT  p95 500ms  over 2 run(s)',
+      'WORKER WAIT p95 1.5s  over 2 run(s)',
       '',
     ].join('\n'),
   );
 });
 
-test('suite percentiles leave out runs with no suite time; slot wait is over every run', () => {
-  const runs = [0, 1_000, 2_000, 3_000, 4_000].map((suiteMs, i) => ({ suiteMs, verifyWaitMs: i * 100 }));
-  assert.deepEqual(computeSuiteStat(runs), { suiteRuns: 4, suiteP50Ms: 2_000, suiteP95Ms: 4_000, slotWaitP95Ms: 400 });
-  assert.deepEqual(computeSuiteStat([]), { suiteRuns: 0, suiteP50Ms: 0, suiteP95Ms: 0, slotWaitP95Ms: 0 });
+test('suite percentiles leave out runs with no suite time; slot waits are over every run', () => {
+  const runs = [0, 1_000, 2_000, 3_000, 4_000].map((suiteMs, i) => ({ suiteMs, verifyWaitMs: i * 100, workerSlotWaitMs: i * 10 }));
+  assert.deepEqual(computeSuiteStat(runs), { suiteRuns: 4, suiteP50Ms: 2_000, suiteP95Ms: 4_000, slotWaitP95Ms: 400, workerSlotWaitP95Ms: 40 });
+  assert.deepEqual(computeSuiteStat([]), { suiteRuns: 0, suiteP50Ms: 0, suiteP95Ms: 0, slotWaitP95Ms: 0, workerSlotWaitP95Ms: 0 });
 });
 
 test('a ledger without runs.suite_ms migrates twice cleanly and reads 0', () => {
@@ -236,6 +240,23 @@ test('a ledger without runs.suite_ms migrates twice cleanly and reads 0', () => 
     const store = new Store(file);
     assert.equal(store.recentRunsForLatency(5)[0]!.suiteMs, i === 0 ? 0 : 7);
     if (i === 0) store.addSuiteMs(runId, 7);
+    store.close();
+  }
+  fs.rmSync(path.dirname(file), { recursive: true, force: true });
+});
+
+test('a ledger without runs.worker_slot_wait_ms migrates twice cleanly and reads 0', () => {
+  const file = path.join(scratchDir('foreman-latency-mig-'), 'f.db');
+  const first = new Store(file);
+  const runId = first.startRun(first.addTask({ title: 't', prompt: 'p', runner: 'echo' }).id).id;
+  first.close();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE runs DROP COLUMN worker_slot_wait_ms');
+  raw.close();
+  for (let i = 0; i < 2; i++) {
+    const store = new Store(file);
+    assert.equal(store.recentRunsForLatency(5)[0]!.workerSlotWaitMs, i === 0 ? 0 : 7);
+    if (i === 0) store.addWorkerSlotWait(runId, 7);
     store.close();
   }
   fs.rmSync(path.dirname(file), { recursive: true, force: true });

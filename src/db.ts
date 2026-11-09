@@ -372,6 +372,11 @@ const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   // revert check) of its wall time less its verify-slot wait. 0 on a run that
   // ran none, or from before it was recorded. Read by `doctor --latency`.
   ['runs', 'suite_ms', 'INTEGER NOT NULL DEFAULT 0'],
+  // Time this run's worker's own suite runs queued for a test slot (POST
+  // /api/verify-slot, Scheduler.slotQueued), from the first wait opening to
+  // the last closing. Apart from verify_wait_ms, which counts the daemon's own
+  // gate waits (debrief reads it as that). Read by `doctor --latency`.
+  ['runs', 'worker_slot_wait_ms', 'INTEGER NOT NULL DEFAULT 0'],
   // Daemon stops that requeued this ticket since its last fresh start (Retry,
   // a repair round, Give to AI). On the row, not in `events`: pruneEvents would
   // erase the count that bounds a daemon that keeps stopping mid-run.

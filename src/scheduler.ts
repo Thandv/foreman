@@ -793,8 +793,8 @@ export class Scheduler {
 
   /**
    * A worker's own suite run (the slot wrapper, through POST /api/verify-slot) started or stopped waiting for a test
-   * slot: that wait is not the run's own time, so its deadline stops meanwhile (RunClock caps the total). A run id
-   * that is not running here is ignored.
+   * slot: that wait is not the run's own time, so its deadline stops meanwhile (RunClock caps the total), and it is
+   * added to the run's worker_slot_wait_ms. A run id that is not running here is ignored.
    */
   slotQueued(runId: string, queued: boolean): void {
     for (const entry of this.active.values()) {
@@ -805,14 +805,16 @@ export class Scheduler {
         entry.clock.pause(`worker-slot:${open + 1}`);
         // In the run's timeline, so an hour that went on a queue reads as one.
         if (open === 0) {
-          entry.slotWaitAt = Date.now();
+          entry.slotWaitAt = this.now();
           this.store.record({ taskId: entry.taskId, runId, type: 'log', message: "the worker's suite run is waiting for a test slot; the run deadline is stopped meanwhile" });
         }
       } else if (open > 0) {
         entry.clock.resume(`worker-slot:${open}`);
         entry.slotWaits = open - 1;
         if (open === 1) {
-          const secs = Math.round((Date.now() - (entry.slotWaitAt ?? Date.now())) / 1000);
+          const waitedMs = this.now() - (entry.slotWaitAt ?? this.now());
+          this.store.addWorkerSlotWait(runId, waitedMs);
+          const secs = Math.round(waitedMs / 1000);
           this.store.record({ taskId: entry.taskId, runId, type: 'log', message: `the worker's suite run stopped waiting for a test slot after ${secs} s` });
         }
       }

@@ -23,7 +23,7 @@ async function until(cond: () => boolean, what: string, ms = 120_000): Promise<v
   }
 }
 
-test('pin: a named lease that waits leaves its run with only the log line, no number for the wait', { timeout: 180_000 }, async (t) => {
+test('a named lease that waits 1 s adds 1000 to worker_slot_wait_ms of its run only; a token-less one adds nothing', { timeout: 180_000 }, async (t) => {
   const prevCap = process.env['FOREMAN_MAX_VERIFIES'];
   process.env['FOREMAN_MAX_VERIFIES'] = '1';
   const time = new FakeTime();
@@ -59,8 +59,11 @@ test('pin: a named lease that waits leaves its run with only the log line, no nu
     req.end();
     return { req, text: () => body };
   };
+  let ran = 0;
   echoRunner.run = async (ctx) => {
     ctx.stage('work');
+    // The second run waits for nothing: the first run's wait must not land on it.
+    if (ran++ > 0) return { ok: true, summary: 'done', exitCode: 0 };
     // Every slot is taken by someone else's suite: this run's wrapper queues for 1 s.
     const other = await acquireVerifySlot();
     const named = ask({ 'x-foreman-run': ctx.runId, 'x-foreman-run-token': runToken(ctx.runId) });
@@ -68,15 +71,25 @@ test('pin: a named lease that waits leaves its run with only the log line, no nu
     time.advance(1_000);
     other.release();
     await until(() => /granted/.test(named.text()), 'the grant');
+    // A request naming the run without its token is anonymous: its 1 s behind the named lease is charged to no run.
+    const bare = ask({ 'x-foreman-run': ctx.runId });
+    await until(() => verifySlotStats().waiting === 1 && /queued\n/.test(bare.text()), 'the token-less request to queue');
+    time.advance(1_000);
     named.req.destroy();
-    await until(() => verifySlotStats().active === 0, 'the lease to be released');
+    await until(() => /granted/.test(bare.text()), 'the token-less grant');
+    bare.req.destroy();
+    await until(() => verifySlotStats().active === 0, 'every lease to be released');
     return { ok: true, summary: 'done', exitCode: 0 };
   };
-  const task = store.addTask({ title: 'waits for a slot', prompt: 'x', runner: 'echo', maxAttempts: 1 });
+  const first = store.addTask({ title: 'waits for a slot', prompt: 'x', runner: 'echo', maxAttempts: 1 });
   await sched.drain(120_000);
-  assert.equal(store.getTask(task.id)!.status, 'awaiting-approval', store.getTask(task.id)!.error ?? '');
-  const lines = store.eventsForTask(task.id).map((e) => e.message);
-  assert.ok(lines.some((m) => /the worker's suite run stopped waiting for a test slot after \d+ s/.test(m)), 'the wait is logged');
-  const columns = (store.db.prepare('PRAGMA table_info(runs)').all() as { name: string }[]).map((c) => c.name);
-  assert.ok(!columns.includes('worker_slot_wait_ms'), 'and nothing on the run sums it');
+  const second = store.addTask({ title: 'waits for nothing', prompt: 'x', runner: 'echo', maxAttempts: 1 });
+  await sched.drain(120_000);
+  for (const task of [first, second]) assert.equal(store.getTask(task.id)!.status, 'awaiting-approval', store.getTask(task.id)!.error ?? '');
+  const lines = store.eventsForTask(first.id).map((e) => e.message);
+  assert.ok(lines.some((m) => m === "the worker's suite run stopped waiting for a test slot after 1 s"), 'the wait is still logged');
+  const waits = new Map(store.recentRunsForLatency(10).map((r) => [r.taskId, r]));
+  assert.equal(waits.get(first.id)!.workerSlotWaitMs, 1_000, 'the named wait, and only it, is on the run that waited');
+  assert.equal(waits.get(first.id)!.verifyWaitMs, 0, 'and not counted as a daemon gate wait');
+  assert.equal(waits.get(second.id)!.workerSlotWaitMs, 0, 'the other run is charged nothing');
 });

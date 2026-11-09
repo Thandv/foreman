@@ -1962,7 +1962,8 @@ async function main(): Promise<number> {
         const suite = computeSuiteStat(raw);
         process.stdout.write(
           `\nSUITE      ${suite.suiteRuns ? `p50 ${formatDuration(suite.suiteP50Ms)}  p95 ${formatDuration(suite.suiteP95Ms)}  over ${suite.suiteRuns} run(s), slot wait excluded` : '— no run has a recorded suite time'}\n` +
-            `SLOT WAIT  p95 ${formatDuration(suite.slotWaitP95Ms)}  over ${raw.length} run(s)\n`,
+            `SLOT WAIT  p95 ${formatDuration(suite.slotWaitP95Ms)}  over ${raw.length} run(s)\n` +
+            `WORKER WAIT p95 ${formatDuration(suite.workerSlotWaitP95Ms)}  over ${raw.length} run(s)\n`,
         );
         return 0;
       }

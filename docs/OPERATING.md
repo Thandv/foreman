@@ -43,8 +43,10 @@ a parent also cancels its descendants.
   suite wrapper a worker uses works from inside a jail. `--bench` scores each local model and re-points the roster;
   `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20), then a SUITE line (p50
   and p95 of the time each run's gate suites ran — the gate, its timeout re-run, each playbook check and the revert
-  check, with the time queued for a verify slot taken out; runs with none are left out) and a SLOT WAIT line (p95 of
-  the time each run queued for a verify slot). These two read the database directly and need no daemon.
+  check, with the time queued for a verify slot taken out; runs with none are left out), a SLOT WAIT line (p95 of
+  the time each run's gate suites queued for a verify slot) and a WORKER WAIT line (p95 of the time each run's worker's
+  own suite runs queued for a slot through the suite wrapper; a request without the run's token is charged to no run).
+  These two read the database directly and need no daemon.
 - **Hold new work.** `foreman hold --reason <text>` stops the daemon claiming queued tasks; `foreman resume` lifts the
   hold, and the next tick claims again. Everything else in each tick keeps running: work already running finishes,
   schedules still queue their batches, the owner gate still decides, blocked tasks are still reconciled, and the
