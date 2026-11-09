@@ -1405,15 +1405,22 @@ export class Scheduler {
       emit(`waited ${ms}ms for a verify slot`);
     };
     // Every suite command this run starts goes through here: its wall time, less what it queued for a slot, is
-    // summed onto the run as suite_ms (doctor --latency), stopped or not.
+    // summed onto the run as suite_ms (doctor --latency), stopped or not. The queued time is read off the onQueue
+    // bracket, which closes even when the wait is aborted (onWaited is not called then).
     const suiteSlotted = async (...args: Parameters<typeof runTestsSlotted>): ReturnType<typeof runTestsSlotted> => {
       const [dir, cmd, signal, onLine, onSpawn, onWaited, onQueue, sandbox] = args;
       const startedAt = Date.now();
-      let waitedMs = 0;
+      let queuedAt = 0;
+      let queuedMs = 0;
+      const onQueueTimed = (queued: boolean): void => {
+        if (queued) queuedAt = Date.now();
+        else queuedMs += Date.now() - queuedAt;
+        onQueue?.(queued);
+      };
       try {
-        return await runTestsSlotted(dir, cmd, signal, onLine, onSpawn, (ms) => { waitedMs += ms; onWaited?.(ms); }, onQueue, sandbox);
+        return await runTestsSlotted(dir, cmd, signal, onLine, onSpawn, onWaited, onQueueTimed, sandbox);
       } finally {
-        this.store.addSuiteMs(runId, Math.max(0, Date.now() - startedAt - waitedMs));
+        this.store.addSuiteMs(runId, Math.max(0, Date.now() - startedAt - queuedMs));
       }
     };
 
