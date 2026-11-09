@@ -2074,6 +2074,32 @@ test('the owner gate holds a run with no reviewed tree for a person, whose appro
   }
 });
 
+test("the owner gate's approval that the git tripwire stops: what the owner gate logs", async () => {
+  const pbDir = withPlaybooks({});
+  const stub = stubClaude([gateReply('approve', 'green and in scope')]);
+  const repo = fixtureRepo();
+  const store = new Store(':memory:');
+  const sched = reviewingSched(store);
+  try {
+    const head = headOf(repo);
+    const { task, run } = await runToGate(store, sched, repo, { gate: 'human' });
+    assert.equal(task.status, 'awaiting-approval', task.error ?? '');
+    store.gateWaiting('owner');
+    // After the run was collected and before the owner rules: the real repo's .git changes.
+    fs.writeFileSync(path.join(repo, '.git', 'hooks', 'pre-push'), '#!/bin/sh\n');
+
+    assert.equal(await ownerGate({ task: store.getTask(task.id)!, run: store.getRun(run.id)!, store }), 'approved');
+    assert.equal(stub.count(), 1, 'precondition: the owner was asked, and approved');
+    assert.match(gateEvents(store, task.id).join('\n'), /^owner-gate: approved — green and in scope \[merge: git tripwire: /);
+    assert.equal(store.getTask(task.id)!.status, 'awaiting-approval');
+    assert.equal(headOf(repo), head, 'nothing merged');
+  } finally {
+    await sched.stop();
+    store.close();
+    cleanup([pbDir, stub.dir, repo]);
+  }
+});
+
 test('the batch gate drops a ticket whose work changed after review, and lands the rest', async () => {
   const pbDir = withPlaybooks({});
   const repo = fixtureRepo();
