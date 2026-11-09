@@ -39,12 +39,20 @@ function onlyEnv<T>(vars: Record<string, string>, fn: () => T): T {
   }
 }
 
-/** What a daemon may hold that a codex worker has no business reading. */
+/**
+ * What a daemon may hold that a codex worker has no business reading: cloud
+ * credentials included, even with Claude's Bedrock/Vertex switches on (those
+ * are Claude's, not codex's).
+ */
 const DAEMON_SECRETS = {
   FOREMAN_GATEWAY_KEY: 'gw-secret',
   GH_TOKEN: 'gho_test',
   ANTHROPIC_API_KEY: 'sk-ant-api03-test',
   CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-test',
+  CLAUDE_CODE_USE_BEDROCK: '1',
+  CLAUDE_CODE_USE_VERTEX: '1',
+  AWS_SECRET_ACCESS_KEY: 'aws-secret-test',
+  GOOGLE_APPLICATION_CREDENTIALS: '/gcp-creds.json',
 };
 
 /** A `codex` stand-in: it appends its whole environment to a file per call, then reports a finished task. */
@@ -103,6 +111,7 @@ test('the codex worker\'s environment is an allowlist: daemon secrets stay out, 
   assert.ok(preflight && run, 'the stub was called for the preflight and the run');
   for (const env of [preflight, run]) {
     for (const name of Object.keys(DAEMON_SECRETS)) assert.equal(env[name], undefined, `${name} is not passed on`);
+    assert.deepEqual(Object.keys(env).filter((n) => /^(AWS|GOOGLE)_/.test(n)), [], 'no cloud credentials reach codex');
     assert.equal(env['PATH'], process.env['PATH'], 'the toolchain is still reachable');
     assert.equal(env['HOME'], process.env['HOME']);
     assert.equal(env['CODEX_HOME'], '/codex-home');

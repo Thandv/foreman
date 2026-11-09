@@ -142,7 +142,9 @@ only with `CLAUDE_CODE_USE_BEDROCK` on, `GOOGLE_*` only with
 `CLAUDE_CODE_USE_VERTEX`; anything else a project's tests need is named in
 `FOREMAN_CLAUDE_ENV_ALLOW` (comma-separated, exact names). A `codex-cli` worker
 gets the same allowlist with `CODEX_*` / `OPENAI_*` in place of `CLAUDE_*` /
-`ANTHROPIC_*` and no cloud credentials. Each ticket has
+`ANTHROPIC_*` and no cloud credentials; a codex provider key outside `OPENAI_*`
+(a custom `env_key` in its `config.toml`) has to be named in
+`FOREMAN_CLAUDE_ENV_ALLOW` too. Each ticket has
 its own directory under that root (`tasks/<ticket id>`), so one ticket's session
 cannot leave settings or history for another's. Sign-in is left alone: no
 `CLAUDE_*` variable is removed, `--bare` is not used, and the worker is told to

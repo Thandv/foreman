@@ -370,8 +370,8 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
 }
 
 /**
- * What a worker session gets on top of its base environment (the daemon's, or
- * the spec's own allowlisted one): the ticket's
+ * What a worker session gets on top of its base environment (always the spec's
+ * own allowlisted one, never the daemon's whole environment): the ticket's
  * test command for the wrapper, and a Bash-tool ceiling long enough for a
  * queued full suite. Only the ceiling (BASH_MAX_TIMEOUT_MS), never the default:
  * a default this long let a worker's `npm run serve` or watch script eat the
@@ -383,7 +383,7 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
  * run's token as proof: a run id alone claims nothing.
  */
 export function workerEnv(task: Pick<Task, 'testCmd'>, runId?: string): NodeJS.ProcessEnv {
-  // Always the daemon's resolved home, so a spec-allowlisted base environment cannot carry a relative one either.
+  // Always the daemon's resolved home, so the spec's allowlisted base environment cannot carry a relative one.
   const env: NodeJS.ProcessEnv = { FOREMAN_HOME: config.home };
   if (runId) {
     env[RUN_ID_ENV] = runId;
