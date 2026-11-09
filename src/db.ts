@@ -175,6 +175,14 @@ CREATE TABLE IF NOT EXISTS landings (
   started_at INTEGER NOT NULL
 );
 
+-- Scheduler starts (Store.recordDaemonStart): a row per start, marked clean_exit by an orderly stop. A start that finds
+-- the previous row unmarked follows a crash; that is how unclean restarts are attributed to the runs in flight.
+CREATE TABLE IF NOT EXISTS daemon_starts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         INTEGER NOT NULL,
+  clean_exit INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS shadow_verdicts (
   id            TEXT PRIMARY KEY,
   task_id       TEXT NOT NULL,

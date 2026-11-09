@@ -209,6 +209,18 @@ export interface InterruptedLanding {
   since: number;
 }
 
+/** This scheduler start and the unclean exits before it (Store.recordDaemonStart). */
+export interface DaemonStart {
+  id: number;
+  /** Daemons in a row, up to this start, that exited without an orderly stop. */
+  crashes: number;
+  /** Starts within CRASH_LOOP_WINDOW_MS, this one included, that followed an unclean exit. */
+  recentUncleanStarts: number;
+}
+
+/** The window in which unclean starts are counted toward a crash loop (scheduler.ts holds dispatch on one). */
+export const CRASH_LOOP_WINDOW_MS = 10 * 60_000;
+
 /** How an admission core-guard finding is written in a task's timeline (scheduler.ts). */
 export const CORE_GUARD_PREFIX = 'CORE-GUARD: ';
 
@@ -1057,10 +1069,44 @@ export class Store extends EventEmitter {
   }
 
   /**
-   * Crash recovery: any run still marked running belongs to a dead process.
-   * Requeue its task if it has attempts left, otherwise fail it.
+   * At scheduler start: write this start's row and read the ones before it. `crashes` is how many daemons in a row
+   * exited without an orderly stop (markCleanExit) up to this start, 0 when the last one stopped in order or there is
+   * no earlier start; `recentUncleanStarts` counts the starts within CRASH_LOOP_WINDOW_MS, this one included, that
+   * followed such an exit. Rows no longer needed for either count are pruned.
    */
-  recoverOrphans(): number {
+  recordDaemonStart(): DaemonStart {
+    const now = Date.now();
+    const id = Number(this.db.prepare('INSERT INTO daemon_starts (at, clean_exit) VALUES (?, 0)').run(now).lastInsertRowid);
+    const lastClean = Number((this.db
+      .prepare('SELECT COALESCE(MAX(id), 0) AS id FROM daemon_starts WHERE clean_exit = 1 AND id < ?')
+      .get(id) as Record<string, unknown>)['id']);
+    const crashes = Number((this.db
+      .prepare('SELECT COUNT(*) AS n FROM daemon_starts WHERE id > ? AND id < ?')
+      .get(lastClean, id) as Record<string, unknown>)['n']);
+    const cutoff = now - CRASH_LOOP_WINDOW_MS;
+    // A start is unclean when the row just before it was never marked clean.
+    const recentUncleanStarts = Number((this.db
+      .prepare(`SELECT COUNT(*) AS n FROM daemon_starts s WHERE s.at >= ?
+        AND (SELECT p.clean_exit FROM daemon_starts p WHERE p.id < s.id ORDER BY p.id DESC LIMIT 1) = 0`)
+      .get(cutoff) as Record<string, unknown>)['n']);
+    this.db.prepare('DELETE FROM daemon_starts WHERE id < ? AND at < ?').run(lastClean, cutoff);
+    return { id, crashes, recentUncleanStarts };
+  }
+
+  /** An orderly stop of the daemon that recordDaemonStart returned `id` to. */
+  markCleanExit(id: number): void {
+    this.db.prepare('UPDATE daemon_starts SET clean_exit = 1 WHERE id = ?').run(id);
+  }
+
+  /**
+   * Crash recovery: any run still marked running belongs to a dead process.
+   * Requeue its task if it has attempts left, otherwise fail it. After an
+   * unclean exit (`crashes` > 0, recordDaemonStart) one task in flight is the
+   * likely cause and keeps that path, its text naming the crashes; several
+   * cannot be told apart, so each gets one stop refund (requeueAfterStop) and
+   * shares its bound. Returns how many tasks were in flight.
+   */
+  recoverOrphans(crashes = 0): number {
     const now = Date.now();
     // A killed daemon reaps nothing, but every run row carries its child's
     // pgid. Kill any group that survived before requeueing, so a retry never
@@ -1079,9 +1125,14 @@ export class Store extends EventEmitter {
     const stuck = this.db
       .prepare("SELECT id FROM tasks WHERE status IN ('running','verifying')")
       .all() as Record<string, unknown>[];
+    const across = crashes > 0 && stuck.length === 1 ? `; in flight across ${crashes} daemon crash${crashes === 1 ? '' : 'es'}` : '';
     for (const row of stuck) {
+      if (crashes > 0 && stuck.length > 1) {
+        this.requeueAfterStop(String(row['id']));
+        continue;
+      }
       this.endLostRun(String(row['id']), {
-        failed: 'interrupted by daemon restart; no attempts left',
+        failed: `interrupted by daemon restart${across}; no attempts left`,
         requeued: 'requeued after daemon restart',
       });
     }
@@ -1603,7 +1654,8 @@ export class Store extends EventEmitter {
    * for when the daemon returns, with its attempt given back — a routine
    * restart must not fail a ticket on its last attempt (and its dependents and
    * epic with it). Crash loops are bounded by recoverOrphans; a daemon that
-   * keeps STOPPING mid-run is bounded here, by a count kept on the row: after
+   * keeps STOPPING mid-run (or crashing with several runs in flight, which
+   * recoverOrphans refunds here) is bounded here, by a count kept on the row: after
    * MAX_STOP_REQUEUES the ticket goes to the operator's desk instead of round
    * again. Retry, a repair round and Give to AI start the count over.
    */

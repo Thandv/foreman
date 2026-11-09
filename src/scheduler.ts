@@ -31,7 +31,7 @@ import { boundBrief, collectBriefCuts, tailLog } from './context.ts';
 import { endedReason, newRunFacts, noteBrief, noteResult, noteResumed } from './runFacts.ts';
 import { getRunner, type RunnerContext } from './runners/index.ts';
 import { ProviderLimited, isProviderLimit, limitBackoffMs } from './providerLimit.ts';
-import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, conflictRepairNotes, redBackoffMs, safeRecord, type Store } from './queue.ts';
+import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, CRASH_LOOP_WINDOW_MS, conflictRepairNotes, redBackoffMs, safeRecord, type Store } from './queue.ts';
 import { recordEpisode, relevantFacts, scopeOf } from './assistant/memory.ts';
 import { planAsk, queuePlan } from './assistant/plan.ts';
 import { deterministicFindings } from './verify/determinism.ts';
@@ -186,6 +186,8 @@ export interface VerifyArgs {
 type Lane = 'work' | 'verify';
 
 const RECONCILE_MS = 60_000;
+/** Unclean starts within CRASH_LOOP_WINDOW_MS that make a crash loop: the daemon starts under a dispatch hold. */
+const CRASH_LOOP_STARTS = 2;
 
 /** Signal 0 only: ESRCH is dead; success and EPERM (and anything unexpected) count as alive, the safe side. */
 function groupAlive(pgid: number): boolean {
@@ -866,7 +868,16 @@ export class Scheduler {
     if (migrated.length) {
       this.store.record({ type: 'status', message: `migrated ${migrated.length} tool(s) into the toolbox: ${migrated.join(', ')}` });
     }
-    this.store.recoverOrphans();
+    const boot = this.store.recordDaemonStart();
+    this.daemonStartId = boot.id;
+    const inFlight = this.store.recoverOrphans(boot.crashes);
+    // A crash loop one run in flight accounts for is bounded by that run's attempts; any other is held for the operator.
+    if (boot.recentUncleanStarts >= CRASH_LOOP_STARTS && inFlight !== 1) {
+      const reason = `crash loop: ${boot.recentUncleanStarts} unclean daemon starts within ${CRASH_LOOP_WINDOW_MS / 60_000} minutes ` +
+        `with ${inFlight} runs in flight; find the cause, then foreman resume`;
+      this.dispatchHold(reason);
+      this.store.record({ type: 'warning', message: `dispatch held: ${reason}` });
+    }
     this.store.adoptInterruptedLandings();
     // Fills only blanks: decisions an older daemon made after this ledger was
     // migrated (the open-time pass ran before them) get their label here.
@@ -900,6 +911,9 @@ export class Scheduler {
   }
 
   private hold: { reason: string; since: number } | null = null;
+
+  /** This start's daemon_starts row (Store.recordDaemonStart); an orderly stop() marks it clean. */
+  private daemonStartId: number | null = null;
 
   /**
    * An operator's hold on new work: the tick skips only its dispatch stage, so schedules, the owner gate, reconcile and
@@ -935,6 +949,9 @@ export class Scheduler {
     // anything still recorded belongs to a run that never settled its row.
     // Kill it now rather than leave an orphan behind a clean shutdown.
     this.store.killLiveRunGroups();
+    // Last: a stop that throws or is cut off before here leaves its start unclean (recordDaemonStart).
+    if (this.daemonStartId !== null) this.store.markCleanExit(this.daemonStartId);
+    this.daemonStartId = null;
   }
 
   /** Runs the queue to completion. Test helper; the daemon uses start(). */

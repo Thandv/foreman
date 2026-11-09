@@ -44,5 +44,8 @@
   `refs/replace`/`refs/notes` ref by path. Foreman only detects that (a baseline taken at jail creation, compared
   at collection and at landing; docs/security.md) and holds or refuses for a person; it restores nothing. The
   baseline is a file the unsandboxed worker could rewrite too, as could the worker-suite line's mtimes.
+- Crash attribution (`daemon_starts`, docs/OPERATING.md) is not tamper-proof while workers are unsandboxed: a worker
+  can write the ledger, mark a start clean, or kill the daemon itself, so the count and the crash-loop hold are a
+  guard against honest crash loops, not a security boundary.
 - The recurrence language is not cron (see `schedule`); missed windows fire once, not once per
   window elapsed.
