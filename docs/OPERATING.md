@@ -60,9 +60,10 @@ a parent also cancels its descendants.
   a clean stop, recovery is unchanged. After a crash, one task in flight is taken as the likely cause: its attempt is
   spent, and when none are left it fails with `in flight across N daemon crashes`, N being the crashes in a row since
   the last clean stop. Several tasks in flight cannot be told apart, so each gets its attempt back as a daemon stop
-  does, and shares that count: past 3 such requeues the ticket goes to `awaiting-human`. Two or more starts after a
-  crash within 10 minutes, with other than exactly one task in flight now, start the daemon under the dispatch hold
-  above, its reason beginning `crash loop:`; find the cause, then `foreman resume`.
+  does, and shares that count: past 3 such requeues the ticket goes to `awaiting-human`. A start after a crash that is
+  the second or later start after a crash within 10 minutes, with other than exactly one task in flight now, starts
+  the daemon under the dispatch hold above, its reason beginning `crash loop:`; find the cause, then `foreman resume`.
+  A start after a clean stop is never held this way.
 - **Restart.** There is no `restart` command. Run `foreman stop` (it waits up to 90 seconds for in-flight work to wind
   down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd, the plist
   `foreman service` prints sets `KeepAlive` to `SuccessfulExit = false`: launchd restarts the daemon only after a

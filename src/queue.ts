@@ -1089,6 +1089,7 @@ export class Store extends EventEmitter {
       .prepare(`SELECT COUNT(*) AS n FROM daemon_starts s WHERE s.at >= ?
         AND (SELECT p.clean_exit FROM daemon_starts p WHERE p.id < s.id ORDER BY p.id DESC LIMIT 1) = 0`)
       .get(cutoff) as Record<string, unknown>)['n']);
+    // Pruning can drop the row just before an in-window start, which then counts as clean: it can only undercount.
     this.db.prepare('DELETE FROM daemon_starts WHERE id < ? AND at < ?').run(lastClean, cutoff);
     return { id, crashes, recentUncleanStarts };
   }

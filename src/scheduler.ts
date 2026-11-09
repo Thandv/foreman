@@ -871,10 +871,11 @@ export class Scheduler {
     const boot = this.store.recordDaemonStart();
     this.daemonStartId = boot.id;
     const inFlight = this.store.recoverOrphans(boot.crashes);
-    // A crash loop one run in flight accounts for is bounded by that run's attempts; any other is held for the operator.
-    if (boot.recentUncleanStarts >= CRASH_LOOP_STARTS && inFlight !== 1) {
+    // Only a start after a crash can be in a crash loop: a clean stop ends one. A loop one task in flight accounts
+    // for is bounded by that task's attempts; any other is held for the operator.
+    if (boot.crashes > 0 && boot.recentUncleanStarts >= CRASH_LOOP_STARTS && inFlight !== 1) {
       const reason = `crash loop: ${boot.recentUncleanStarts} unclean daemon starts within ${CRASH_LOOP_WINDOW_MS / 60_000} minutes ` +
-        `with ${inFlight} runs in flight; find the cause, then foreman resume`;
+        `with ${inFlight} tasks in flight; find the cause, then foreman resume`;
       this.dispatchHold(reason);
       this.store.record({ type: 'warning', message: `dispatch held: ${reason}` });
     }

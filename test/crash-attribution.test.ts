@@ -118,7 +118,7 @@ test('two unclean starts within 10 minutes that no single run accounts for start
     for (let i = 0; i < runs; i++) inFlight(store, 3);
     const sched = boot(store);
     try {
-      assert.match(sched.dispatchHoldState?.reason ?? '', /crash loop: 2 unclean daemon starts within 10 minutes/, `${runs} in flight`);
+      assert.match(sched.dispatchHoldState?.reason ?? '', /crash loop: 2 unclean daemon starts within 10 minutes with \d+ tasks in flight/, `${runs} in flight`);
       assert.ok(store.eventsSince(0).some((e) => e.type === 'warning' && e.message.includes('crash loop')));
     } finally {
       await sched.stop();
