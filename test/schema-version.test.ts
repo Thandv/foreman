@@ -108,3 +108,28 @@ test('restore refuses an archive stamped with a newer schema version and changes
   );
   assert.deepEqual(snapshot(home), before);
 });
+
+/** A real ledger one schema version behind: stamped SCHEMA_VERSION - 1 and missing a column this binary adds. */
+function olderLedger(dbPath: string): void {
+  ledgerAt(dbPath, SCHEMA_VERSION - 1);
+  const db = new DatabaseSync(dbPath);
+  db.exec('ALTER TABLE tasks DROP COLUMN repair_notes');
+  db.close();
+}
+
+function hasColumn(dbPath: string, table: string, column: string): boolean {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((c) => c.name === column);
+  } finally {
+    db.close();
+  }
+}
+
+test('a plain new Store() migrates a ledger one schema version older (pin)', (t) => {
+  const dbPath = path.join(scratch(t), 'foreman.db');
+  olderLedger(dbPath);
+  new Store(dbPath).close();
+  assert.equal(userVersion(dbPath), SCHEMA_VERSION);
+  assert.ok(hasColumn(dbPath, 'tasks', 'repair_notes'));
+});
