@@ -233,3 +233,37 @@ test('a red from the first landing\'s check names its own merge, though a second
     store.close();
   }
 });
+
+test('a first landing\'s check interrupted after a second merge passed is held at the first merge, not the HEAD that moved on', async () => {
+  delete process.env['FOREMAN_POSTMERGE_CHECK'];
+  const dir = repo();
+  const store = new Store(':memory:');
+  const tracker = new ApprovalTracker();
+  try {
+    const a = parkedOnBranch(store, dir, 'first');
+    const b = parkedOnBranch(store, dir, 'second');
+    const aIn = deferred();
+    // A's check never finishes on its own: only the shutdown ends it.
+    const first = applyApproval(store, a.id, {
+      tracker,
+      mainCheck: (_repoDir, _cmd, signal) => {
+        aIn.resolve();
+        return new Promise<MainCheck>((resolve) => signal.addEventListener('abort', () => resolve(result(true, '')), { once: true }));
+      },
+    });
+    await aIn.promise;
+    const second = applyApproval(store, b.id, {
+      tracker, mainCheck: async (repoDir) => result(true, git(repoDir, 'rev-parse', 'HEAD')),
+    });
+    assert.equal((await second).merge.code, 'merged');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), mergeOf(dir, b.id), 'HEAD moved past A\'s merge while A\'s check ran');
+    assert.equal(await tracker.shutdown(5_000), 0);
+    const one = await first;
+    assert.match(one.merge.reason, /main check interrupted by shutdown — untested, dependents held/);
+    const red = store.repoRed(dir);
+    assert.equal(red?.taskId, a.id, 'the hold names A');
+    assert.equal(red?.head, mergeOf(dir, a.id), 'at the HEAD A\'s merge made, captured in the merge section');
+  } finally {
+    store.close();
+  }
+});
