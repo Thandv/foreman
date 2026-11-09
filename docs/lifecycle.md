@@ -33,8 +33,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
 7. **merge** — approving a code task merges its branch `--no-ff`. It refuses on a dirty repo and
    aborts cleanly on conflict; your checkout is never left mid-merge. Every landing answers a typed
    `code` beside its `reason` (`MergeResult` in `src/merge.ts`: `merged`, `conflict`,
-   `not-reviewed`, `core-refused` and the rest). The gate, the owner gate and the CLI decide on the
-   code; the reason is the words you are shown and is never matched.
+   `not-reviewed`, `core-refused` and the rest). The gate, the owner gate, the CLI and the board
+   decide on the code; the reason is the words you are shown and is never matched.
 
 ### A dependent waiting on a canceled ticket
 
