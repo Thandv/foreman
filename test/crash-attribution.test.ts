@@ -146,6 +146,27 @@ test('a clean stop after a crash loop clears the hold: the next start inside the
   }
 });
 
+test('a stop that exits non-zero (an uncaught exception) leaves its start unclean: the second such start holds', async () => {
+  const store = new Store(ledger());
+  try {
+    const first = boot(store);
+    await first.stop(() => false);
+    const rows = store.db.prepare('SELECT clean_exit FROM daemon_starts').all() as Record<string, unknown>[];
+    assert.deepEqual(rows.map((r) => Number(r['clean_exit'])), [0], 'an exit code other than 0 is a crash');
+    const second = boot(store);
+    assert.equal(second.dispatchHoldState?.reason, TEST_HOLD, 'one start after a crash is no loop');
+    await second.stop(() => false);
+    const third = boot(store);
+    try {
+      assert.match(third.dispatchHoldState?.reason ?? '', /crash loop: 2 unclean daemon starts within 10 minutes with 0 tasks in flight/);
+    } finally {
+      await third.stop();
+    }
+  } finally {
+    store.close();
+  }
+});
+
 test('a start prunes rows older than the window before the last clean stop, and its counts stay right', () => {
   const store = new Store(ledger());
   try {
@@ -186,7 +207,7 @@ test('an orderly stop records clean_exit and changes no task; the next start kee
   assert.deepEqual(rows.map((r) => Number(r['clean_exit'])), [1]);
   assert.equal(store.getTask(waiting.id)!.status, 'queued', 'unchanged by the stop');
 
-  // A run left marked running behind a clean exit (a stop that ran out of time is not clean, see below) takes
+  // A run left marked running behind a clean exit (a stop that ran out of time is not clean) takes
   // today's path: its attempt is spent and the text names no crash.
   const a = inFlight(store, 1);
   const b = inFlight(store, 1);
