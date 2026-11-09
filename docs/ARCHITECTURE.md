@@ -182,6 +182,7 @@ Not every entry exists on a fresh install: the module that uses a path creates i
 - `src/security/`
 - `src/improve.ts`
 - `src/merge.ts`
+- `src/landing/`
 - `src/isolate.ts`
 - `src/tools/catalog.ts`
 - `src/lock.ts`
@@ -196,7 +197,7 @@ Not every entry exists on a fresh install: the module that uses a path creates i
 
 Why they are guarded, from the comment above the list:
 
-- **They define what Foreman may do.** The security scanner and the guard itself, the landing check (`src/merge.ts`), tool registration (`src/tools/catalog.ts`), the jail (`src/isolate.ts`, which says what a run changed), the lock, and the tests that pin the guard. A change that widened these would widen Foreman's own permissions.
+- **They define what Foreman may do.** The security scanner and the guard itself, the landing check (`src/merge.ts`) and the per-repo merge queue (`src/landing/`), tool registration (`src/tools/catalog.ts`), the jail (`src/isolate.ts`, which says what a run changed), the lock, and the tests that pin the guard. A change that widened these would widen Foreman's own permissions.
 - **They hold the rules around the guard.** The gate, the scheduler's check, the queue's reopen path, the HTTP API and the store's schema. The approve endpoint takes no proof of who is calling, so a process a run left behind could approve its own ticket; "a person approves it" alone does not keep a worker's change out of these files.
 
 A ticket may change a protected path only if it carries `allowCore`, which Foreman never sets on its own.

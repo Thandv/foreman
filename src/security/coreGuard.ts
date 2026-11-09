@@ -17,9 +17,10 @@ export function foremanRoot(): string {
 /**
  * Paths a self-improvement run may never touch. This is the list that stops
  * Foreman widening its own permissions: the security scanner and this guard,
- * the merge logic (the landing check), the tool-registration path, the jail
- * (which says what a run changed), the lock, the file that re-exports this
- * list, and the tests that pin the guard. Also the files that hold the rules
+ * the merge logic (the landing check and the per-repo merge queue in
+ * src/landing/), the tool-registration path, the jail (which says what a run
+ * changed), the lock, the file that re-exports this list, and the tests that
+ * pin the guard. Also the files that hold the rules
  * around it — the gate (a person lands a self-change; a refused landing is not
  * done), the scheduler (the run's check), the queue (reopen), the HTTP API and
  * the store's schema. Those are listed because the approve endpoint takes no
@@ -32,6 +33,7 @@ export const PROTECTED_PATHS = [
   'src/security/',
   'src/improve.ts',
   'src/merge.ts',
+  'src/landing/',
   'src/isolate.ts',
   'src/tools/catalog.ts',
   'src/lock.ts',

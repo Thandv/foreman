@@ -7,6 +7,7 @@ import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { ApprovalTracker, applyApproval } from '../src/gate.ts';
 import type { MainCheck } from '../src/postMerge.ts';
+import { mergeSectionsPending, withRepoMergeSection } from '../src/landing/queue.ts';
 
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
@@ -39,6 +40,11 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/** Resolves once `cond` holds, checked once per turn of the event loop. */
+async function until(cond: () => boolean): Promise<void> {
+  while (!cond()) await new Promise((r) => setImmediate(r));
+}
+
 const green = (dir: string): MainCheck => ({ ok: true, head: git(dir, 'rev-parse', 'HEAD'), cmd: null, tail: '', firstTail: '' });
 
 test('two approvals in one repo land one after the other: the second merge waits for the first landing to settle', async () => {
@@ -50,10 +56,9 @@ test('two approvals in one repo land one after the other: the second merge waits
     const a = parkedOnBranch(store, dir, 'first');
     const b = parkedOnBranch(store, dir, 'second');
     const aIn = deferred();
-    const bIn = deferred();
     const open = new Set<string>();
     let overlapped = false;
-    // A's landing stays open until B reaches its own main check: today the two landings overlap.
+    // A's landing stays open until B either reaches its own main check (the landings overlap) or waits behind it.
     const check = (id: string, entered: () => void, hold: Promise<unknown>) => async (repoDir: string): Promise<MainCheck> => {
       open.add(id);
       if (open.size > 1) overlapped = true;
@@ -62,9 +67,9 @@ test('two approvals in one repo land one after the other: the second merge waits
       open.delete(id);
       return green(repoDir);
     };
-    const first = applyApproval(store, a.id, { tracker, mainCheck: check('a', aIn.resolve, bIn.promise) });
+    const first = applyApproval(store, a.id, { tracker, mainCheck: check('a', aIn.resolve, until(() => overlapped || mergeSectionsPending(dir) === 2)) });
     await aIn.promise;
-    const second = applyApproval(store, b.id, { tracker, mainCheck: check('b', bIn.resolve, Promise.resolve()) });
+    const second = applyApproval(store, b.id, { tracker, mainCheck: check('b', () => {}, Promise.resolve()) });
     const [one, two] = await Promise.all([first, second]);
     assert.equal(overlapped, false, 'the second landing ran inside the first: two merges on one checkout at once');
     assert.equal(one.merge.code, 'merged');
@@ -101,4 +106,30 @@ test('approvals in two repos still land side by side', async () => {
   } finally {
     store.close();
   }
+});
+
+test('a section that throws releases its repo: the next one runs, and the repo is no longer counted', async () => {
+  const dir = scratchDir('foreman-mergesection-');
+  const gate = deferred();
+  const failing = withRepoMergeSection(dir, async () => { await gate.promise; throw new Error('merge blew up'); });
+  let ran = false;
+  const next = withRepoMergeSection(dir, async () => { ran = true; return 'landed'; });
+  assert.equal(mergeSectionsPending(dir), 2);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ran, false, 'waits while the first section is open');
+  gate.resolve();
+  await assert.rejects(failing, /merge blew up/);
+  assert.equal(await next, 'landed');
+  assert.equal(ran, true);
+  assert.equal(mergeSectionsPending(dir), 0);
+});
+
+test('sections in two repos do not wait on each other', async () => {
+  const one = scratchDir('foreman-mergesection-');
+  const two = scratchDir('foreman-mergesection-');
+  const held = deferred();
+  const first = withRepoMergeSection(one, () => held.promise);
+  assert.equal(await withRepoMergeSection(two, async () => 'other repo'), 'other repo', 'ran while the first repo is held');
+  held.resolve();
+  await first;
 });

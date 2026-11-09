@@ -35,6 +35,11 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    `code` beside its `reason` (`MergeResult` in `src/merge.ts`: `merged`, `conflict`,
    `not-reviewed`, `core-refused` and the rest). The gate, the owner gate, the CLI and the board
    decide on the code; the reason is the words you are shown and is never matched.
+   Landings in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
+   same repo waits until the first one's merge and post-merge check have settled, whether they
+   passed, failed or threw. Approvals in different repos land side by side. The queue is keyed by
+   the ticket's repo path, so two tickets naming different directories of one checkout are not
+   queued together.
 
 ### A dependent waiting on a canceled ticket
 
