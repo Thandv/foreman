@@ -127,6 +127,42 @@ test('two unclean starts within 10 minutes that no single run accounts for start
   }
 });
 
+test('a clean stop after a crash loop clears the hold: the next start inside the window holds nothing', async () => {
+  const store = new Store(ledger());
+  priorStart(store, 4 * MIN, false);
+  priorStart(store, 3 * MIN, false);
+  const looped = boot(store);
+  assert.match(looped.dispatchHoldState?.reason ?? '', /crash loop:/);
+  await looped.stop();
+  const warnings = (): number => store.eventsSince(0).filter((e) => e.type === 'warning' && e.message.includes('crash loop')).length;
+  const before = warnings();
+  const again = boot(store);
+  try {
+    assert.equal(again.dispatchHoldState?.reason, TEST_HOLD, 'the last exit was orderly');
+    assert.equal(warnings(), before, 'no new crash-loop warning');
+  } finally {
+    await again.stop();
+    store.close();
+  }
+});
+
+test('a start prunes rows older than the window before the last clean stop, and its counts stay right', () => {
+  const store = new Store(ledger());
+  try {
+    priorStart(store, 60 * MIN, false);
+    priorStart(store, 50 * MIN, true);
+    priorStart(store, 40 * MIN, false);
+    priorStart(store, 30 * MIN, true);
+    priorStart(store, 2 * MIN, false);
+    const boot = store.recordDaemonStart();
+    assert.deepEqual({ crashes: boot.crashes, recent: boot.recentUncleanStarts }, { crashes: 1, recent: 1 });
+    const rows = store.db.prepare('SELECT clean_exit FROM daemon_starts ORDER BY id').all() as Record<string, unknown>[];
+    assert.deepEqual(rows.map((r) => Number(r['clean_exit'])), [1, 0, 0], 'kept: the last clean row and every row after it');
+  } finally {
+    store.close();
+  }
+});
+
 test('unclean starts spread over more than 10 minutes are no crash loop', async () => {
   const store = new Store(ledger());
   priorStart(store, 30 * MIN, false);
