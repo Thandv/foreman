@@ -168,3 +168,11 @@ test('verify.sh prints the counts and the TODO note when the runner colours its 
   assert.match(r.out, /1 known-gap test\(s\) are marked TODO/);
   assert.equal(lastLine(r.out), 'verify: PASS');
 });
+
+test('the typecheck step covers every script: tsconfig includes scripts/, once and whole', () => {
+  // verify runs scripts/checks/*.ts as gates; a script outside tsconfig's include is never typechecked unless a
+  // test happens to import it. One "scripts" entry covers them all, so no narrower scripts/* entry sits beside it.
+  const tsconfig = JSON.parse(fs.readFileSync(path.join(path.dirname(VERIFY), '..', 'tsconfig.json'), 'utf8')) as { include: string[] };
+  const scripts = tsconfig.include.filter((p) => p === 'scripts' || p.startsWith('scripts/'));
+  assert.deepEqual(scripts, ['scripts'], `include is ${JSON.stringify(tsconfig.include)}`);
+});
