@@ -6,9 +6,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { createHash } from 'node:crypto';
-import { applyApproval as approveChecked } from '../src/gate.ts';
+import { applyApproval as approveChecked, type ApprovalResult } from '../src/gate.ts';
 import { acceptingGitChanges } from './helpers/tripwire.ts';
 const applyApproval = acceptingGitChanges(approveChecked); // one test plants config in the real repo on purpose
+/** An approval and its post-merge check: applyApproval returns once the merge settles, and the check runs on. */
+const approveAndCheck = async (store: Store, taskId: string): Promise<ApprovalResult> => {
+  const out = await applyApproval(store, taskId, {});
+  return { ...out, merge: (await out.postMerge) ?? out.merge };
+};
 import { Scheduler } from '../src/scheduler.ts';
 import { mergeApproved } from '../src/merge.ts';
 import { jailTree } from '../src/isolate.ts';
@@ -77,7 +82,7 @@ test('a merge that turns main red holds its dependents until main is green again
     // Its own branch would pass a check that looked only at it; together with main it is red.
     const t = parkedOnBranch(store, dir, 'ticket', { 'BROKEN': 'x\n' });
     const child = store.addTask({ title: 'next', prompt: 'p', runner: 'echo', repo: dir, deps: [t.id] });
-    const out = await applyApproval(store, t.id, {});
+    const out = await approveAndCheck(store, t.id);
     assert.equal(out.merge.merged, true);
     assert.match(out.merge.reason, /MAIN IS RED/);
     assert.ok(store.repoRed(dir), 'the repo is marked red');
@@ -100,7 +105,7 @@ test('once someone fixes a red main, the scheduler re-checks it and releases wha
   const sched = new Scheduler(store, { tickMs: 20, maxWorkers: 1, verifyEnabled: false });
   try {
     const t = parkedOnBranch(store, dir, 'ticket', { 'BROKEN': 'x\n' });
-    await applyApproval(store, t.id, {});
+    await approveAndCheck(store, t.id);
     assert.ok(store.repoRed(dir));
     // The operator fixes main: HEAD moves and the tests pass again.
     git(dir, 'rm', '-q', 'BROKEN'); git(dir, 'commit', '-qm', 'fix main');
@@ -134,7 +139,7 @@ test('a main check that fails once and passes on the immediate re-run does not m
   try {
     const t = parkedOnBranch(store, dir, 'ticket', { 'x.txt': 'x\n' });
     const child = store.addTask({ title: 'next', prompt: 'p', runner: 'echo', repo: dir, deps: [t.id] });
-    const out = await applyApproval(store, t.id, {});
+    const out = await approveAndCheck(store, t.id);
     assert.equal(out.merge.merged, true);
     assert.doesNotMatch(out.merge.reason, /MAIN IS RED/);
     assert.equal(store.repoRed(dir), null, 'a flake is not red');
@@ -155,7 +160,7 @@ test('a main check that fails twice marks the repo red and records both tails', 
   const store = new Store(':memory:');
   try {
     const t = parkedOnBranch(store, dir, 'ticket', { 'x.txt': 'x\n' });
-    const out = await applyApproval(store, t.id, {});
+    const out = await approveAndCheck(store, t.id);
     assert.match(out.merge.reason, /MAIN IS RED/);
     assert.ok(store.repoRed(dir), 'two failures mark the repo red');
     assert.equal(runsIn(counter), 2);
@@ -173,7 +178,7 @@ test('a passing first main check runs the command exactly once', async () => {
   const store = new Store(':memory:');
   try {
     const t = parkedOnBranch(store, dir, 'ticket', { 'x.txt': 'x\n' });
-    await applyApproval(store, t.id, {});
+    await approveAndCheck(store, t.id);
     assert.equal(store.repoRed(dir), null);
     assert.equal(runsIn(counter), 1);
   } finally {

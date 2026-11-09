@@ -72,7 +72,7 @@ const USAGE = `foreman — parallel agent mission control
                                           record work you landed by hand: the ticket becomes done and its
                                           dependents are revived (refused unless the commit is on the base branch)
   foreman deps <taskId> --drop <depId>    drop one dependency edge (refused on a running ticket; there is no --add)
-  foreman approve <taskId> [--note <text>] accept the staged artifacts (waits for the merge and its check)
+  foreman approve <taskId> [--note <text>] accept the staged artifacts (waits for the merge; its check runs on)
                                           --as-is <tree sha> lands work that changed after its review, by naming
                                           the tree to land (the refusal prints it)
         [--corrected | --clean]           for the record only: the work needed a fix beyond the reviewed diff (say, a
@@ -1127,10 +1127,10 @@ async function main(): Promise<number> {
         throw new Error('--corrected, --clean and --review-source go with approve');
       }
       if (reviewSource !== undefined && reviewSource.length > 200) throw new Error(`--review-source is ${reviewSource.length} characters; at most 200 are kept`);
-      // An approve merges and then runs the repo's whole suite on the merged
-      // HEAD (postMerge.ts) before it answers; on a large repo that took longer than
-      // fetch's 300s header timeout, and the CLI reported a timeout for a
-      // merge that had landed. node:http has no such ceiling.
+      // An approve answers once its merge has settled, which can wait behind
+      // another landing in the repo (src/landing/queue.ts); fetch's 300s header
+      // timeout once reported a timeout for a merge that had landed. node:http
+      // has no such ceiling.
       const t = cmd === 'approve'
         ? await apiCallLong(`/api/tasks/${taskId}/approve`, {
           ...(note === undefined ? {} : { note }),
@@ -1146,6 +1146,9 @@ async function main(): Promise<number> {
         });
       process.stdout.write(`${t.id} → ${t.status}\n`);
       if (t.merge?.branch) process.stdout.write(`merge: ${t.merge.reason}\n`);
+      if (cmd === 'approve' && t.postMerge === 'pending') {
+        process.stdout.write('main check: pending — runs in the background; a red main shows as MAIN IS RED on the timeline\n');
+      }
       if (t.registration && t.registration.reason !== 'not a tool task') {
         process.stdout.write(`tool: ${t.registration.reason}\n`);
       }

@@ -616,6 +616,11 @@ test('an approval whose merge was aborted reports the abort, not "Approved"', as
     approvalOutcome({ merge: { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'foreman/y' } }),
     { ok: true, message: 'Approved — merged foreman/y' },
   );
+  // The approve route answers before the post-merge check has run; the toast says it is still running.
+  assert.deepEqual(
+    approvalOutcome({ merge: { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'foreman/y' }, postMerge: 'pending' }),
+    { ok: true, message: 'Approved — merged foreman/y; main check running' },
+  );
   // A deliberate skip is not a failure and must not shout like one.
   for (const code of ['not-approved', 'nothing-to-merge', 'merge-disabled', 'nothing-ahead', 'nothing-to-change-closed']) {
     assert.equal(approvalOutcome({ merge: { merged: false, code, reason: 'whatever words', branch: 'b' } }).ok, true, code);

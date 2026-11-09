@@ -134,6 +134,20 @@ test('CLI approve says NOT MERGED only for a ticket that does not merge: not for
   }
 });
 
+test('CLI approve prints a main check still pending, and nothing about it when no check runs', async () => {
+  const merge = { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'b' };
+  const pending = await cliAgainstRoutes(['approve', 't_x'], {
+    'POST /api/tasks/t_x/approve': { id: 't_x', status: 'done', merge, postMerge: 'pending' },
+  });
+  assert.equal(pending.code, 0, pending.stdout);
+  assert.match(pending.stdout, /merge: merged 1 commit\(s\)\nmain check: pending — runs in the background; a red main shows as MAIN IS RED on the timeline\n/);
+  const none = await cliAgainstRoutes(['approve', 't_x'], {
+    'POST /api/tasks/t_x/approve': { id: 't_x', status: 'done', merge, postMerge: 'none' },
+  });
+  assert.equal(none.code, 0, none.stdout);
+  assert.doesNotMatch(none.stdout, /main check/);
+});
+
 test('CLI build shows a corrected kind on the ticket it changed, and not again in the plan check', async () => {
   const r = await cliAgainstRoutes(['build', 'document the lock'], {
     'POST /api/build': {

@@ -42,6 +42,11 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    HEAD failed. A dependent stays `blocked` until its parent's check passes; it is released at
    once when no check runs for that landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing
    merged), and a red or interrupted check holds it with the repo. One check runs per landing.
+   An approve answers once its merge has settled, with the merge result and `postMerge: 'pending'`
+   (`'none'` when no check runs); the check runs on in the background, and a shutdown still aborts
+   it and holds the repo as untested. Its `decisions` row is written once, at the merge, and no
+   longer carries the main-check outcome: a red shows as the `MAIN IS RED` event on the ticket's
+   timeline and as the red-repo marker in `/api/state`, an interrupted check as its warning event.
    While it waits its ticket stays at `awaiting-approval` and nothing is
    decided: its checks, the decision and the merge all run when its turn comes, so approving the
    same ticket twice lands it once, and an approval whose turn comes after a daemon shutdown began

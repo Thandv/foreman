@@ -307,7 +307,11 @@ export function approvalOutcome(result, label = 'Approved') {
   const registration = result?.registration;
 
   if (merge?.branch) {
-    if (merge.merged) return { ok: true, message: `${label} — merged ${merge.branch}` };
+    if (merge.merged) {
+      // The post-merge check runs on after the answer; its outcome reaches the board as timeline events.
+      const check = result.postMerge === 'pending' ? '; main check running' : '';
+      return { ok: true, message: `${label} — merged ${merge.branch}${check}` };
+    }
     const reason = oneLine(merge.reason) || 'the branch did not land';
     if (!SKIPPED_MERGE_CODES.has(merge.code)) {
       return { ok: false, message: `${label}, but ${merge.branch} did not land: ${reason}` };

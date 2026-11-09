@@ -862,9 +862,14 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             if (err instanceof ShuttingDownError) return json(res, 503, { error: err.message });
             throw err;
           }
-          const { task, merge, registration, decision } = approved;
+          const { task, merge, registration, decision, postMerge } = approved;
           void scheduler.tick().catch(() => {});
-          return json(res, 200, { ...task, merge, registration, decision: decision ?? null });
+          // Answered once the merge has settled, not after the repo's whole suite: the post-merge check runs on in
+          // the background (the reverify route's shape) and says what it found on the timeline and in /api/state.
+          void postMerge
+            ?.then(() => scheduler.tick().catch(() => {}))
+            .catch((err: Error) => safeRecord(store, { taskId, type: 'error', message: `main check after merging ${taskId} failed: ${err.message}` }));
+          return json(res, 200, { ...task, merge, registration, decision: decision ?? null, postMerge: postMerge ? 'pending' : 'none' });
         }
         if (action === 'landed') {
           // Host and Origin were checked for every /api write above, before routing: this route is behind the same

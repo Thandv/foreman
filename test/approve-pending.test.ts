@@ -79,7 +79,7 @@ async function daemon() {
   return { store, approve, close };
 }
 
-test('an approve answers only after the post-merge suite has run, and the dependent is released by then', async () => {
+test('an approve answers once the merge settles, with the post-merge suite still to run; the dependent waits for it', async () => {
   delete process.env['FOREMAN_POSTMERGE_CHECK'];
   process.env['FOREMAN_MAX_VERIFIES'] = '1';
   const d = await daemon();
@@ -88,19 +88,37 @@ test('an approve answers only after the post-merge suite has run, and the depend
     const dir = repo();
     const a = parkedOnBranch(d.store, dir, 'parent', 'true');
     const child = d.store.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: dir, deps: [a.id] });
-    let answered = false;
-    const reply = d.approve(a.id).finally(() => { answered = true; });
-    assert.ok(await within(20_000, () => verifySlotStats().waiting === 1), 'the post-merge check is waiting on the suite');
-    assert.equal(answered, false, 'no answer while the suite has not run');
-    suite.release();
-    const out = await reply;
+    const started = Date.now();
+    const out = await d.approve(a.id);
+    assert.ok(Date.now() - started < 2_000, `answered in ${Date.now() - started} ms`);
     assert.equal(out.merge.code, 'merged', out.merge.reason);
-    assert.equal(out.postMerge, undefined);
+    assert.equal(out.postMerge, 'pending');
+    assert.equal(d.store.getTask(a.id)!.status, 'done');
+    assert.ok(await within(20_000, () => verifySlotStats().waiting === 1), 'the post-merge check is waiting on the suite');
     d.store.reconcileBlocked();
-    assert.notEqual(d.store.getTask(child.id)!.status, 'blocked', 'the check passed before the answer');
+    assert.equal(d.store.getTask(child.id)!.status, 'blocked', 'held while the suite has not run');
+    suite.release();
+    assert.ok(await within(20_000, () => {
+      d.store.reconcileBlocked();
+      return d.store.getTask(child.id)!.status !== 'blocked';
+    }), 'released once the check passed');
+    assert.equal(d.store.repoRed(dir), null);
   } finally {
     suite.release();
     delete process.env['FOREMAN_MAX_VERIFIES'];
+    await d.close();
+  }
+});
+
+test('a landing with no post-merge check answers postMerge none', async () => {
+  process.env['FOREMAN_POSTMERGE_CHECK'] = 'off';
+  const d = await daemon();
+  try {
+    const out = await d.approve(parkedOnBranch(d.store, repo(), 'unchecked', 'true').id);
+    assert.equal(out.merge.code, 'merged', out.merge.reason);
+    assert.equal(out.postMerge, 'none');
+  } finally {
+    delete process.env['FOREMAN_POSTMERGE_CHECK'];
     await d.close();
   }
 });
@@ -109,7 +127,8 @@ test('a green landing\'s decision row carries the merge reason', async () => {
   delete process.env['FOREMAN_POSTMERGE_CHECK'];
   const d = await daemon();
   try {
-    const a = parkedOnBranch(d.store, repo(), 'green', 'true');
+    const dir = repo();
+    const a = parkedOnBranch(d.store, dir, 'green', 'true');
     const out = await d.approve(a.id);
     assert.equal(out.merge.code, 'merged', out.merge.reason);
     const rows = d.store.decisionsForTask(a.id);
@@ -119,12 +138,14 @@ test('a green landing\'s decision row carries the merge reason', async () => {
     assert.equal(rows[0]!.mergeReason, out.merge.reason);
     assert.doesNotMatch(rows[0]!.mergeReason ?? '', /MAIN IS RED|main check/);
     assert.deepEqual(out.decision, rows[0]);
+    assert.ok(await within(20_000, () => !d.store.isLanding(a.id)), 'the check ends');
+    assert.deepEqual(d.store.decisionsForTask(a.id), rows, 'the check adds no row');
   } finally {
     await d.close();
   }
 });
 
-test('a red landing\'s decision row carries the MAIN IS RED suffix', async () => {
+test('a red landing\'s decision row is written at the merge, without the suffix; MAIN IS RED is an event', async () => {
   delete process.env['FOREMAN_POSTMERGE_CHECK'];
   const d = await daemon();
   try {
@@ -132,12 +153,15 @@ test('a red landing\'s decision row carries the MAIN IS RED suffix', async () =>
     const a = parkedOnBranch(d.store, dir, 'red', 'false');
     const out = await d.approve(a.id);
     assert.equal(out.merge.code, 'merged', out.merge.reason);
-    assert.match(out.merge.reason, /; MAIN IS RED after the merge — dependents held$/);
+    assert.equal(out.postMerge, 'pending');
+    assert.doesNotMatch(out.merge.reason, /MAIN IS RED/);
     const rows = d.store.decisionsForTask(a.id);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.mergeReason, out.merge.reason);
-    assert.equal(d.store.repoRed(dir)?.taskId, a.id, 'marked red before the answer');
+    assert.ok(await within(20_000, () => d.store.repoRed(dir) !== null), 'marked red by the check');
+    assert.equal(d.store.repoRed(dir)?.taskId, a.id);
     assert.ok(d.store.eventsForTask(a.id).some((e) => e.message.startsWith(`MAIN IS RED after merging ${a.id}`)));
+    assert.deepEqual(d.store.decisionsForTask(a.id), rows, 'the red result never goes into decisions');
   } finally {
     await d.close();
   }

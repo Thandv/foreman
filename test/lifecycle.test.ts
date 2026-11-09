@@ -226,10 +226,11 @@ test('a shutdown during a post-merge check interrupts it, records that, and remo
     assert.ok(worktrees(dir).includes(mainWt), 'precondition: the check worktree is registered');
 
     const stuck = await tracker.shutdown(30_000);
-    assert.equal(stuck, 0, 'the approval settled within the cap');
+    assert.equal(stuck, 0, 'the approval and its check settled within the cap');
     const out = await approval;
     assert.equal(out.merge.merged, true, 'the merge itself was not undone');
-    assert.match(out.merge.reason, /interrupted/);
+    assert.match((await out.postMerge)!.reason, /interrupted/);
+    assert.doesNotMatch(store.decisionsForTask(t.id)[0]!.mergeReason ?? '', /interrupted/, 'the decision row was written at the merge');
     assert.ok(!worktrees(dir).includes(mainWt), 'the check worktree is unregistered');
     assert.equal(fs.existsSync(mainWt), false, 'and its directory removed');
     const held = store.repoRed(dir);

@@ -5,7 +5,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Store } from '../src/queue.ts';
-import { ApprovalTracker, applyApproval } from '../src/gate.ts';
+import { ApprovalTracker, applyApproval, type ApprovalResult } from '../src/gate.ts';
+import type { MergeResult } from '../src/merge.ts';
 import type { MainCheck } from '../src/postMerge.ts';
 
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
@@ -55,6 +56,12 @@ async function within(ms: number, cond: () => boolean): Promise<boolean> {
 const mergeOf = (dir: string, taskId: string): string =>
   git(dir, 'log', '--merges', '-n', '1', '--fixed-strings', `--grep=(${taskId})`, '--format=%H', 'HEAD');
 
+/** An approval's merge result once its post-merge check has run (applyApproval returns before it does). */
+async function checked(approval: Promise<ApprovalResult>): Promise<MergeResult> {
+  const out = await approval;
+  return (await out.postMerge) ?? out.merge;
+}
+
 const result = (ok: boolean, head: string): MainCheck => ({ ok, head, cmd: null, tail: ok ? '' : 'boom', firstTail: '' });
 
 test('a dependent stays blocked while its parent\'s main check runs, and is released when it passes', async () => {
@@ -75,7 +82,7 @@ test('a dependent stays blocked while its parent\'s main check runs, and is rele
     store.reconcileBlocked();
     assert.equal(store.getTask(child.id)!.status, 'blocked', 'held while the parent lands');
     pass.resolve();
-    assert.equal((await landing).merge.code, 'merged');
+    assert.equal((await checked(landing)).code, 'merged');
     store.reconcileBlocked();
     assert.equal(store.getTask(child.id)!.status, 'queued', 'released by the passing check');
   } finally {
@@ -90,11 +97,11 @@ test('a red main check holds the dependent and names the parent\'s merge', async
   try {
     const a = parkedOnBranch(store, dir, 'parent');
     const child = store.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: dir, deps: [a.id] });
-    const out = await applyApproval(store, a.id, {
+    const merge = await checked(applyApproval(store, a.id, {
       tracker: new ApprovalTracker(),
       mainCheck: async (repoDir) => result(false, git(repoDir, 'rev-parse', 'HEAD')),
-    });
-    assert.match(out.merge.reason, /MAIN IS RED after the merge — dependents held/);
+    }));
+    assert.match(merge.reason, /MAIN IS RED after the merge — dependents held/);
     const red = store.repoRed(dir);
     assert.equal(red?.taskId, a.id);
     assert.equal(red?.head, mergeOf(dir, a.id));
@@ -180,12 +187,12 @@ test('a second approval in the repo merges while the first one\'s main check run
     assert.equal(store.getTask(aChild.id)!.status, 'blocked', 'A\'s check has not passed');
     assert.equal(store.getTask(bChild.id)!.status, 'blocked', 'B\'s check has not passed');
     bPass.resolve();
-    assert.equal((await second).merge.code, 'merged');
+    assert.equal((await checked(second)).code, 'merged');
     store.reconcileBlocked();
     assert.equal(store.getTask(bChild.id)!.status, 'queued', 'B\'s check passed');
     assert.equal(store.getTask(aChild.id)!.status, 'blocked', 'still held: A\'s own check is running');
     aPass.resolve();
-    assert.equal((await first).merge.code, 'merged');
+    assert.equal((await checked(first)).code, 'merged');
     store.reconcileBlocked();
     assert.equal(store.getTask(aChild.id)!.status, 'queued');
   } finally {
@@ -220,8 +227,8 @@ test('a red from the first landing\'s check names its own merge, though a second
     });
     assert.equal((await second).merge.code, 'merged');
     bDone.resolve();
-    const one = await first;
-    assert.match(one.merge.reason, /MAIN IS RED after the merge — dependents held/);
+    const one = await checked(first);
+    assert.match(one.reason, /MAIN IS RED after the merge — dependents held/);
     assert.equal(tested.get('a'), mergeOf(dir, a.id), 'A\'s check tested the HEAD A\'s merge made');
     assert.equal(tested.get('b'), mergeOf(dir, b.id), 'B\'s check tested the HEAD B\'s merge made');
     assert.equal(git(dir, 'rev-parse', 'HEAD'), mergeOf(dir, b.id));
@@ -258,8 +265,8 @@ test('a first landing\'s check interrupted after a second merge passed is held a
     assert.equal((await second).merge.code, 'merged');
     assert.equal(git(dir, 'rev-parse', 'HEAD'), mergeOf(dir, b.id), 'HEAD moved past A\'s merge while A\'s check ran');
     assert.equal(await tracker.shutdown(5_000), 0);
-    const one = await first;
-    assert.match(one.merge.reason, /main check interrupted by shutdown — untested, dependents held/);
+    const one = await checked(first);
+    assert.match(one.reason, /main check interrupted by shutdown — untested, dependents held/);
     const red = store.repoRed(dir);
     assert.equal(red?.taskId, a.id, 'the hold names A');
     assert.equal(red?.head, mergeOf(dir, a.id), 'at the HEAD A\'s merge made, captured in the merge section');

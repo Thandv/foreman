@@ -274,6 +274,12 @@ export interface ApprovalResult {
   registration: RegisterResult;
   /** The row this approval left in `decisions`; null if the ledger could not take it (the timeline says why). */
   decision?: Decision | null;
+  /**
+   * The landing's post-merge check, still running when the approval returns: it resolves with the merge result
+   * and what the check found appended to its reason (checkLanded), and rejects only when the check could not be
+   * recorded. Absent when no check runs for this landing.
+   */
+  postMerge?: Promise<MergeResult>;
 }
 
 /** What only the person approving can state, for the decision row. Read only when `source` is 'human'. */
@@ -289,6 +295,8 @@ export interface ApprovalStatement {
  * approving off-tick run exactly this: decide → remember → land the branch →
  * register a built tool. `source` only marks the decision; it never branches
  * the effects, so autonomy cannot quietly do something approval does not.
+ * It returns once the merge has settled; the post-merge check runs on as
+ * the result's `postMerge`.
  */
 export async function applyApproval(
   store: Store,
@@ -366,15 +374,14 @@ interface Settled {
 async function approveNow(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker, section: Section): Promise<ApprovalResult> {
   const settled = await section(() => decideAndMerge(store, taskId, opts));
   if ('result' in settled) return settled.result;
-  const { before, run, task, landable } = settled;
-  let merge = settled.merge;
-  try {
-    if (settled.checkAt !== null) merge = await checkLanded(store, settled, settled.checkAt, opts.mainCheck ?? checkMergedHead, tracker);
-  } finally {
-    // The landing hold ends here: a dependent is released by a passing check
-    // at the HEAD its parent's merge made, or at once when no check ran.
-    if (landable) store.endLanding(taskId);
-  }
+  const { before, run, task, merge, landable, checkAt } = settled;
+  // The approval returns once the merge has settled; its post-merge check runs on, tracked so a shutdown aborts and
+  // waits for it. The landing hold ends with the check: a dependent is released by a passing check at the HEAD its
+  // parent's merge made, or at once when no check runs.
+  const postMerge = checkAt === null
+    ? undefined
+    : tracker.track(checkLanded(store, settled, checkAt, opts.mainCheck ?? checkMergedHead, tracker).finally(() => store.endLanding(taskId)));
+  if (landable && !postMerge) store.endLanding(taskId);
   if (merge.branch) {
     store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
   }
@@ -395,8 +402,9 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
       message: `tool: ${registration.reason}`,
     });
   }
-  // The ledger's own record of this decision: written once, when the outcome is known.
-  return recordApproval(store, opts, before, run, { task, merge, registration });
+  // The ledger's own record of this decision: written once, when the merge has settled. What the post-merge
+  // check finds is never added to it; the check records it as events and the red-repo marker (checkLanded).
+  return { ...(await recordApproval(store, opts, before, run, { task, merge, registration })), ...(postMerge ? { postMerge } : {}) };
 }
 
 /**
@@ -528,10 +536,12 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
 
 /**
  * The post-merge check of a landing, at the HEAD its merge made. Outside the
- * merge section but still inside the landing hold, so no dependent is
- * released before that HEAD has been shown to pass its own tests. A red or
- * an interrupted check marks the repo red at that HEAD and names this task.
- * Returns the merge result with what the check found appended to its reason.
+ * merge section, after the approval has returned, but still inside the landing
+ * hold, so no dependent is released before that HEAD has been shown to pass its
+ * own tests. A red or an interrupted check marks the repo red at that HEAD,
+ * names this task and says so on its timeline. Returns the merge result with
+ * what the check found appended to its reason (for the owner gate's log; the
+ * decision row was written without it).
  */
 async function checkLanded(store: Store, landed: Settled, head: string, mainCheck: MainChecker, tracker: ApprovalTracker): Promise<MergeResult> {
   const { task, run } = landed;
@@ -589,9 +599,9 @@ async function checkLanded(store: Store, landed: Settled, head: string, mainChec
  * The tree a merge just landed, read from what the checkout RECEIVED: the
  * second parent of the newest merge commit on HEAD's first-parent line that
  * merge.ts wrote for this task (`foreman: <title> (<task id>)`, always
- * --no-ff). Never from the branch NAME: the row is written after the main
- * check, minutes after the merge, and a process a run left behind can point
- * the branch anywhere by then (merge.ts reads the branch once for the same
+ * --no-ff). Never from the branch NAME: the row is written after the merge,
+ * outside the merge section, and a process a run left behind can point the
+ * branch anywhere by then (merge.ts reads the branch once for the same
  * reason). Null when git cannot say.
  *
  * Through isolate.ts's `pinnedGit`: the repo's config is the one every jail
@@ -1358,7 +1368,9 @@ async function applyGateReply(
     // Not the tree that was reviewed, no tree on record, or the real .git
     // changed (the git tripwire): nothing landed and the ticket is a person's now.
     if (result.merge.code === 'not-reviewed') return log('hold', result.merge.reason);
-    return log('approved', `${rationale}${result.merge.branch ? ` [merge: ${result.merge.reason}]` : ''}`);
+    // The owner gate runs off-tick and logs the landing with what its post-merge check found.
+    const merge = (await result.postMerge) ?? result.merge;
+    return log('approved', `${rationale}${merge.branch ? ` [merge: ${merge.reason}]` : ''}`);
   }
   applyRejection(store, task.id, note, 'owner-gate');
   return log('rejected', rationale);

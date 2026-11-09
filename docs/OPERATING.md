@@ -9,7 +9,7 @@ it says otherwise, and none runs inside a worker session (see [Commands](command
 
 | Command | What it does |
 |---|---|
-| `foreman approve <taskId> [--note <text>]` | Accepts the staged work. Waits for the merge and for the check on the merged `HEAD`, so it can take as long as your suite. Prints `merge: <reason>`. |
+| `foreman approve <taskId> [--note <text>]` | Accepts the staged work. Waits for the merge (behind any landing already under way in the repo), not for the check on the merged `HEAD`, which runs on in the background. Prints `merge: <reason>` and `main check: pending`; a red main shows as `MAIN IS RED` on the timeline. |
 | `foreman approve <taskId> --as-is <tree sha>` | Lands work whose tree changed after its review. The refusal prints the tree to name; naming it is the decision. Recorded as corrected unless it is the reviewed tree. |
 | `foreman retry <taskId> [--note <text>]` | Requeues a task that ended (`failed`, `rejected` or `canceled`). The note is binding on the worker and on every reviewer; write what to do differently. `--skills <a>[,<b>]\|default` changes the skills for the new attempt. |
 | `foreman reopen <taskId> [--note <text>]` | Puts a task that failed review back at the human gate with its work intact, for you to decide. Nothing runs again. |
