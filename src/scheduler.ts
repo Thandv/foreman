@@ -898,6 +898,25 @@ export class Scheduler {
     this.dispatchPaused = true;
   }
 
+  private hold: { reason: string; since: number } | null = null;
+
+  /**
+   * An operator's hold on new work: the tick skips only its dispatch stage, so schedules, the owner gate, reconcile and
+   * the re-checks keep running. In memory, like pauseDispatch: a restart clears it.
+   */
+  dispatchHold(reason: string): void {
+    this.hold = { reason, since: this.now() };
+  }
+
+  releaseDispatchHold(): void {
+    this.hold = null;
+  }
+
+  /** The dispatch hold and its reason, or null when new work is not held. */
+  get dispatchHoldState(): { reason: string; since: number } | null {
+    return this.hold && { ...this.hold };
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     clearInterval(this.timer);
@@ -1009,7 +1028,7 @@ export class Scheduler {
       // A gate that throws defers dispatch and the idle-time stages after it, as a gate that says no does.
       const free = this.stage('dispatchGate', () => this.dispatchSlots());
       if (free === undefined || free === null) return;
-      this.stage('dispatch', () => this.dispatch(free));
+      if (!this.hold) this.stage('dispatch', () => this.dispatch(free));
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
       // (It is also never reached while the training lock defers dispatch, or

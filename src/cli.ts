@@ -46,6 +46,9 @@ const USAGE = `foreman — parallel agent mission control
 
   foreman serve                          start the daemon + board (${daemonUrl(config.host, config.port)})
   foreman stop                            stop the daemon and wait for it to exit
+  foreman hold --reason <text>            claim no new work; running work, the gate, reconcile and re-checks go on
+                                          (in memory: a daemon restart clears it)
+  foreman resume                          lift the hold; the next tick claims new work again
   foreman add <title> --prompt <text>     queue a task
         [--kind code|writing|research|general] [--runner echo|shell|claude-code|codex-cli|api]
         [--repo <path>] [--priority N] [--after <id>[,<id>]] [--sensitivity S0|S1|S2]
@@ -1206,6 +1209,18 @@ async function main(): Promise<number> {
       });
       process.stdout.write(`${t.id} → ${t.status}\n`);
       process.stdout.write(recordedLine('reject', t.decision));
+      return 0;
+    }
+    case 'hold': {
+      const reason = flagStr(args, 'reason');
+      if (!reason) throw new Error('usage: foreman hold --reason <text>');
+      await apiCall('/api/dispatch-hold', { method: 'POST', body: JSON.stringify({ reason }) });
+      process.stdout.write(`new work held: ${reason} (foreman resume lifts it)\n`);
+      return 0;
+    }
+    case 'resume': {
+      await apiCall('/api/dispatch-hold', { method: 'DELETE' });
+      process.stdout.write('new work resumed\n');
       return 0;
     }
     case 'rm': {

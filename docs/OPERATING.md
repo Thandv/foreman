@@ -43,6 +43,12 @@ a parent also cancels its descendants.
   suite wrapper a worker uses works from inside a jail. `--bench` scores each local model and re-points the roster;
   `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20). These two read the
   database directly and need no daemon.
+- **Hold new work.** `foreman hold --reason <text>` stops the daemon claiming queued tasks; `foreman resume` lifts the
+  hold, and the next tick claims again. Everything else in each tick keeps running: work already running finishes,
+  schedules still queue their batches, the owner gate still decides, blocked tasks are still reconciled, and the
+  re-checks (provisional reviews, red mains, dirty checkouts) still run. The hold and its reason are in `GET /api/state`
+  (`dispatchHold`, `null` when there is none), and setting or lifting it records a status event. It is kept in memory
+  only: a daemon restart clears it. It is not the pause `foreman stop` makes, which stops every stage.
 - **Restart.** There is no `restart` command. Run `foreman stop` (it waits up to 90 seconds for in-flight work to wind
   down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd, the plist
   `foreman service` prints sets `KeepAlive` to `SuccessfulExit = false`: launchd restarts the daemon only after a

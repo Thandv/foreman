@@ -378,6 +378,7 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       verifying: scheduler.verifyingCount,
       verifyLane: scheduler.verifyLaneSize,
     },
+    dispatchHold: scheduler.dispatchHoldState,
     budget: {
       spentToday: store.spentToday(),
       // The cap governs metered spend only; this is every dollar recorded,
@@ -652,6 +653,22 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
     }
 
     if (seg[1] === 'state' && method === 'GET') return json(res, 200, snapshot(store, scheduler));
+
+    // Holds new work only (Scheduler.dispatchHold); the rest of every tick keeps running. In memory: a restart clears it.
+    if (seg[1] === 'dispatch-hold' && !seg[2] && method === 'POST') {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const reason = typeof body['reason'] === 'string' ? body['reason'].trim() : '';
+      if (!reason || reason.length > 500) return json(res, 400, { error: 'reason must be 1-500 characters' });
+      scheduler.dispatchHold(reason);
+      store.record({ type: 'status', message: `dispatch held: ${reason}` });
+      return json(res, 200, { hold: scheduler.dispatchHoldState });
+    }
+    if (seg[1] === 'dispatch-hold' && !seg[2] && method === 'DELETE') {
+      scheduler.releaseDispatchHold();
+      store.record({ type: 'status', message: 'dispatch hold released' });
+      void scheduler.tick().catch(() => {});
+      return json(res, 200, { hold: null });
+    }
 
     if (seg[1] === 'settings' && seg[2] === 'gate' && method === 'POST') {
       const body = (await readJsonBody(req)) as Record<string, unknown>;

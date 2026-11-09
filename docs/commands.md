@@ -31,6 +31,8 @@ align       LoRA alignment on your own history (see Alignment)
 prose       `prose audit <dir>` and `prose import <file> --out <dir>` for manuscripts
 agreement   how often the local reviewer would have decided what the cloud reviewer did
 drill       local-only readiness probes (see Local-only mode)
+hold        `hold --reason <text>`: claim no new work while the rest of the daemon runs (see Operating)
+resume      lift the hold; the next tick claims new work again
 ```
 
 **HTTP status codes for ledger failures.** A route that rejects its input answers 400 with the reason, and any
