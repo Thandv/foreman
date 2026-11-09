@@ -6,6 +6,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { Store } from '../src/queue.ts';
+import { outcome } from '../scripts/bench/outcome.ts';
 
 // The benchmarks in scripts/bench are too slow for the suite at their real sizes. These runs are the smallest sizes
 // that still exercise every path: each script runs from the checkout, with no network, and writes nothing to the
@@ -70,4 +72,26 @@ test('the pipeline bench lands every ticket with gate batching on and off, and b
   const [on, off] = runs as [(typeof runs)[0], (typeof runs)[0]];
   assert.equal(off.modelCalls, 3, 'batching off: one owner-gate call per ticket');
   assert.ok(on.modelCalls < off.modelCalls, `batching on made ${on.modelCalls} calls`);
+});
+
+test('the pipeline bench waits for the owner gate to finish a landing before it counts the ticket', () => {
+  // An approval's post-merge check can end its landing hold (the ticket is done, nothing is landing) before the
+  // approval has written its decision row and the gate its verdict: both wait on git after the merge. Counted then,
+  // a ticket that does land was reported as not landed when the machine was loaded.
+  const store = new Store(path.join(scratchDir('foreman-bench-outcome-'), 'foreman.db'));
+  try {
+    const id = store.addTask({ title: 'bench ticket', prompt: 'true', runner: 'shell' }).id;
+    assert.equal(outcome(store, id), 'pending', 'queued');
+    store.setStatus(id, 'done');
+    assert.equal(outcome(store, id), 'pending', 'done, but the gate has not spoken');
+    store.noteDecision({ taskId: id, runId: null, action: 'approve', actor: 'owner-model', note: null, statusAfter: 'done' });
+    assert.equal(outcome(store, id), 'pending', 'the decision row, but not yet the gate\'s verdict');
+    store.markGateDecision(id, 'approved');
+    assert.equal(outcome(store, id), 'landed');
+    const failed = store.addTask({ title: 'bench ticket 2', prompt: 'true', runner: 'shell' }).id;
+    store.setStatus(failed, 'failed');
+    assert.equal(outcome(store, failed), 'not-landed');
+  } finally {
+    store.close();
+  }
 });
