@@ -165,3 +165,39 @@ test('sections in two repos do not wait on each other', async () => {
   held.resolve();
   await first;
 });
+
+test('an approval queued behind a landing lands nothing if its ticket is re-parked on a new run while it waits', async () => {
+  delete process.env['FOREMAN_POSTMERGE_CHECK'];
+  const dir = repo();
+  const store = new Store(':memory:');
+  const tracker = new ApprovalTracker();
+  try {
+    const a = parkedOnBranch(store, dir, 'held');
+    const b = parkedOnBranch(store, dir, 'seen');
+    const aIn = deferred();
+    const aOut = deferred();
+    const first = applyApproval(store, a.id, {
+      tracker, mainCheck: async (repoDir) => { aIn.resolve(); await aOut.promise; return green(repoDir); },
+    });
+    await aIn.promise;
+    const second = applyApproval(store, b.id, { tracker, mainCheck: async (repoDir) => green(repoDir) });
+    await until(() => mergeSectionsPending(dir) === 2);
+    // While B's approval waits, B is rejected, retried and parked again on a run the approver never saw.
+    git(dir, 'checkout', '-q', '-b', 'unseen');
+    fs.writeFileSync(path.join(dir, 'unseen.txt'), 'x\n');
+    git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'unseen');
+    git(dir, 'checkout', '-q', '-');
+    const run2 = store.startRun(b.id);
+    store.setRunMeta(run2.id, { branch: 'unseen', worktreePath: null });
+    store.addVerdict({ runId: run2.id, taskId: b.id, verdict: 'pass', disagreement: false, council: [] });
+    store.endRun(run2.id, 'succeeded', { exitCode: 0, summary: 'ok' });
+    aOut.resolve();
+    assert.equal((await first).merge.code, 'merged');
+    await assert.rejects(second, /work changed while the approval waited/);
+    assert.equal(fs.existsSync(path.join(dir, 'unseen.txt')), false, 'the run the approver never saw did not land');
+    assert.equal(store.getTask(b.id)!.status, 'awaiting-approval');
+    assert.equal(store.decisionsForTask(b.id).length, 0, 'no approval is on record for it');
+  } finally {
+    store.close();
+  }
+});
