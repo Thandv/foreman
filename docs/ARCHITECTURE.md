@@ -177,6 +177,10 @@ The forged-tool catalog is not under the home: it is `toolbox/` in the repo (`FO
 
 Not every entry exists on a fresh install: the module that uses a path creates it, so this list is where the code writes, not a promise that all are present.
 
+## Capacity
+
+`scripts/bench/ledger.ts` times the ledger's hot paths (`reconcileBlocked`, `claimable`, the board snapshot, `record`) at 1k, 10k and 100k tasks; `scripts/bench/pipeline.ts` runs an epic end to end with fake workers, suite and model, with gate batching on and off. Neither is part of `npm run verify`. What they measure and the first numbers are in [capacity.md](capacity.md).
+
 ## Protected paths
 
 `PROTECTED_PATHS` in `src/security/coreGuard.ts` lists the files a self-improvement run may not change:
