@@ -645,7 +645,7 @@ test('the protected list names real paths, including the guard, the jail and the
   const root = path.resolve(import.meta.dirname, '..');
   for (const p of PROTECTED_PATHS) assert.ok(fs.existsSync(path.join(root, p)), `${p} does not exist`);
   for (const p of ['src/security/coreGuard.ts', 'src/security/admit.ts', 'src/improve.ts', 'src/merge.ts', 'src/isolate.ts',
-    'src/gate.ts', 'src/scheduler.ts', 'src/queue.ts', 'src/server.ts', 'src/db.ts',
+    'src/gitExec.ts', 'src/gate.ts', 'src/scheduler.ts', 'src/queue.ts', 'src/server.ts', 'src/db.ts',
     'test/improve.test.ts', 'test/security-guard.test.ts']) {
     assert.equal(isProtectedPath(p), true, p);
   }

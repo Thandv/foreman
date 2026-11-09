@@ -159,22 +159,17 @@ function cycles(graph: Map<string, Set<string>>): string[][] {
 }
 
 // (a) Every cycle of value imports, by strongly connected component, with why it is allowed.
-const CYCLES: { files: string[]; reason: string }[] = [
-  {
-    files: ['src/isolate.ts', 'src/security/coreGuard.ts'],
-    reason: 'coreGuard takes driverlessEnv from isolate.ts, and isolate.ts takes changedPaths from coreGuard',
-  },
-];
+const CYCLES: { files: string[]; reason: string }[] = [];
 
 // (b) Edges out of src/security/* beyond config, types, localOnly and security itself, with why.
 const SECURITY_EDGES: Record<string, string> = {
-  'src/security/coreGuard.ts -> src/isolate.ts': 'coreGuard takes driverlessEnv from isolate.ts',
+  'src/security/coreGuard.ts -> src/gitExec.ts': 'coreGuard takes driverlessEnv from gitExec.ts',
 };
 
 // (c) The modules queue.ts imports as values.
 const QUEUE_IMPORTS = [
-  'src/archive.ts', 'src/assign.ts', 'src/assistant/retro.ts', 'src/db.ts', 'src/isolate.ts', 'src/runners/proctree.ts',
-  'src/schedule.ts', 'src/skills.ts', 'src/types.ts', 'src/verify/followUpChain.ts',
+  'src/archive.ts', 'src/assign.ts', 'src/assistant/retro.ts', 'src/db.ts', 'src/gitExec.ts', 'src/isolate.ts',
+  'src/runners/proctree.ts', 'src/schedule.ts', 'src/skills.ts', 'src/types.ts', 'src/verify/followUpChain.ts',
 ];
 
 // (d) Value edges into src/align/ and src/prose/ from the rest of src/, with why. The core reaches the alignment and
@@ -274,7 +269,7 @@ const PROCESS_ENV_FILES: string[] = [
   'src/align/personaAdopt.ts', 'src/align/personaServe.ts', 'src/align/personas.ts', 'src/align/redact.ts',
   'src/align/train.ts', 'src/assign.ts', 'src/assistant/crewPlan.ts', 'src/assistant/ownerCall.ts', 'src/backup.ts',
   'src/budget.ts', 'src/cli.ts', 'src/config.ts', 'src/deps.ts', 'src/diskSpace.ts', 'src/gate.ts',
-  'src/gitTimeout.ts', 'src/improve.ts', 'src/isolate.ts', 'src/localOnly.ts', 'src/memory.ts', 'src/models.ts',
+  'src/gitExec.ts', 'src/gitTimeout.ts', 'src/improve.ts', 'src/localOnly.ts', 'src/memory.ts', 'src/models.ts',
   'src/playbooks.ts', 'src/postMerge.ts', 'src/providerLimit.ts', 'src/roles.ts', 'src/runClock.ts',
   'src/runners/api.ts', 'src/runners/claudeIsolation.ts', 'src/runners/cliRunners.ts', 'src/runners/echo.ts',
   'src/runners/freezeSweep.ts', 'src/runners/proc.ts', 'src/runners/proctree.ts', 'src/runners/shell.ts',
