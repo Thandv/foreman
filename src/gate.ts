@@ -471,6 +471,9 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
   // second its dependency was approved, one second before that merge landed,
   // and failed its typecheck on the missing module.
   if (landable) store.beginLanding(taskId);
+  // The durable twin of the hold, from before decide() until the merge has settled: a daemon that dies in between
+  // leaves the row, and the next start holds the repo for the operator (Store.adoptInterruptedLandings).
+  const marker = landable && before!.repo ? store.openLanding(before!.repo, taskId, run!.id) : null;
   try {
     let task = store.decide(taskId, true, undefined, source);
     recordDecision(store, task, true, note, source);
@@ -490,6 +493,7 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
         branch: run!.branch,
       }
       : { merged: false, code: 'nothing-to-land', reason: 'nothing to land: no run was approved', branch: null };
+    if (marker !== null) store.closeLanding(marker);
     // A run that changed nothing (it recorded no diff) and whose branch the landing found empty: the approval
     // closes the ticket, and says so instead of reading like a merge that went missing. Nothing above is skipped —
     // the reviewed-tree check and mergeApproved ran as for any approval, and found nothing to merge.
@@ -530,6 +534,7 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
     return { before, run, task, merge, landable, checkAt };
   } catch (err) {
     if (landable) store.endLanding(taskId);
+    if (marker !== null) store.closeLanding(marker);
     throw err;
   }
 }

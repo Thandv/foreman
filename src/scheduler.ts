@@ -867,6 +867,7 @@ export class Scheduler {
       this.store.record({ type: 'status', message: `migrated ${migrated.length} tool(s) into the toolbox: ${migrated.join(', ')}` });
     }
     this.store.recoverOrphans();
+    this.store.adoptInterruptedLandings();
     // Fills only blanks: decisions an older daemon made after this ledger was
     // migrated (the open-time pass ran before them) get their label here.
     backfillRunDecisions(this.store.db);

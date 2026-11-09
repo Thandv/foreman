@@ -164,6 +164,17 @@ CREATE TABLE IF NOT EXISTS red_repos (
   attempts      INTEGER NOT NULL DEFAULT 0
 );
 
+-- Landings in progress (gate.ts): a row is written before the merge and deleted once its ref update is recorded.
+-- A row the daemon finds at start is a merge a crash cut short; it holds that repo's dependents until the operator
+-- clears it (Store.adoptInterruptedLandings).
+CREATE TABLE IF NOT EXISTS landings (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo       TEXT NOT NULL,
+  task_id    TEXT NOT NULL,
+  run_id     TEXT,
+  started_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS shadow_verdicts (
   id            TEXT PRIMARY KEY,
   task_id       TEXT NOT NULL,

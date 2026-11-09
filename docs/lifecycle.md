@@ -42,6 +42,11 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    HEAD failed. A dependent stays `blocked` until its parent's check passes; it is released at
    once when no check runs for that landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing
    merged), and a red or interrupted check holds it with the repo. One check runs per landing.
+   The hold is in memory; its durable twin is a `landings` row, written before the decision and
+   deleted once the merge (and its ref update) has settled. A daemon that dies in between leaves
+   the row: at the next start the repo shows as `landInterrupted` in `/api/state` with a
+   `land-interrupted(<repo>)` warning on the ticket, and every dependent in that repo stays
+   `blocked` until you check the checkout and run `foreman land-clear <repo>`.
    An approve answers once its merge has settled, with the merge result and `postMerge: 'pending'`
    (`'none'` when no check runs); the check runs on in the background, and a shutdown still aborts
    it and holds the repo as untested. Its `decisions` row is written once, at the merge, and no

@@ -379,6 +379,8 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       verifyLane: scheduler.verifyLaneSize,
     },
     dispatchHold: scheduler.dispatchHoldState,
+    // Landings a crash cut short (Store.adoptInterruptedLandings): their repos' dependents wait for `foreman land-clear`.
+    landInterrupted: store.interruptedLandings(),
     budget: {
       spentToday: store.spentToday(),
       // The cap governs metered spend only; this is every dollar recorded,
@@ -668,6 +670,16 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       store.record({ type: 'status', message: 'dispatch hold released' });
       void scheduler.tick().catch(() => {});
       return json(res, 200, { hold: null });
+    }
+
+    // The operator's word that a repo a crash left mid-merge is sound again: its held dependents are released.
+    if (seg[1] === 'land-interrupted' && seg[2] === 'clear' && !seg[3] && method === 'POST') {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const repo = typeof body['repo'] === 'string' ? body['repo'].trim() : '';
+      if (!repo) return json(res, 400, { error: 'repo is required' });
+      if (!store.clearLandInterrupted(repo)) return json(res, 404, { error: `no interrupted landing in ${repo}` });
+      void scheduler.tick().catch(() => {});
+      return json(res, 200, { landInterrupted: store.interruptedLandings() });
     }
 
     if (seg[1] === 'settings' && seg[2] === 'gate' && method === 'POST') {

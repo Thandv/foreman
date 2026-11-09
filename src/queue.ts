@@ -201,6 +201,14 @@ export interface RedRepo {
   attempts?: number;
 }
 
+/** A landing a crash cut short, found at daemon start (Store.adoptInterruptedLandings). */
+export interface InterruptedLanding {
+  repo: string;
+  taskId: string;
+  /** Epoch ms its merge began. */
+  since: number;
+}
+
 /** How an admission core-guard finding is written in a task's timeline (scheduler.ts). */
 export const CORE_GUARD_PREFIX = 'CORE-GUARD: ';
 
@@ -798,8 +806,8 @@ export class Store extends EventEmitter {
    * An approved task whose work is still landing. It is already `done`, but
    * its dependents must not start until the merge lands and the HEAD it made
    * passes its post-merge check (gate.ts) — they are cut from the repo's HEAD.
-   * In-process only: a daemon that dies mid-merge holds nothing, exactly as
-   * it holds no merge.
+   * In-process only: a daemon that dies mid-merge holds the repo through the
+   * durable landing marker instead (openLanding, adoptInterruptedLandings).
    */
   beginLanding(taskId: string): void {
     this.landing.add(taskId);
@@ -812,6 +820,72 @@ export class Store extends EventEmitter {
   /** Whether an approved task's merge is still in flight (see beginLanding). */
   isLanding(taskId: string): boolean {
     return this.landing.has(taskId);
+  }
+
+  /** Landing markers this Store wrote and has not closed: live merges, never taken for interrupted ones. */
+  private readonly openLandings = new Set<number>();
+
+  /** Repos whose landing a crash cut short, as adoptInterruptedLandings found them; keyed by resolved repo path. */
+  private readonly interrupted = new Map<string, InterruptedLanding & { ids: number[] }>();
+
+  /** The durable marker of a merge under way (gate.ts): written before the merge, closed once its ref update is recorded. */
+  openLanding(repo: string, taskId: string, runId: string | null): number {
+    const id = Number(this.db
+      .prepare('INSERT INTO landings (repo, task_id, run_id, started_at) VALUES (?, ?, ?, ?)')
+      .run(path.resolve(repo), taskId, runId, Date.now()).lastInsertRowid);
+    this.openLandings.add(id);
+    return id;
+  }
+
+  closeLanding(id: number): void {
+    this.db.prepare('DELETE FROM landings WHERE id = ?').run(id);
+    this.openLandings.delete(id);
+  }
+
+  /**
+   * At daemon start: every landing row this process did not write is a merge a crash cut short. Its repo's dependents
+   * are held (reconcileBlocked) and it is listed in /api/state until the operator clears it (clearLandInterrupted).
+   */
+  adoptInterruptedLandings(): void {
+    const rows = this.db.prepare('SELECT id, repo, task_id, started_at FROM landings ORDER BY started_at, id').all() as Record<string, unknown>[];
+    for (const r of rows) {
+      const id = Number(r['id']);
+      if (this.openLandings.has(id)) continue;
+      const repo = path.resolve(String(r['repo']));
+      const known = this.interrupted.get(repo);
+      if (known) {
+        if (!known.ids.includes(id)) known.ids.push(id);
+        continue;
+      }
+      const taskId = String(r['task_id']);
+      this.interrupted.set(repo, { repo, taskId, since: Number(r['started_at']), ids: [id] });
+      this.record({
+        taskId, type: 'warning',
+        message: `land-interrupted(${repo}): the daemon stopped during the merge of ${taskId}; new work cut from this repo is held. ` +
+          `Check the checkout (git status, git log), then foreman land-clear ${repo}`,
+      });
+    }
+  }
+
+  landInterrupted(repo: string | null | undefined): InterruptedLanding | null {
+    const found = repo ? this.interrupted.get(path.resolve(repo)) : undefined;
+    return found ? { repo: found.repo, taskId: found.taskId, since: found.since } : null;
+  }
+
+  interruptedLandings(): InterruptedLanding[] {
+    return [...this.interrupted.values()].map(({ repo, taskId, since }) => ({ repo, taskId, since }));
+  }
+
+  /** The operator's word that a cut-short landing's repo is sound again; false when none was held. */
+  clearLandInterrupted(repo: string): boolean {
+    const key = path.resolve(repo);
+    const found = this.interrupted.get(key);
+    if (!found) return false;
+    const drop = this.db.prepare('DELETE FROM landings WHERE id = ?');
+    for (const id of found.ids) drop.run(id);
+    this.interrupted.delete(key);
+    this.record({ taskId: found.taskId, type: 'status', message: `land-interrupted(${key}) cleared by the operator; held work released` });
+    return true;
   }
 
   /**
@@ -905,8 +979,9 @@ export class Store extends EventEmitter {
         (String(d['status']) === 'done' && !this.landing.has(String(d['id'])))
         || (orderOnly(String(d['id'])) && ended(String(d['status']))))) {
         const task = this.getTask(taskId);
-        // A red main is no base to cut new work from: held until it is green.
-        if (task && this.repoRed(task.repo)) continue;
+        // A red main is no base to cut new work from: held until it is green. Nor is a checkout a crash left
+        // mid-merge: held until the operator clears it.
+        if (task && (this.repoRed(task.repo) || this.landInterrupted(task.repo))) continue;
         this.setStatus(taskId, task ? readyStatus(effectiveAssignee(task, undefined, this.defaultAssignee())) : 'queued');
         changed++;
       }

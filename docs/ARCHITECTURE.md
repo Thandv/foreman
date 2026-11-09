@@ -62,6 +62,7 @@ The schema is in `src/db.ts`. Writers were found by searching `src/` for the SQL
 | `schedules` | `src/queue.ts` |
 | `settings` | `src/queue.ts` |
 | `red_repos` | `src/queue.ts` |
+| `landings` | `src/queue.ts` (a row per merge under way, written and deleted around the merge in `src/gate.ts`; cleared by the operator after a crash) |
 | `shadow_verdicts` | `src/queue.ts` |
 | `archive` | `src/queue.ts` (folds a closed task into a summary row) |
 | `decisions` | `src/queue.ts` (insert only; a trigger in `src/db.ts` stops `INSERT OR REPLACE` overwriting a row) |

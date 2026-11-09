@@ -49,6 +49,7 @@ const USAGE = `foreman — parallel agent mission control
   foreman hold --reason <text>            claim no new work; running work, the gate, reconcile and re-checks go on
                                           (in memory: a daemon restart clears it)
   foreman resume                          lift the hold; the next tick claims new work again
+  foreman land-clear <repo>               release a repo a crash left mid-merge, once you have checked its checkout
   foreman add <title> --prompt <text>     queue a task
         [--kind code|writing|research|general] [--runner echo|shell|claude-code|codex-cli|api]
         [--repo <path>] [--priority N] [--after <id>[,<id>]] [--sensitivity S0|S1|S2]
@@ -1224,6 +1225,13 @@ async function main(): Promise<number> {
     case 'resume': {
       await apiCall('/api/dispatch-hold', { method: 'DELETE' });
       process.stdout.write('new work resumed\n');
+      return 0;
+    }
+    case 'land-clear': {
+      const repo = args._[1];
+      if (!repo) throw new Error('usage: foreman land-clear <repo>');
+      await apiCall('/api/land-interrupted/clear', { method: 'POST', body: JSON.stringify({ repo: path.resolve(repo) }) });
+      process.stdout.write(`${path.resolve(repo)}: interrupted landing cleared; held work released\n`);
       return 0;
     }
     case 'rm': {

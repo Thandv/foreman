@@ -49,6 +49,12 @@ a parent also cancels its descendants.
   re-checks (provisional reviews, red mains, dirty checkouts) still run. The hold and its reason are in `GET /api/state`
   (`dispatchHold`, `null` when there is none), and setting or lifting it records a status event. It is kept in memory
   only: a daemon restart clears it. It is not the pause `foreman stop` makes, which stops every stage.
+- **A crash mid-merge.** A daemon that dies while an approval is merging leaves a `landings` row. At the next start
+  that repo is listed in `GET /api/state` (`landInterrupted`: repo, task id, when its merge began), the ticket's
+  timeline carries a `land-interrupted(<repo>)` warning, and every `blocked` dependent in that repo stays blocked. The
+  merge may or may not have happened: check the checkout (`git status`, `git log`), finish or undo the merge by hand,
+  then run `foreman land-clear <repo>`; the next tick releases the held work. It is kept until you clear it, across
+  restarts.
 - **Restart.** There is no `restart` command. Run `foreman stop` (it waits up to 90 seconds for in-flight work to wind
   down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd, the plist
   `foreman service` prints sets `KeepAlive` to `SuccessfulExit = false`: launchd restarts the daemon only after a
