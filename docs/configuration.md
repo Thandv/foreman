@@ -124,7 +124,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_PLAYBOOKS_DIR` | `$FOREMAN_HOME/playbooks` | Where playbooks are read | `src/playbooks.ts` |
 | `FOREMAN_SKILLS_DIR` | unset | The skills repository; unset turns skills off | `src/config.ts` |
 | `FOREMAN_SKILL_BRIEF_BYTES` | `9000` | Byte budget for the skills block of one brief | `src/config.ts` |
-| `FOREMAN_TRACE_SINK` | unset | URL each trace event is also posted to | `src/trace.ts` |
+| `FOREMAN_TRACE_SINK` | unset | URL each trace event is also posted to: at most 32 posts in flight (an event past that is dropped, not queued) and each aborted after 10 s | `src/trace.ts` |
 | `FOREMAN_TRACE_KEY` | unset | Bearer key sent with posts to the trace sink | `src/trace.ts` |
 | `FOREMAN_BACKUP` | on | `off` turns the ledger backup off | `src/backup.ts` |
 | `FOREMAN_BACKUP_DIR` | `$FOREMAN_HOME/backups` | Where backups are written | `src/backup.ts` |

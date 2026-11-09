@@ -96,6 +96,13 @@ a parent also cancels its descendants.
 
 Set `FOREMAN_DEBUG=1` in the daemon's environment (in the launchd plist's `EnvironmentVariables`, then reload the job) and read the lines tagged debug in `<home>/daemon.err.log`. Unset it to turn them off.
 
+## Trace sink
+
+With `FOREMAN_TRACE_SINK` set, each event is also posted to that URL, fire-and-forget. At most 32 posts are in flight
+at once; an event that arrives while 32 are pending is dropped for the sink (not queued) and counted, and each post is
+aborted after 10 seconds, so a slow or hung collector costs at most 32 sockets and loses events rather than memory.
+The daily JSONL files under `<home>/traces` are written the same with or without a sink and never drop an event.
+
 ## Reading a failed run
 
 1. `foreman show <taskId>`: the status, the `error:` line, the council's verdicts and each reviewer's critique, the

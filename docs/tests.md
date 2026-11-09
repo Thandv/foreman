@@ -27,7 +27,7 @@ agent-catalog refusal, api-runner jail escape and destructive-command refusal, m
 only-when-approved, merge refusal on a dirty repo, prune keeping undecided branches and approved work that has not landed, memory
 belief revision, schedule parsing and single-fire re-arming, HTTP routes, path-traversal
 containment, SSE streaming and slow-client drop policy, claude/codex stream parsing on recorded
-fixtures, chunk-split line reassembly, and trace-sink delivery plus sink-failure isolation.
+fixtures, chunk-split line reassembly, and trace-sink delivery plus sink-failure isolation, its in-flight cap, drop count and post timeout.
 
 ### Verified live (not just unit-tested)
 

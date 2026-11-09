@@ -6,6 +6,8 @@ import type { RunEvent } from './types.ts';
 
 const DAY_MS = 86_400_000;
 const TRACE_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
+/** Posts to FOREMAN_TRACE_SINK allowed in flight at once; an event past this is dropped, not queued. */
+const SINK_MAX_IN_FLIGHT = 32;
 
 export interface TracerOptions {
   /** Directory the daily files go in. Defaults to <home>/traces. */
@@ -18,6 +20,8 @@ export interface TracerOptions {
   flushMs?: number;
   /** …or as soon as this many bytes are buffered. */
   flushBytes?: number;
+  /** A post to the trace sink is aborted after this long. Defaults to 10 s. */
+  sinkTimeoutMs?: number;
 }
 
 /**
@@ -38,6 +42,9 @@ export class Tracer {
   private readonly flushMs: number;
   private readonly flushBytes: number;
   private readonly sink: string | undefined;
+  private readonly sinkTimeoutMs: number;
+  private sinkInFlight = 0;
+  private sinkDropped = 0;
   private readonly onEvent: (ev: RunEvent) => void;
   private day = '';
   private buffer: string[] = [];
@@ -54,6 +61,7 @@ export class Tracer {
     this.flushBytes = opts.flushBytes ?? 64 * 1024;
     fs.mkdirSync(this.dir, { recursive: true });
     this.sink = process.env['FOREMAN_TRACE_SINK'];
+    this.sinkTimeoutMs = opts.sinkTimeoutMs ?? 10_000;
     this.onEvent = (ev) => this.write(ev);
     this.onExit = () => this.flush();
   }
@@ -79,6 +87,16 @@ export class Tracer {
     this.timer = undefined;
     this.flush();
     this.started = false;
+  }
+
+  /** Posts to the trace sink not yet answered, failed or timed out (at most SINK_MAX_IN_FLIGHT). */
+  get sinkPending(): number {
+    return this.sinkInFlight;
+  }
+
+  /** Events not posted to the trace sink because SINK_MAX_IN_FLIGHT posts were already pending. */
+  get sinkDrops(): number {
+    return this.sinkDropped;
   }
 
   /** Today's file, by the injected clock. */
@@ -139,17 +157,32 @@ export class Tracer {
     this.bufferedBytes += line.length;
     // An error or warning is what a crash right after it would most need.
     if (this.bufferedBytes >= this.flushBytes || ev.type === 'error' || ev.type === 'warning') this.flush();
-    if (this.sink) {
-      // Fire-and-forget: a slow or dead collector must not stall a run.
-      void fetch(this.sink, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(process.env['FOREMAN_TRACE_KEY'] ? { authorization: `Bearer ${process.env['FOREMAN_TRACE_KEY']}` } : {}),
-        },
-        body: JSON.stringify({ source: 'foreman', ...ev }),
-      }).catch(() => {});
+    if (this.sink) this.post(this.sink, ev);
+  }
+
+  /** Fire-and-forget, bounded and timed out: a slow or dead collector must not stall a run or pile up sockets. */
+  private post(sink: string, ev: RunEvent): void {
+    if (this.sinkInFlight >= SINK_MAX_IN_FLIGHT) {
+      this.sinkDropped++;
+      return;
     }
+    this.sinkInFlight++;
+    fetch(sink, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(process.env['FOREMAN_TRACE_KEY'] ? { authorization: `Bearer ${process.env['FOREMAN_TRACE_KEY']}` } : {}),
+      },
+      body: JSON.stringify({ source: 'foreman', ...ev }),
+      signal: AbortSignal.timeout(this.sinkTimeoutMs),
+    })
+      // The answer is not read; cancelling its body hands the socket back.
+      .then((res) => res.body?.cancel())
+      // A failed or timed-out post loses that event at the collector only; the JSONL file still has it.
+      .catch(() => {})
+      .finally(() => {
+        this.sinkInFlight--;
+      });
   }
 }
 
