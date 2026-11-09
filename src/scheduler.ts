@@ -160,6 +160,12 @@ export function dirtyBackoffMs(probes: number): number {
 /** How long a repeated tick failure stays quiet in the timeline after it is recorded once. */
 const TICK_ERROR_QUIET_MS = 5 * 60_000;
 
+/** The stages of one tick, each contained on its own, in the order a tick runs them. */
+export type TickStage =
+  | 'runDueSchedules' | 'runDueArchiveSweep' | 'runDueAsks' | 'runDueImprovements' | 'runDueGates'
+  | 'reconcileBlocked' | 'reconcileLostRuns' | 'dispatchGate' | 'dispatch'
+  | 'runDueRechecks' | 'recheckRedRepos' | 'probeDirtyRepos';
+
 export interface VerifyArgs {
   task: Task;
   runId: string;
@@ -660,8 +666,14 @@ export class Scheduler {
    * purpose: a restarted daemon simply rediscovers a still-dirty checkout.
    */
   private readonly dirtyHolds = new Map<string, { files: string; probes: number; nextProbeAt: number; probing: boolean }>();
-  /** Rate limit for recording tick failures: the last recorded message, when, and how many were suppressed since. */
-  private tickError: { message: string; at: number; suppressed: number } | null = null;
+  /**
+   * Rate limit for recording tick failures, per stage ('tick' for a failure outside every stage): the last
+   * recorded message, when, and how many were suppressed since. Per stage, so two failing stages do not
+   * take turns resetting one another's quiet window.
+   */
+  private readonly tickErrors = new Map<TickStage | 'tick', { message: string; at: number; suppressed: number }>();
+  /** Every failure of each tick stage since start, recorded or suppressed. */
+  private readonly stageErrorCounts = new Map<TickStage, number>();
   /** restoreAgentSettings, said in the timeline; a jail whose settings cannot be checked does not start a round. */
   private async restoreAgentSettingsOrThrow(jail: Jail, emit: (line: string) => void): Promise<void> {
     let changed: string[];
@@ -940,22 +952,42 @@ export class Scheduler {
     }
   }
 
-  private noteTickError(err: unknown): void {
+  /** How many times each tick stage has failed since start (a copy; stages that never failed are absent). */
+  tickStageErrors(): ReadonlyMap<TickStage, number> {
+    return new Map(this.stageErrorCounts);
+  }
+
+  private noteTickError(err: unknown, stage: TickStage | 'tick' = 'tick'): void {
     const message = (err instanceof Error ? err.message : String(err)).slice(0, 1000);
     const now = this.now();
-    const last = this.tickError;
+    const last = this.tickErrors.get(stage);
     if (last && last.message === message && now - last.at < TICK_ERROR_QUIET_MS) {
       last.suppressed++;
       return;
     }
     const tail = last?.suppressed ? ` (${last.suppressed} earlier failure(s) not recorded)` : '';
-    this.tickError = { message, at: now, suppressed: 0 };
+    this.tickErrors.set(stage, { message, at: now, suppressed: 0 });
+    const line = `scheduler tick failed${stage === 'tick' ? '' : ` in ${stage}`}: ${message}${tail}`;
     try {
-      this.store.record({ type: 'error', message: `scheduler tick failed: ${message}${tail}` });
+      this.store.record({ type: 'error', message: line });
     } catch {
       // The store itself may be what is failing; the trace line still lands.
     }
-    process.stderr.write(`scheduler tick failed: ${message}${tail}\n`);
+    process.stderr.write(`${line}\n`);
+  }
+
+  /**
+   * One tick stage, contained: its throw is recorded (naming the stage) and counted, and the tick goes on to the
+   * next stage. Returns the stage's result, or undefined when it threw.
+   */
+  private stage<T>(name: TickStage, run: () => T): T | undefined {
+    try {
+      return run();
+    } catch (err) {
+      this.stageErrorCounts.set(name, (this.stageErrorCounts.get(name) ?? 0) + 1);
+      this.noteTickError(err, name);
+      return undefined;
+    }
   }
 
   async tick(): Promise<void> {
@@ -967,68 +999,80 @@ export class Scheduler {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      this.store.runDueSchedules();
-      this.runDueArchiveSweep();
-      this.runDueAsks();
-      this.runDueImprovements();
-      this.runDueGates();
-      this.store.reconcileBlocked();
-      this.reconcileLostRuns();
-      // A trainer or an adoption gate holds the machine-wide local-model lock
-      // for hours, and starting new work under it is how a 17 GB machine ends
-      // up 33 GB into swap — the exact collision the lock was created for after
-      // it happened once for real. Work already running is left alone; only
-      // dispatch pauses, so the queue drains the moment the lock frees.
-      if (this.deferForLocalModelLock()) { this.refreshHolds('local-lock'); return; }
-      // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
-      this.diskVolumeCache.clear();
-      if (this.diskLow(config.home)) { this.refreshHolds('home-disk'); return; }
-      // Only the work lane consumes worker slots.
-      const free = this.maxWorkers - this.laneCount('work');
-      if (free <= 0) { this.refreshHolds(null); return; }
-      // While auto mode has fallen back, claude-code tickets are HELD — left
-      // queued, attempts untouched — rather than claimed and failed: a lapsed
-      // sign-in is not a defect in the ticket, and a retry budget burnt in
-      // seconds would turn a five-minute lapse into a failed epic. Ask for
-      // seconds would turn a five-minute lapse into a failed epic.
-      const limited = this.limitHoldUntil > Date.now();
-      const holding = cloudFallback() || limited;
-      const held = holding ? this.store.queuedOnRunner('claude-code') : 0;
-      // Held tickets are skipped while the queue is paged, not after the
-      // window is cut: enough of them at the front would starve every repo.
-      const usable = (t: { id: string; repo: string | null }): boolean =>
-        // A repair round re-queues a task that is still finishing its run;
-        // never let the same task hold two workers.
-        !this.active.has(t.id)
-        // Never cut a jail from a main that just failed its own tests.
-        && !this.store.repoRed(t.repo)
-        // Nor from an operator checkout with uncommitted changes: held, not claimed.
-        && !(t.repo && this.dirtyHolds.has(path.resolve(t.repo)))
-        // Nor onto a repo volume that is below the free-space floor.
-        && !(t.repo && this.diskLow(path.resolve(t.repo)));
-      for (const task of this.store.claimable(free, holding ? { excludeRunner: 'claude-code', usable } : { usable })) {
-        if (this.laneCount('work') >= this.maxWorkers) break;
-        if (!usable(task)) continue; // changed since the page was read
-        if (!this.store.claim(task.id)) continue; // lost the race
-        this.launch({ ...task, attempts: task.attempts + 1 });
-      }
-      this.refreshHolds(null);
+      this.stage('runDueSchedules', () => this.store.runDueSchedules());
+      this.stage('runDueArchiveSweep', () => this.runDueArchiveSweep());
+      this.stage('runDueAsks', () => this.runDueAsks());
+      this.stage('runDueImprovements', () => this.runDueImprovements());
+      this.stage('runDueGates', () => this.runDueGates());
+      this.stage('reconcileBlocked', () => this.store.reconcileBlocked());
+      this.stage('reconcileLostRuns', () => this.reconcileLostRuns());
+      // A gate that throws defers dispatch and the idle-time stages after it, as a gate that says no does.
+      const free = this.stage('dispatchGate', () => this.dispatchSlots());
+      if (free === undefined || free === null) return;
+      this.stage('dispatch', () => this.dispatch(free));
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
       // (It is also never reached while the training lock defers dispatch, or
       // while every worker slot is taken — both return above.)
-      this.runDueRechecks();
-      this.recheckRedRepos();
-      this.probeDirtyRepos();
-      if (held !== this.lastHeld) {
-        this.lastHeld = held;
-        if (held) {
-          const why = limited ? `the provider usage limit passes (${new Date(this.limitHoldUntil).toISOString()})` : 'the Claude CLI is back';
-          process.stdout.write(`holding ${held} claude-code ticket(s) until ${why}\n`);
-        }
-      }
+      this.stage('runDueRechecks', () => this.runDueRechecks());
+      this.stage('recheckRedRepos', () => this.recheckRedRepos());
+      this.stage('probeDirtyRepos', () => this.probeDirtyRepos());
     } finally {
       this.ticking = false;
+    }
+  }
+
+  /** The worker slots dispatch may fill this tick, or null when a gate defers dispatch (and the stages after it). */
+  private dispatchSlots(): number | null {
+    // A trainer or an adoption gate holds the machine-wide local-model lock
+    // for hours, and starting new work under it is how a 17 GB machine ends
+    // up 33 GB into swap — the exact collision the lock was created for after
+    // it happened once for real. Work already running is left alone; only
+    // dispatch pauses, so the queue drains the moment the lock frees.
+    if (this.deferForLocalModelLock()) { this.refreshHolds('local-lock'); return null; }
+    // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
+    this.diskVolumeCache.clear();
+    if (this.diskLow(config.home)) { this.refreshHolds('home-disk'); return null; }
+    // Only the work lane consumes worker slots.
+    const free = this.maxWorkers - this.laneCount('work');
+    if (free <= 0) { this.refreshHolds(null); return null; }
+    return free;
+  }
+
+  /** Claims and launches up to `free` queued tickets, skipping held ones. */
+  private dispatch(free: number): void {
+    // While auto mode has fallen back, claude-code tickets are HELD — left
+    // queued, attempts untouched — rather than claimed and failed: a lapsed
+    // sign-in is not a defect in the ticket, and a retry budget burnt in
+    // seconds would turn a five-minute lapse into a failed epic.
+    const limited = this.limitHoldUntil > Date.now();
+    const holding = cloudFallback() || limited;
+    const held = holding ? this.store.queuedOnRunner('claude-code') : 0;
+    // Held tickets are skipped while the queue is paged, not after the
+    // window is cut: enough of them at the front would starve every repo.
+    const usable = (t: { id: string; repo: string | null }): boolean =>
+      // A repair round re-queues a task that is still finishing its run;
+      // never let the same task hold two workers.
+      !this.active.has(t.id)
+      // Never cut a jail from a main that just failed its own tests.
+      && !this.store.repoRed(t.repo)
+      // Nor from an operator checkout with uncommitted changes: held, not claimed.
+      && !(t.repo && this.dirtyHolds.has(path.resolve(t.repo)))
+      // Nor onto a repo volume that is below the free-space floor.
+      && !(t.repo && this.diskLow(path.resolve(t.repo)));
+    for (const task of this.store.claimable(free, holding ? { excludeRunner: 'claude-code', usable } : { usable })) {
+      if (this.laneCount('work') >= this.maxWorkers) break;
+      if (!usable(task)) continue; // changed since the page was read
+      if (!this.store.claim(task.id)) continue; // lost the race
+      this.launch({ ...task, attempts: task.attempts + 1 });
+    }
+    this.refreshHolds(null);
+    if (held !== this.lastHeld) {
+      this.lastHeld = held;
+      if (held) {
+        const why = limited ? `the provider usage limit passes (${new Date(this.limitHoldUntil).toISOString()})` : 'the Claude CLI is back';
+        process.stdout.write(`holding ${held} claude-code ticket(s) until ${why}\n`);
+      }
     }
   }
 

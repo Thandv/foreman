@@ -10,7 +10,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 
 | File | What it holds |
 | --- | --- |
-| `src/scheduler.ts` | The tick loop: claims queued tasks, runs a worker per task, moves it through verify, parks it for approval. Owns the run's check and the retry rules. |
+| `src/scheduler.ts` | The tick loop: claims queued tasks, runs a worker per task, moves it through verify, parks it for approval. Owns the run's check and the retry rules. Each tick stage (schedules, archive sweep, asks, improvements, gates, reconcile, the dispatch gate, dispatch, re-checks, red re-checks, dirty probes) runs in that order inside its own try/catch: a stage that throws is recorded as `scheduler tick failed in <stage>: ...` (rate-limited per stage), counted in `tickStageErrors()`, and the later stages still run. A throwing dispatch gate defers dispatch and the stages after it, as a gate that says no does. |
 | `src/queue.ts` | The store: every write to the ledger tables, the task status funnel (`setStatus`), dependencies, epics, repairs, schedules, memory, caches. |
 | `src/debrief.ts` | Builds the debrief of a finished epic or ticket (`<id>.md` and `<id>.json`) from the ledger, traces and run logs. |
 | `src/cli.ts` | The `foreman` command: argument parsing and every subcommand. |
