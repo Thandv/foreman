@@ -1331,6 +1331,11 @@ async function applyGateReply(
 
   const note = `${OWNER_GATE_NOTE} ${rationale}`.slice(0, 1000);
   if (reply.decision === 'approved') {
+    // With auth on the owner model is never the second pair of eyes (security/fourEyes.ts). Wherever the rule refuses
+    // it, the ticket is parked for a person with the model's verdict, once per park, and no approval is tried.
+    const refused = await recheck(store, task, DEFAULT_ACTOR_ID['owner-model'],
+      () => protectedHit(store, task, approvalChange(store, task.id, {}), selfRoot));
+    if (refused) return log('hold', `four-eyes: ${refused}; parked for a person. The owner model would approve: ${rationale}`);
     const stopping = 'the daemon is shutting down; the ticket stays parked for the next start';
     if (approvals.shuttingDown) return log('hold', stopping, false);
     // While the approval waits for its repo's merge section a shutdown can begin, or the work, review or gate
@@ -1338,8 +1343,7 @@ async function applyGateReply(
     const result = await applyApproval(store, task.id, { principal: DEFAULT_ACTOR_ID['owner-model'], note, selfRoot, stale: changed })
       .catch((err: unknown) => {
         if (err instanceof ShuttingDownError) return stopping;
-        // The rule refuses the owner model for as long as auth is on: decided once per park, never re-asked and paid
-        // for on every sweep.
+        // Auth came on (a first mint) while the approval waited for its turn: decided once per park, as above.
         if (err instanceof FourEyesRefused) return err;
         if (err instanceof StaleApprovalError) return err.message;
         throw err;
