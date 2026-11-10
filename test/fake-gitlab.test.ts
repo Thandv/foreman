@@ -81,7 +81,7 @@ test('opening a merge request returns its iid and the source branch head; the li
     assert.equal(mr.sha, head);
     const listed = (await (await fetch(api(s, '/merge_requests?source_branch=feat&state=opened'))).json()) as Mr[];
     assert.deepEqual(listed.map((m) => m.iid), [1]);
-    assert.equal('head_pipeline' in listed[0], false, 'the list returns GitLab\'s MergeRequestBasic, which has no head_pipeline');
+    assert.equal(listed.some((m) => 'head_pipeline' in m), false, 'the list returns GitLab\'s MergeRequestBasic, which has no head_pipeline');
     assert.deepEqual(await (await fetch(api(s, '/merge_requests?source_branch=other&state=opened'))).json(), []);
   });
 });
