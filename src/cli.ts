@@ -1447,7 +1447,8 @@ async function main(): Promise<number> {
         const noModel = Boolean(args.flags['no-model']);
         if (!noModel) await probeCloud().catch(() => null);
         const broker = noModel ? null : (): Broker => new Broker((writer.store ??= openLedgerForReceipt(config.dbPath)));
-        const { report, paths } = await runDebrief(store, broker, subject, { notes, noModel, maxUsd });
+        const { report, paths, warnings } = await runDebrief(store, broker, subject, { notes, noModel, maxUsd });
+        for (const w of warnings) process.stderr.write(`warning: ${w}\n`);
         process.stdout.write(args.flags['json'] ? `${JSON.stringify(report, null, 2)}\n` : renderShort(report, paths));
       } finally {
         store.close();
