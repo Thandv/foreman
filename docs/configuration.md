@@ -19,7 +19,8 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 
 `foreman config --effective` prints each setting `src/config.ts` resolves (the rows below whose "Read in" is
 `src/config.ts`): its name, the value in effect and whether it came from the environment (`env`, set and not empty) or
-the default. Its last line counts and names every other `FOREMAN_*` variable set in the environment; those are read
+the default. Where an empty value reads as 0 or `''` (`FOREMAN_AGENTS_DIR`, `FOREMAN_PLAYBOOKS_DIR`,
+`FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_ECHO_STEP_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`), an empty value shows as `env`. Its last line counts and names every other `FOREMAN_*` variable set in the environment; those are read
 where they are used, so their values are never printed, only their names. No `src/config.ts` setting is a secret.
 
 | Name | Default | Effect | Read in |

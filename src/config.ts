@@ -282,10 +282,14 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   leftoverSampleMs: 'FOREMAN_LEFTOVER_SAMPLE_MS',
 };
 
+/** Knobs whose reader uses an empty value as it is (0 or ''), so an empty value is set, not the default. */
+const EMPTY_IS_SET = new Set(['FOREMAN_AGENTS_DIR', 'FOREMAN_PLAYBOOKS_DIR', 'FOREMAN_SLOT_WAIT_CREDIT_MS',
+  'FOREMAN_ECHO_STEP_MS', 'FOREMAN_LEFTOVER_SAMPLE_MS']);
+
 export interface Knob {
   name: string;
   value: string;
-  /** env: the variable is set (not empty); default: config.ts fell back to its own value. */
+  /** env: set and not empty (present, for EMPTY_IS_SET); default: config.ts fell back to its own value. */
   source: 'env' | 'default';
 }
 
@@ -298,7 +302,9 @@ export function effectiveConfig(): { knobs: Knob[]; others: string[] } {
   for (const key of Object.keys(KNOB_ENV) as Array<keyof Config>) {
     const name = KNOB_ENV[key];
     if (name === null) continue;
-    knobs.push({ name, value: String(config[key]), source: process.env[name]?.trim() ? 'env' : 'default' });
+    const raw = process.env[name];
+    const set = EMPTY_IS_SET.has(name) ? raw !== undefined : Boolean(raw?.trim());
+    knobs.push({ name, value: String(config[key]), source: set ? 'env' : 'default' });
   }
   const resolved = new Set(knobs.map((k) => k.name));
   const others = Object.keys(process.env).filter((n) => n.startsWith('FOREMAN_') && !resolved.has(n)).sort();
