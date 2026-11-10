@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { signalGroups, snapshotPs, treeGroups, type PsRow } from './runners/proctree.ts';
 import { FILED_PREFIX } from './verify/followUpChain.ts';
-import { openDb, rowToArtifact, rowToDecision, rowToEvent, rowToRun, rowToTask } from './db.ts';
+import { openDb, rowToArtifact, rowToDecision, rowToEvent, rowToPrincipal, rowToRun, rowToTask } from './db.ts';
 import { rowToArchive, rowToMemory, rowToVerdict } from './db.ts';
 // Runtime edge queue → retro: retro.ts only type-imports Store back (erased),
 // so there is no runtime cycle. The epic close is where a retrospective is owed.
@@ -19,11 +19,13 @@ import {
 import { nextRunAt, parseSpec } from './schedule.ts';
 import { assertTicketSkills } from './skills.ts';
 import type {
-  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Run, RunEvent, Stage, Task, TaskStatus, Verdict,
+  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Principal, PrincipalKind, Run, RunEvent, Stage,
+  Task, TaskStatus, Verdict,
 } from './types.ts';
 import { pinnedGit } from './gitExec.ts';
 import { removeJail } from './isolate.ts';
 import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
+import { PRINCIPAL_KINDS, RESERVED_ACTOR_IDS } from './types.ts';
 
 /** The most of a decision's note the ledger keeps, in UTF-8 bytes, marker included. */
 export const DECISION_NOTE_MAX_BYTES = 16 * 1024;
@@ -34,6 +36,9 @@ export const DECISION_EVENT_NOTE = 300;
 
 /** What a path hands Store.addDecision: the row less its id and time, every approve-only field optional. */
 export type NewDecision = Pick<Decision, 'taskId' | 'action'> & Partial<Omit<Decision, 'id' | 'at' | 'taskId' | 'action' | 'noteCutBytes'>>;
+
+/** A principal's name: lowercase, at most 64 characters, safe in a commit trailer. */
+export const PRINCIPAL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /** A note cut to the ledger's bound, with a marker saying how much went; `cut` is the bytes not stored. */
 export function boundDecisionNote(note: string | null | undefined): { note: string | null; cut: number } {
@@ -1994,6 +1999,64 @@ export class Store extends EventEmitter {
     this.db
       .prepare('INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?')
       .run(key, value, Date.now(), value, Date.now());
+  }
+
+  // ----------------------------------------------------- principals, tokens
+
+  /** Adds a principal. Refuses a reserved actor id, a name outside PRINCIPAL_NAME, and (UNIQUE) a taken name. */
+  addPrincipal(p: { kind: PrincipalKind; name: string; createdBy: string }, now: number = Date.now()): Principal {
+    if (!PRINCIPAL_KINDS.includes(p.kind)) throw new Error(`unknown principal kind: ${String(p.kind)}`);
+    if ((RESERVED_ACTOR_IDS as readonly string[]).includes(p.name)) throw new Error(`principal name is reserved: ${p.name}`);
+    if (!PRINCIPAL_NAME.test(p.name)) throw new Error(`principal name must match ${String(PRINCIPAL_NAME)}: ${JSON.stringify(p.name)}`);
+    const principalId = id('p');
+    this.db
+      .prepare('INSERT INTO principals (id, kind, name, created_by, created_at) VALUES (?,?,?,?,?)')
+      .run(principalId, p.kind, p.name, p.createdBy, now);
+    return { id: principalId, kind: p.kind, name: p.name, createdBy: p.createdBy, createdAt: now, disabledAt: null };
+  }
+
+  /** Disables a principal, which ends every token it holds. False when it is unknown or already disabled. */
+  disablePrincipal(principalId: string, now: number = Date.now()): boolean {
+    return this.db.prepare('UPDATE principals SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL').run(now, principalId).changes > 0;
+  }
+
+  /** Adds a token by the sha256 hex of its secret (the secret itself is never stored); returns the token's id. */
+  addToken(
+    tk: { principalId: string; tokenHash: string; expiresAt?: number | null; createdBy: string },
+    now: number = Date.now(),
+  ): string {
+    if (!/^[0-9a-f]{64}$/.test(tk.tokenHash)) throw new Error('token hash must be sha256 hex (64 lowercase hex characters)');
+    const tokenId = id('tk');
+    this.db
+      .prepare('INSERT INTO api_tokens (id, principal_id, token_hash, expires_at, created_by, created_at) VALUES (?,?,?,?,?,?)')
+      .run(tokenId, tk.principalId, tk.tokenHash, tk.expiresAt ?? null, tk.createdBy, now);
+    return tokenId;
+  }
+
+  /** Revokes a token. False when it is unknown or already revoked. */
+  revokeToken(tokenId: string, now: number = Date.now()): boolean {
+    return this.db.prepare('UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now, tokenId).changes > 0;
+  }
+
+  /** The principal a token hash belongs to, or null unless the token is unrevoked and unexpired at `now` and the principal enabled. */
+  principalByTokenHash(tokenHash: string, now: number = Date.now()): Principal | null {
+    const row = this.db
+      .prepare(
+        `SELECT p.* FROM api_tokens t JOIN principals p ON p.id = t.principal_id
+         WHERE t.token_hash = ? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > ?) AND p.disabled_at IS NULL`,
+      )
+      .get(tokenHash, now) as Record<string, unknown> | undefined;
+    return row ? rowToPrincipal(row) : null;
+  }
+
+  /** Enabled human principals. */
+  humanPrincipalCount(): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM principals WHERE kind = 'human' AND disabled_at IS NULL").get() as { n: number }).n);
+  }
+
+  /** True once any principal has ever been added: principals are never deleted, so this never turns back. */
+  hasAnyPrincipal(): boolean {
+    return this.db.prepare('SELECT 1 FROM principals LIMIT 1').get() !== undefined;
   }
 
   /**

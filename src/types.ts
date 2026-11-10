@@ -190,6 +190,25 @@ export type DecisionActor = 'human' | 'owner-model' | 'system';
 export const DECISION_ACTIONS: readonly DecisionAction[] = ['approve', 'reject', 'cancel', 'retry', 'reopen', 'landed', 'deps-drop'];
 export const DECISION_ACTORS: readonly DecisionActor[] = ['human', 'owner-model', 'system'];
 
+/** Actor ids that are string constants, never rows in `principals`: no principal may take one as its name. */
+export type ReservedActorId = 'operator' | 'owner-model' | 'system';
+export const RESERVED_ACTOR_IDS: readonly ReservedActorId[] = ['operator', 'owner-model', 'system'];
+
+export type PrincipalKind = 'human' | 'service';
+export const PRINCIPAL_KINDS: readonly PrincipalKind[] = ['human', 'service'];
+
+/** A person or a service that holds API tokens (the `principals` table). Never deleted, only disabled. */
+export interface Principal {
+  /** 'p_' + random hex. */
+  id: string;
+  kind: PrincipalKind;
+  /** Unique, and matches PRINCIPAL_NAME (queue.ts), which keeps it safe in a commit trailer. */
+  name: string;
+  createdBy: string;
+  createdAt: number;
+  disabledAt: number | null;
+}
+
 /**
  * One decision on a task, as the `decisions` table holds it (db.ts). Written once, when the decision's outcome is
  * known, and never changed. The landing fields (landedTree, asIs, merged, mergeReason, corrected, reviewSource)

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Artifact, Decision, MemoryFact, Run, RunEvent, Task, Verdict } from './types.ts';
+import type { Artifact, Decision, MemoryFact, Principal, Run, RunEvent, Task, Verdict } from './types.ts';
 import type { ArchiveRecord } from './archive.ts';
 
 export const SCHEMA = `
@@ -265,6 +265,28 @@ CREATE TRIGGER IF NOT EXISTS decisions_no_replace BEFORE INSERT ON decisions
 WHEN EXISTS (SELECT 1 FROM decisions WHERE id = NEW.id)
 BEGIN SELECT RAISE(ABORT, 'decisions is append-only: a row is never replaced'); END;
 
+-- Who may call the API (Store.addPrincipal). The names 'operator', 'owner-model' and 'system' are constants, never
+-- rows. A principal is never deleted, only disabled, so the principal id a token names always resolves.
+CREATE TABLE IF NOT EXISTS principals (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  name        TEXT NOT NULL UNIQUE,
+  created_by  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  disabled_at INTEGER
+);
+
+-- A principal's bearer tokens (Store.addToken). Only the sha256 hex of the secret is kept, never the secret.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id           TEXT PRIMARY KEY,
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  token_hash   TEXT NOT NULL UNIQUE,
+  expires_at   INTEGER,
+  created_by   TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  revoked_at   INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS idx_decisions_task ON decisions(task_id, at);
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id, created_at);
@@ -487,7 +509,7 @@ function migrate(db: DatabaseSync): void {
  * user_version`). Bump it, and add its row to test/schema-version.test.ts,
  * whenever SCHEMA, COLUMNS or MIGRATED_INDEXES change.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** A ledger written by a newer Foreman: this binary must not touch it. */
 export class NewerSchemaError extends Error {
@@ -665,6 +687,17 @@ export function rowToRun(row: Row): Run {
 }
 
 const nbool = (v: unknown): boolean | null => (v == null ? null : Number(v) === 1);
+
+export function rowToPrincipal(row: Row): Principal {
+  return {
+    id: str(row['id']),
+    kind: str(row['kind']) as Principal['kind'],
+    name: str(row['name']),
+    createdBy: str(row['created_by']),
+    createdAt: num(row['created_at']),
+    disabledAt: nnum(row['disabled_at']),
+  };
+}
 
 export function rowToDecision(row: Row): Decision {
   return {

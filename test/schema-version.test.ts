@@ -21,6 +21,7 @@ const NOW = new Date(2026, 9, 11, 12, 0, 0);
 const FINGERPRINTS: Record<number, string> = {
   1: '846ef77b5af7182a0d1a35aa9a569615f6d574bb67cc6652e8f1110898a17600',
   2: '0dc3ebfa071ec30c65004aabc02dfd510cce85ebe2df68baf567c23d01876465',
+  3: '3c25d8a4d005bf77ff7c703fb03f28a5a75d585b906dd45a2788298535829036',
 };
 
 /** A scratch folder removed when the test ends, pass or fail. */
@@ -252,6 +253,11 @@ test('a version-1 ledger: refused by a non-serve opener, then migrated by serve 
     assert.deepEqual(kept, rows, `rows of ${table} changed`);
   }
   for (const [table, column] of ADDED_SINCE_V1) assert.ok(hasColumn(dbPath, table, column), `${table}.${column} was not added`);
+  const fresh = path.join(home, 'fresh.db');
+  new Store(fresh).close();
+  const freshDb = new DatabaseSync(fresh, { readOnly: true });
+  t.after(() => freshDb.close());
+  assert.deepEqual(tableNames(db), tableNames(freshDb), 'the migrated ledger has every table a new one has');
 
   const id = String(before['decisions']![0]!['id']);
   assert.throws(() => db.prepare("UPDATE decisions SET note = 'rewritten' WHERE id = ?").run(id), /append-only: a row is never updated/);

@@ -11,6 +11,14 @@
   names no run: it is still slotted, never refused, and claims nothing, so another local process
   cannot make a run's lease busy or have a slot wait counted against its deadline. It is never
   answered 403, because the wrapper reads any non-200 answer as "no daemon" and runs unslotted.
+- The ledger has `principals` and `api_tokens` tables (`src/db.ts`, written only by `src/queue.ts`), but
+  nothing creates a principal or checks a token yet, so the API above is unchanged. A principal is a `human`
+  or `service` with a unique name matching `^[a-z0-9][a-z0-9._-]{0,63}$`; `operator`, `owner-model` and
+  `system` are reserved actor ids, never rows, and refused as names. A principal is never deleted, only
+  disabled. A token row keeps only the sha256 hex of its secret (never the secret), an optional expiry and a
+  revocation time; `Store.principalByTokenHash` returns a principal only for an unrevoked, unexpired token of
+  an enabled principal. `Store.hasAnyPrincipal` stays true once the first principal exists, whatever is
+  later revoked, expired or disabled.
 - `allowCore` (a ticket that may edit Foreman's own core) is honoured only from a request that
   carries the host-admin secret in `x-foreman-host-secret`. The secret is 32 random bytes in
   `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`

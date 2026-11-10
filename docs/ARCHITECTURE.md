@@ -71,6 +71,8 @@ The schema is in `src/db.ts`. Writers were found by searching `src/` for the SQL
 | `shadow_verdicts` | `src/queue.ts` |
 | `archive` | `src/queue.ts` (folds a closed task into a summary row) |
 | `decisions` | `src/queue.ts` (insert only; a trigger in `src/db.ts` stops `INSERT OR REPLACE` overwriting a row) |
+| `principals` | `src/queue.ts` (insert; disable stamp; never deleted) |
+| `api_tokens` | `src/queue.ts` (insert by secret hash; revoke stamp) |
 
 `src/backup.ts` replaces the whole database file on restore; it does not write rows.
 
