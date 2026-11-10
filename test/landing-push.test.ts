@@ -5,7 +5,9 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { startFakeGitlab } from '../scripts/forge/fakeGitlab.ts';
 import { pinnedGit } from '../src/gitExec.ts';
+import { GitlabForge } from '../src/landing/gitlab.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
 import { FORGE_TARGET_REF, ForgeMirror, IMPORTED_REF, MirrorError, mirrorPath } from '../src/landing/push.ts';
 
@@ -123,19 +125,23 @@ test('with both rewrites set, fetchTarget, pushReviewed and importCommit use the
     assert.equal(await m.fetchTarget(), f.target);
     assert.equal(git(f.repo, 'rev-parse', FORGE_TARGET_REF), f.target);
     await m.pushReviewed(f.tip, 't_1');
-    // The forge moves on (what a merged MR does); the mirror learns it and hands the commit over.
-    const work = scratchDir('landing-push-merge-');
-    git(work, 'clone', '-q', f.forge, '.');
-    const merged = commit(work, 'later.txt');
-    git(work, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+    // The fake GitLab merges the pushed branch as an MR; the mirror learns the merge commit (as LD-MR7a's poll will)
+    // and hands it over.
+    const gitlab = await startFakeGitlab({ projects: { 'group/app': f.forge } });
+    t.after(() => gitlab.close());
+    const forge = new GitlabForge({ baseUrl: gitlab.url });
+    const mr = await forge.openMr('group/app', { sourceBranch: 'foreman/t_1', targetBranch: 'main', title: 'T1', description: 'd' });
+    const outcome = await forge.merge('group/app', mr.iid, f.tip);
+    assert.ok(outcome.merged);
+    const merged = outcome.mergeCommitSha;
     git(m.dir, 'fetch', '-q', f.forge, '+refs/heads/main:refs/test/merged');
     assert.throws(() => git(f.repo, 'cat-file', '-e', merged));
     await m.importCommit(merged);
     assert.equal(git(f.repo, 'rev-parse', IMPORTED_REF), merged);
-    assert.equal(git(f.repo, 'log', '-1', '--format=%s', IMPORTED_REF), 'add later.txt');
+    assert.equal(git(f.repo, 'rev-parse', `${IMPORTED_REF}^2`), f.tip);
   });
   assert.equal(refs(f.attacker), `${f.attackerSha} refs/heads/main`, 'the attacker repo received nothing');
-  assert.match(refs(f.forge), new RegExp(`${f.tip} refs/heads/foreman/t_1`));
+  assert.equal(git(f.forge, 'rev-parse', 'refs/heads/main^2'), f.tip);
   const inRepo = calls.filter(([dir]) => dir === f.repo);
   assert.ok(inRepo.length > 0, 'the wrapper saw git run in the task repo');
   for (const [, ...argv] of inRepo) {
@@ -173,6 +179,14 @@ test('a branch outside refs/heads/foreman/ is refused before anything is pushed'
   }
   await assert.rejects(m.pushReviewed('main', 't_1'), MirrorError);
   assert.equal(refs(f.forge), `${f.target} refs/heads/main`);
+});
+
+test('importing a commit the mirror does not hold fails on the mirror side and moves no ref', async () => {
+  const f = fixture();
+  const m = new ForgeMirror(f.home, f.map, null);
+  await m.fetchTarget();
+  await assert.rejects(m.importCommit('1'.repeat(40)), (err: Error) => err instanceof MirrorError && /git pack-objects .*failed/.test(err.message));
+  assert.throws(() => git(f.repo, 'rev-parse', '--verify', '--quiet', IMPORTED_REF));
 });
 
 test('a forge that does not report the pushed sha afterwards is an error', async () => {

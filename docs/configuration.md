@@ -196,4 +196,6 @@ repo and the field. The token is `<FOREMAN_HOME>/secrets/gitlab-token`, never an
 output list each mapping and `token: set` or `token: unset`. `foreman doctor` asks GitLab for each mapped project and
 prints a FAIL line when its merge method is not `merge` (landing is confirmed by the merge commit's second parent being
 the reviewed commit) or the project cannot be read (no default branch, unknown project, refused token). Doctor calls
-the network only for a real GitLab in the file.
+the network only for a real GitLab in the file. Commits reach `pushUrl` only through a Foreman-owned mirror under
+`<FOREMAN_HOME>/forge/`, never by a fetch or push in the repo itself (see
+[The forge mirror](security.md#the-forge-mirror-srclandingpushts)).

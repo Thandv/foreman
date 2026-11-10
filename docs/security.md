@@ -144,11 +144,24 @@ Merge-request landing (`src/landing/config.ts`) calls GitLab with a token read o
 environment (workers inherit the daemon's) or from a repo's config (a worker can write that). The file must be a
 regular file, not a symlink, owned by the user running Foreman, with mode 0600; anything else is refused with a named
 error, and with `FOREMAN_LANDING=mr` and a `landing.json` the daemon does not start. Its value goes only to the GitLab
-adapter, as the `PRIVATE-TOKEN` header; `foreman config --effective`, `foreman doctor`, the start-up output, events and
+adapter, as the `PRIVATE-TOKEN` header, and to the git that pushes to an https `pushUrl` from the forge mirror (next
+section), as an `Authorization` header set for the push URL's origin through `GIT_CONFIG_*` (never in argv or a file;
+a local-path `pushUrl` gets none); `foreman config --effective`, `foreman doctor`, the start-up output, events and
 traces say `token: set` or `token: unset`, never the value. A missing file is `unset` (the local fake GitLab runs
 without one). Limit: like the host-admin secret, this is **not a boundary against a worker**. Until the macOS
 worker egress and file restriction lands, or a gateway holds the token instead, an unsandboxed worker running as the
 daemon's user can read the file.
+
+## The forge mirror (`src/landing/push.ts`)
+
+A task repo's `.git/config` can be written from a jail, and the pinned git does not pin `url.*.insteadOf`,
+`pushInsteadOf`, `remote.*` or credential helpers: a fetch or push run there can be sent to a repository the worker
+chose (`test/landing-push.test.ts` shows both). So no command that resolves a URL or names a remote (fetch, push,
+pull, ls-remote, remote) runs in a task repo. Each repo in `landing.json` gets a bare mirror at
+`<FOREMAN_HOME>/forge/<sha256 of the repo path>.git`, made and configured by Foreman only; fetching the target branch,
+pushing the reviewed commit to `refs/heads/foreman/<taskId>` (no other ref can be named) and the `ls-remote` that must
+then report exactly that commit all run there. Commits cross between the task repo and the mirror as an object pack
+(`pack-objects` into `index-pack --strict`, which resolve no URL), checked with `cat-file -e` before a ref is set.
 
 ## The git tripwire (`src/gitTripwire.ts`)
 

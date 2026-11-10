@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import { gitTimeoutOpts, timedGit } from './gitTimeout.ts';
+import { gitFailure, gitSubcommand, gitTimeoutOpts, timedGit } from './gitTimeout.ts';
 
 /**
  * The pinned git every daemon-side git call goes through. Protected (in
@@ -58,8 +58,14 @@ export function pinnedEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
  * and read-tree: a command that writes the index re-hashes an entry that is
  * "racily clean" (changed in the second the index was written), through the
  * clean filter. Measured: jailTree's `write-tree` ran a process filter.
+ * The object and transport commands the forge mirror (src/landing/push.ts)
+ * runs touch no working tree either; skipping the listing also keeps their
+ * own GIT_CONFIG_* (`extra`: the forge's auth header) from being replaced.
  */
-const NO_DRIVERS_RUN = new Set(['rev-parse', 'rev-list', 'log', 'merge-base', 'cat-file', 'branch', 'config', 'ls-files', 'show']);
+const NO_DRIVERS_RUN = new Set([
+  'rev-parse', 'rev-list', 'log', 'merge-base', 'cat-file', 'branch', 'config', 'ls-files', 'show',
+  'init', 'fetch', 'push', 'ls-remote', 'pack-objects', 'index-pack', 'update-ref',
+]);
 
 function runsNoDriver(args: string[]): boolean {
   let at = 0;
@@ -197,4 +203,57 @@ export async function gitExec(cwd: string, args: string[], extra: NodeJS.Process
 export async function gitExecBytes(cwd: string, args: string[]): Promise<{ stdout: Buffer; stderr: Buffer }> {
   const drivers = runsNoDriver(args) ? {} : await driverlessEnv(cwd);
   return timedGit(exec('git', [...PINNED, ...args], { cwd, env: pinnedEnv(drivers), maxBuffer: 64 * 1024 * 1024, encoding: 'buffer', ...gitTimeoutOpts() }), args);
+}
+
+/** How much of a piped call's stderr, and of the reader's stdout, is kept. */
+const MAX_PIPE_OUTPUT = 64 * 1024;
+
+/**
+ * Two pinned git calls, `from`'s stdout streamed into `to`'s stdin (an object
+ * pack from one repository into another, which no buffer bounds), `from` fed
+ * `input`. Resolves with `to`'s stdout once both exit 0; otherwise rejects as
+ * `execFile` does (`code`, `stderr`) with the failure that came first: the
+ * writer's own (a bad revision; the reader then fails on a cut stream), or
+ * the reader's, which stops the writer.
+ */
+export async function pinnedGitPipe(from: { cwd: string; args: string[]; input: string }, to: { cwd: string; args: string[] }): Promise<{ stdout: string }> {
+  const start = async (cwd: string, args: string[]): Promise<ChildProcess> => {
+    const drivers = runsNoDriver(args) ? {} : await driverlessEnv(cwd);
+    return spawn('git', [...PINNED, ...args], { cwd, env: pinnedEnv(drivers), stdio: ['pipe', 'pipe', 'pipe'], ...gitTimeoutOpts() });
+  };
+  const exited = (child: ChildProcess, args: string[]): Promise<string> => new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => { if (stdout.length < MAX_PIPE_OUTPUT) stdout += d.toString('utf8'); });
+    child.stderr?.on('data', (d: Buffer) => { if (stderr.length < MAX_PIPE_OUTPUT) stderr += d.toString('utf8'); });
+    child.on('error', reject);
+    child.on('close', (code, signal) => {
+      if (code === 0) return resolve(stdout);
+      const err = Object.assign(new Error(`git ${gitSubcommand(args)} failed: ${stderr.trim() || `exit ${code ?? signal}`}`), { code, stderr, killed: child.killed, signal });
+      reject(gitFailure(err, args));
+    });
+  });
+  const writer = await start(from.cwd, from.args);
+  const reader = await start(to.cwd, to.args).catch((err: unknown) => {
+    writer.kill('SIGKILL');
+    throw err;
+  });
+  const wrote = exited(writer, from.args);
+  const read = exited(reader, to.args);
+  let stopped = false;
+  reader.on('close', (code) => {
+    if (code !== 0 && writer.exitCode === null) {
+      stopped = true;
+      writer.kill('SIGKILL');
+    }
+  });
+  // Broken pipes: the exit of the process that went away is what reports them.
+  reader.stdin?.on('error', () => {});
+  writer.stdin?.on('error', () => {});
+  writer.stdout?.pipe(reader.stdin!);
+  writer.stdin?.end(from.input);
+  const [w, r] = await Promise.allSettled([wrote, read]);
+  if (w.status === 'rejected' && !stopped) throw w.reason;
+  if (r.status === 'rejected') throw r.reason;
+  return { stdout: r.value };
 }

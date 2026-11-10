@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ForgeError, type Forge } from './forge.ts';
 import { forgeUrl, GitlabForge } from './gitlab.ts';
+import { ForgeMirror } from './push.ts';
 import { readForgeToken } from '../security/forgeToken.ts';
 
 /**
@@ -74,7 +75,7 @@ function mapping(file: string, repo: string, v: unknown): LandingMapping {
   };
 }
 
-/** The validated mappings and the GitLab token, which only `forge()` hands on. */
+/** The validated mappings and the GitLab token, which only `forge()` and `mirror()` hand on. */
 export class Landing {
   readonly mappings: readonly LandingMapping[];
   readonly #token: string | null;
@@ -91,6 +92,11 @@ export class Landing {
   /** The forge a mapping lands through, carrying the token. */
   forge(m: LandingMapping): Forge {
     return new GitlabForge({ baseUrl: m.baseUrl, ...(this.#token === null ? {} : { token: this.#token }) });
+  }
+
+  /** The Foreman-owned mirror a mapping's commits cross to and from the forge through (./push.ts), carrying the token. */
+  mirror(m: LandingMapping, home: string): ForgeMirror {
+    return new ForgeMirror(home, m, this.#token);
   }
 
   /** What `foreman config --effective` and the start print: each mapping, and the token as set or unset. */
