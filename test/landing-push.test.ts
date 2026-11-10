@@ -211,8 +211,23 @@ test('an https forge gets the token as a header keyed on the push URL origin, ne
   const map = { ...f.map, baseUrl: 'http://localhost:9', pushUrl: `http://127.0.0.1:${port}/group/app.git` };
   const m = new Landing([map], TOKEN).mirror(map, f.home);
   let error: unknown;
+  // git then writes the Authorization header to stderr: the error must still not carry it.
+  const traced = { GIT_TRACE_CURL: process.env['GIT_TRACE_CURL'], GIT_TRACE_REDACT: process.env['GIT_TRACE_REDACT'] };
+  const untrace = (): void => {
+    for (const [key, value] of Object.entries(traced)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+  process.env['GIT_TRACE_CURL'] = '1';
+  process.env['GIT_TRACE_REDACT'] = '0';
+  t.after(untrace);
   const { argv, config } = await spawned(t, async () => {
-    await m.fetchTarget().catch((err: unknown) => { error = err; });
+    try {
+      await m.fetchTarget().catch((err: unknown) => { error = err; });
+    } finally {
+      untrace();
+    }
   });
   assert.match(config, new RegExp(`GIT_CONFIG_KEY_0=http\\.http://127\\.0\\.0\\.1:${port}/\\.extraHeader`));
   assert.ok(error instanceof MirrorError, `fetchTarget failed as a MirrorError: ${String(error)}`);
