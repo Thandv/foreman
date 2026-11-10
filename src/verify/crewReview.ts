@@ -1579,7 +1579,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // met as written. Said here, it reaches the chair's evidence and, through
   // the critique, the next repair round's notes.
   if (verdict === 'fail' && opts.treeDir) {
-    const missing = ungroundedLiterals(critiques.join('\n'), opts.treeDir);
+    const missing = await ungroundedLiterals(critiques.join('\n'), opts.treeDir);
     if (missing.length) {
       critiques.push(literalNote(missing));
       onNote?.(`crew review demands ${missing.length} source string(s) found nowhere in the tree`);

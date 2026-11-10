@@ -25,7 +25,7 @@ test('a core.fsmonitor planted in the shared config does not run from repoBrief,
   g(jail, 'config', 'core.fsmonitor', prog);
   const fired = () => fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8').split('\n').filter(Boolean).length : 0;
   trackedListing(jail); const a = fired();
-  ungroundedLiterals('assert src.includes("someVeryUniqueLiteral")', jail); const b = fired();
+  await ungroundedLiterals('assert src.includes("someVeryUniqueLiteral")', jail); const b = fired();
   await provisionDeps(jail, repo, { allowInstall: false }).catch(() => {}); const c = fired();
   assert.deepEqual({ repoBrief: a, literals: b - a, deps: c - b }, { repoBrief: 0, literals: 0, deps: 0 });
 });

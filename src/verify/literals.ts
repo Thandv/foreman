@@ -1,8 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PINNED, pinnedEnv } from '../gitExec.ts';
-import { gitTimeoutOpts } from '../gitTimeout.ts';
+import { pinnedGit } from '../gitExec.ts';
 
 /**
  * A review that fails work can demand a test that scans source for an exact
@@ -45,11 +43,11 @@ export const isTestPath = (rel: string): boolean =>
   /(^|\/)(test|tests|__tests__|spec)\//.test(rel) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(rel);
 
 /** Text of every non-test file in the tree, tracked or new (the worker's files are uncommitted in a jail). */
-function sourceTexts(dir: string): string[] {
+async function sourceTexts(dir: string): Promise<string[]> {
   let listing: string;
   try {
     // Pinned (gitExec.ts): `dir` is a jail, whose config the worker can write; `ls-files` ran its core.fsmonitor.
-    listing = execFileSync('git', [...PINNED, 'ls-files', '-co', '--exclude-standard', '-z'], { cwd: dir, env: pinnedEnv(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...gitTimeoutOpts() });
+    listing = (await pinnedGit(dir, ['ls-files', '-co', '--exclude-standard', '-z'])).stdout;
   } catch {
     return [];
   }
@@ -58,9 +56,9 @@ function sourceTexts(dir: string): string[] {
     if (isTestPath(rel)) continue;
     const file = path.join(dir, rel);
     try {
-      const st = fs.lstatSync(file);
+      const st = await fs.lstat(file);
       if (!st.isFile() || st.size > MAX_FILE_BYTES) continue;
-      const buf = fs.readFileSync(file);
+      const buf = await fs.readFile(file);
       if (buf.subarray(0, 8192).includes(0)) continue;
       texts.push(buf.toString('utf8'));
     } catch {
@@ -75,10 +73,10 @@ function sourceTexts(dir: string): string[] {
  * when nothing is demanded, or when the tree cannot be listed (no claim is
  * made about a tree that could not be read).
  */
-export function ungroundedLiterals(critique: string, dir: string): string[] {
+export async function ungroundedLiterals(critique: string, dir: string): Promise<string[]> {
   const wanted = demandedLiterals(critique);
   if (!wanted.length) return [];
-  const texts = sourceTexts(dir);
+  const texts = await sourceTexts(dir);
   if (!texts.length) return [];
   return wanted.filter((lit) => !texts.some((t) => t.includes(lit)));
 }

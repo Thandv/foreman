@@ -42,7 +42,7 @@ function repo(files: Record<string, string>, untracked: Record<string, string> =
   return dir;
 }
 
-test('a demanded string that only a test file contains is still ungrounded; the real form and new files ground', () => {
+test('a demanded string that only a test file contains is still ungrounded; the real form and new files ground', async () => {
   const dir = repo(
     {
       'ui/app.js': "const pick = (attr) => e.target.closest(`button[${attr}]`)?.getAttribute(attr);\n",
@@ -54,17 +54,17 @@ test('a demanded string that only a test file contains is still ungrounded; the 
     const critique =
       "Use `includes(\"closest('[data-card]')\")`, keep `includes('closest(`button[${attr}]`)')`... " +
       "and `includes('S.notRun = null')`.";
-    assert.deepEqual(ungroundedLiterals(critique, dir), ["closest('[data-card]')"]);
+    assert.deepEqual(await ungroundedLiterals(critique, dir), ["closest('[data-card]')"]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('no claim about a tree that cannot be listed, and none when nothing is demanded', () => {
+test('no claim about a tree that cannot be listed, and none when nothing is demanded', async () => {
   const plain = scratchDir('foreman-literals-nogit-');
   try {
-    assert.deepEqual(ungroundedLiterals("includes('anything at all')", plain), []);
-    assert.deepEqual(ungroundedLiterals('prose only', plain), []);
+    assert.deepEqual(await ungroundedLiterals("includes('anything at all')", plain), []);
+    assert.deepEqual(await ungroundedLiterals('prose only', plain), []);
   } finally {
     fs.rmSync(plain, { recursive: true, force: true });
   }
