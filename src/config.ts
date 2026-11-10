@@ -181,6 +181,69 @@ export const config = {
 export type Config = typeof config;
 
 /**
+ * The FOREMAN_* variable behind each config key, or null for a path derived from the others. Keyed by every key of
+ * Config, so a knob added above without a row here fails the typecheck. None is a secret: `foreman config
+ * --effective` prints these values as they are.
+ */
+const KNOB_ENV: Record<keyof Config, string | null> = {
+  home: 'FOREMAN_HOME',
+  sourceRoot: null,
+  toolbox: 'FOREMAN_TOOLBOX',
+  dbPath: 'FOREMAN_DB',
+  workRoot: null,
+  artifactRoot: null,
+  port: 'FOREMAN_PORT',
+  host: 'FOREMAN_HOST',
+  maxWorkers: 'FOREMAN_MAX_WORKERS',
+  maxVerifying: 'FOREMAN_MAX_VERIFYING',
+  taskTimeoutMs: 'FOREMAN_TASK_TIMEOUT_MS',
+  logLinesPerRun: 'FOREMAN_LOG_LINES',
+  traceRetainDays: 'FOREMAN_TRACE_RETAIN_DAYS',
+  jailRetainDays: 'FOREMAN_JAIL_RETAIN_DAYS',
+  failedJailRetainDays: 'FOREMAN_FAILED_JAIL_RETAIN_DAYS',
+  schedulerTickMs: 'FOREMAN_TICK_MS',
+  diffCapBytes: 'FOREMAN_DIFF_CAP_BYTES',
+  proseDiffCapBytes: 'FOREMAN_PROSE_DIFF_CAP_BYTES',
+  crewCodeDiffCapBytes: 'FOREMAN_CREW_CODE_DIFF_CAP_BYTES',
+  debug: 'FOREMAN_DEBUG',
+  logTailLines: 'FOREMAN_LOG_TAIL_LINES',
+  logTailBytes: 'FOREMAN_LOG_TAIL_BYTES',
+  memoryBriefBytes: 'FOREMAN_MEMORY_BRIEF_BYTES',
+  repairBriefBytes: 'FOREMAN_REPAIR_BRIEF_BYTES',
+  revertTests: 'FOREMAN_REVERT_TESTS',
+  preReviewRepairs: 'FOREMAN_PRE_REVIEW_REPAIRS',
+  acceptanceBytes: 'FOREMAN_ACCEPTANCE_BYTES',
+  reviewReportBytes: 'FOREMAN_REVIEW_REPORT_BYTES',
+  citedSourceBytes: 'FOREMAN_CITED_SOURCE_BYTES',
+  skillsDir: 'FOREMAN_SKILLS_DIR',
+  skillBriefBytes: 'FOREMAN_SKILL_BRIEF_BYTES',
+  councilMaxOutputTokens: 'FOREMAN_COUNCIL_MAX_TOKENS',
+};
+
+export interface Knob {
+  name: string;
+  value: string;
+  /** env: the variable is set (not empty); default: config.ts fell back to its own value. */
+  source: 'env' | 'default';
+}
+
+/**
+ * What `foreman config --effective` prints: each knob config.ts resolves, with its value and source, and the names
+ * (never the values) of every other FOREMAN_* variable in the environment — those are read where they are used.
+ */
+export function effectiveConfig(): { knobs: Knob[]; others: string[] } {
+  const knobs: Knob[] = [];
+  for (const key of Object.keys(KNOB_ENV) as Array<keyof Config>) {
+    const name = KNOB_ENV[key];
+    if (name === null) continue;
+    knobs.push({ name, value: String(config[key]), source: process.env[name]?.trim() ? 'env' : 'default' });
+  }
+  const resolved = new Set(knobs.map((k) => k.name));
+  const others = Object.keys(process.env).filter((n) => n.startsWith('FOREMAN_') && !resolved.has(n)).sort();
+  return { knobs, others };
+}
+
+/**
  * The URL a client reaches the daemon on. A wildcard bind is reached on
  * loopback, and an IPv6 literal needs its brackets: FOREMAN_HOST=::1 is a
  * loopback bind the server accepts, and `http://::1:4100` is not a URL.

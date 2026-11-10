@@ -37,3 +37,10 @@ test('foreman config without --effective is a usage error', () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /usage: foreman config --effective/);
 });
+
+test('no knob whose value config --effective prints is a secret', async () => {
+  const { effectiveConfig } = await import('../src/config.ts');
+  const { knobs } = effectiveConfig();
+  assert.ok(knobs.length > 0);
+  for (const k of knobs) assert.doesNotMatch(k.name, /_(KEY|TOKEN|SECRET|PASSWORD)$/, `${k.name} would be printed; redact it first`);
+});

@@ -14,6 +14,11 @@ tests; none of those is in the table. Two families are read under names built at
 `FOREMAN_MODEL_<ALIAS>` pins the model behind a gateway alias (`src/models.ts`), and `FOREMAN_PERSONA_URL_<ID>`
 overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/align/personas.ts`).
 
+`foreman config --effective` prints each setting `src/config.ts` resolves (the rows below whose "Read in" is
+`src/config.ts`): its name, the value in effect and whether it came from the environment (`env`, set and not empty) or
+the default. Its last line counts and names every other `FOREMAN_*` variable set in the environment; those are read
+where they are used, so their values are never printed, only their names. No `src/config.ts` setting is a secret.
+
 | Name | Default | Effect | Read in |
 |---|---|---|---|
 | `FOREMAN_HOME` | `~/.foreman` | Foreman's data directory: ledger, work trees, artifacts, traces, backups. A relative value is resolved once and written back, so every child sees the same absolute path | `src/config.ts` |

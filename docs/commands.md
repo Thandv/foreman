@@ -11,6 +11,7 @@ prune       drop worktrees and branches of finished tasks (approved work only on
 trace       full JSON reconstruction of a task
 debrief     what one finished epic shows: collected facts, findings, at most 3 suggestions (see Self-improvement)
 service     print a launchd plist for this install
+config      `config --effective`: each src/config.ts setting, its value and env|default, then the names of other FOREMAN_* variables set
 help        the full usage text (also `foreman --help`)
 assign      who does a task: `assign <taskId> ai|human`
 gate        who decides at the gate: `gate <taskId>|--waiting|--house owner|human`

@@ -4,7 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { secretWarning, servicePlist, skippedSecrets, stableNodePath } from './service.ts';
-import { config, daemonUrl } from './config.ts';
+import { config, daemonUrl, effectiveConfig } from './config.ts';
 import { humanDuration, sweepJails } from './archive.ts';
 import {
   backupIfDue, backupMb, backupNow, backupSettings, requireNoInterruptedRestore, restoreFrom, sameDiskWarning,
@@ -101,6 +101,8 @@ const USAGE = `foreman — parallel agent mission control
   foreman prune [--days N] [--keep-deps N] reclaim worktrees, branches, old ledger rows, dep caches
   foreman trace <taskId>                  full JSON reconstruction of a task
   foreman service                         print a launchd plist for this install
+  foreman config --effective              each setting src/config.ts resolves, its value and env|default; then the
+                                          names only of the other FOREMAN_* variables set
   foreman backup [--to <dir>]             one verified, gzipped copy of the database, now (the daemon
                                           takes one a day by itself; keeps 7 dailies + 4 weeklies,
                                           in the copy dir too)
@@ -685,6 +687,15 @@ async function main(): Promise<number> {
   }
 
   switch (cmd) {
+    case 'config': {
+      if (args.flags['effective'] !== true) throw new Error('usage: foreman config --effective');
+      const { knobs, others } = effectiveConfig();
+      const nameW = Math.max(...knobs.map((k) => k.name.length));
+      const valueW = Math.max(...knobs.map((k) => k.value.length));
+      for (const k of knobs) process.stdout.write(`${k.name.padEnd(nameW)}  ${k.value.padEnd(valueW)}  ${k.source}\n`);
+      process.stdout.write(`${others.length} other FOREMAN_* names are read in place (not shown)${others.length ? `: ${others.join(', ')}` : ''}\n`);
+      return 0;
+    }
     case 'backup': {
       // Runs with or without the daemon: the copy is taken through a
       // read-only connection, so a live daemon is not disturbed.
