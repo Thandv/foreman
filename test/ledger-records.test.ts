@@ -17,7 +17,7 @@ import { applyApproval, applyRejection, ownerGate } from '../src/gate.ts';
 import { setCloudDown } from '../src/localOnly.ts';
 import { reloadSpecs } from '../src/models.ts';
 import { clearPlaybookCache } from '../src/playbooks.ts';
-import { DECISION_NOTE_MAX_BYTES, Store, boundDecisionNote } from '../src/queue.ts';
+import { CORE_GUARD_PREFIX, DECISION_NOTE_MAX_BYTES, Store, boundDecisionNote } from '../src/queue.ts';
 import { RunClock } from '../src/runClock.ts';
 import { endedReason, newRunFacts } from '../src/runFacts.ts';
 import { claudeCodeSpec, handleCliLine, initialCliState, resetPreflightCache, turnLimitOf } from '../src/runners/cliRunners.ts';
@@ -598,6 +598,47 @@ test('the decision and skills events survive the end-of-run prune that drops ord
   } finally {
     cap.logLinesPerRun = lines;
     await sched.stop();
+    store.close();
+  }
+});
+
+test('the end-of-run prune keeps every decision, skills line and core-guard warning, plus the last N events, and nothing else', () => {
+  const cap = config as { logLinesPerRun: number };
+  const lines = cap.logLinesPerRun;
+  cap.logLinesPerRun = 3;
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
+  try {
+    const t = store.addTask({ title: 'pruned', prompt: 'x', runner: 'echo' });
+    const other = store.addTask({ title: 'not pruned', prompt: 'x', runner: 'echo' });
+    const add = (type: 'log' | 'warning' | 'decision' | 'skills', message: string, taskId = t.id) => store.record({ taskId, type, message });
+    add('warning', `${CORE_GUARD_PREFIX}touches src/gate.ts`);
+    add('warning', 'an ordinary warning');
+    add('decision', 'reject by human — not like that');
+    add('log', 'old line 1');
+    add('skills', '{"role":"soft.dev","skills":["test-first"]}');
+    add('warning', `not a ${CORE_GUARD_PREFIX}lead`);
+    add('log', 'old line 2');
+    add('log', 'other ticket line', other.id);
+    add('log', 'tail 1');
+    add('decision', 'retry by human — do it the other way');
+    add('log', 'tail 3');
+    const otherBefore = store.eventsForTask(other.id, 100_000).length;
+    (sched as unknown as { pruneEvents(id: string): void }).pruneEvents(t.id);
+    assert.deepEqual(
+      store.eventsForTask(t.id, 100_000).map((e) => `${e.type}: ${e.message}`),
+      [
+        `warning: ${CORE_GUARD_PREFIX}touches src/gate.ts`,
+        'decision: reject by human — not like that',
+        'skills: {"role":"soft.dev","skills":["test-first"]}',
+        'log: tail 1',
+        'decision: retry by human — do it the other way',
+        'log: tail 3',
+      ],
+    );
+    assert.equal(store.eventsForTask(other.id, 100_000).length, otherBefore, "another ticket's events are untouched");
+  } finally {
+    cap.logLinesPerRun = lines;
     store.close();
   }
 });

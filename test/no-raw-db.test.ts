@@ -27,7 +27,7 @@ function counts(files: Record<string, string>): Map<string, RawDbCounts> {
 test('no-raw-db: today\'s tree passes and prints the outside-queue write and writable-opener counts', () => {
   const r = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /^raw writes outside queue: 1$/m);
+  assert.match(r.stdout, /^raw writes outside queue: 0$/m);
   assert.match(r.stdout, /^writable openers outside queue: 1$/m);
 });
 
