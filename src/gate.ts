@@ -1338,9 +1338,13 @@ async function applyGateReply(
     const result = await applyApproval(store, task.id, { principal: DEFAULT_ACTOR_ID['owner-model'], note, selfRoot, stale: changed })
       .catch((err: unknown) => {
         if (err instanceof ShuttingDownError) return stopping;
+        // The rule refuses the owner model for as long as auth is on: decided once per park, never re-asked and paid
+        // for on every sweep.
+        if (err instanceof FourEyesRefused) return err;
         if (err instanceof StaleApprovalError) return err.message;
         throw err;
       });
+    if (result instanceof FourEyesRefused) return log('hold', result.message);
     if (typeof result === 'string') return log('hold', result, false);
     // Not the tree that was reviewed, no tree on record, or the real .git
     // changed (the git tripwire): nothing landed and the ticket is a person's now.
