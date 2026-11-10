@@ -305,6 +305,13 @@ test('value imports into src/align and src/prose from the rest of src are exactl
   for (const reason of Object.values(ALIGN_PROSE_EDGES)) assert.ok(reason.length > 0);
 });
 
+test('the scheduler imports nothing from src/align and ARCHITECTURE.md says exactly that', () => {
+  const reach = [...(value.get('src/scheduler.ts') ?? []), ...(typeOnly.get('src/scheduler.ts') ?? [])];
+  assert.deepEqual(reach.filter((to) => to.startsWith('src/align/')), []);
+  const doc = fs.readFileSync(path.join(SRC, '..', 'docs', 'ARCHITECTURE.md'), 'utf8');
+  assert.match(doc, /The scheduler imports nothing from `src\/align\/`/);
+});
+
 test('admit.ts does not reach improve.ts, models.ts, personas.ts, bench.ts or the tool catalog through value imports', () => {
   const reached = new Set<string>();
   const queue = ['src/security/admit.ts'];
