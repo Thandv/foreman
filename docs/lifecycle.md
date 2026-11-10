@@ -38,7 +38,7 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    decide on the code; the reason is the words you are shown and is never matched.
    Merges in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
    same repo waits until the first one's checks, decision and merge have settled, whether they
-   passed, failed or threw. The post-merge check runs after that, at the HEAD its own merge made,
+   passed, failed or threw. The post-merge check (`src/landing/verify.ts`) runs after that, at the HEAD its own merge made,
    so the next approval in the repo merges while it is tested, and a red names the merge whose
    HEAD failed. A dependent stays `blocked` until its parent's check passes; it is released at
    once when no check runs for that landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing

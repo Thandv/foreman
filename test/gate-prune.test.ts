@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pruneMainWorktrees } from '../src/gate.ts';
+import { pruneMainWorktrees } from '../src/landing/verify.ts';
 
 // pruneMainWorktrees runs on the daemon's behalf, at startup and after an interrupted check. Its git is the
 // pinned git (src/gitExec.ts): an inherited GIT_DIR must not turn `worktree list` and `worktree remove` onto

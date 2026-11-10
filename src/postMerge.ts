@@ -67,7 +67,7 @@ export async function checkMain(
   at?: string,
 ): Promise<MainCheck> {
   const head = at ?? await repoHead(repo);
-  // The pid in the name tells a startup prune whose check this is (gate.ts pruneMainWorktrees).
+  // The pid in the name tells a startup prune whose check this is (src/landing/verify.ts pruneMainWorktrees).
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `foreman-main-${process.pid}-`));
   try {
     // Checked out with no filter the repo's config names (a smudge there ran in the daemon), by isolate.ts.
