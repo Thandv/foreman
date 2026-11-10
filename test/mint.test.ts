@@ -10,7 +10,7 @@ import { Scheduler } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { ensureHostSecret, HOST_SECRET_HEADER } from '../src/security/hostSecret.ts';
 import { hostAdminMintAllowed } from '../src/security/mint.ts';
-import { authenticate, authIsOn } from '../src/security/tokenAuth.ts';
+import { authenticate, authIsOn, tokenHash } from '../src/security/tokenAuth.ts';
 
 const CLI = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
 
@@ -21,11 +21,13 @@ interface Daemon {
   mint: (body: unknown, headers?: Record<string, string>) => Promise<Response>;
 }
 
-async function daemon(t: test.TestContext): Promise<Daemon> {
+/** `peer` shadows each accepted socket's remoteAddress, so the server sees a non-loopback peer. */
+async function daemon(t: test.TestContext, peer?: string): Promise<Daemon> {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { maxWorkers: 1, tickMs: 60_000, verifyEnabled: false });
   sched.pauseDispatch();
   const server = createServer(store, sched);
+  if (peer) server.prependListener('connection', (s) => Object.defineProperty(s, 'remoteAddress', { value: peer }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
   t.after(async () => {
@@ -213,4 +215,22 @@ test('only a loopback peer with the matching secret may mint: a remote address w
   for (const addr of ['192.0.2.7', '10.0.0.1', '::ffff:192.0.2.7', '2001:db8::1', '0.0.0.0', '128.0.0.1', undefined]) {
     assert.equal(hostAdminMintAllowed(asking(addr, secret), testHome), false, String(addr));
   }
+});
+
+test('the route refuses a non-loopback peer with the right secret: 401 and nothing written, with auth off and with auth on', async (t) => {
+  const { store, mint } = await daemon(t, '192.0.2.7');
+  const res = await mint({ name: 'mallory' }, secretHeader());
+  assert.equal(res.status, 401);
+  assert.equal(store.hasAnyPrincipal(), false);
+  assert.deepEqual(mintEvents(store), []);
+
+  const alice = store.addPrincipal({ kind: 'human', name: 'alice', createdBy: 'operator' });
+  const token = 'a'.repeat(64);
+  store.addToken({ principalId: alice.id, tokenHash: tokenHash(token), createdBy: 'operator' });
+  assert.equal(authIsOn(store), true);
+  for (const headers of [secretHeader(), { ...secretHeader(), ...bearer(token) }]) {
+    assert.equal((await mint({ name: 'mallory' }, headers)).status, 401);
+  }
+  assert.equal(store.humanPrincipalCount(), 1);
+  assert.deepEqual(mintEvents(store), []);
 });
