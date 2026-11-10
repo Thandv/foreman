@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { repoBrief } from '../src/assistant/repoBrief.ts';
+import { repoBrief, trackedListing } from '../src/assistant/repoBrief.ts';
 
 function repoWith(files: Record<string, string>): string {
   const dir = scratchDir('foreman-brief-');
@@ -62,6 +62,21 @@ test('repoBrief: secrets in a doc are redacted, oversized docs truncated, and no
     assert.ok(brief.length < 20_000);
     assert.equal(repoBrief(null, 'x'), '');
     assert.equal(repoBrief(path.join(dir, 'nope'), 'x'), '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('repoBrief and trackedListing: exact text on a fixture repo', () => {
+  const dir = repoWith({ 'README.md': 'hello', 'src/b.ts': 'export {}', 'a.txt': 'a' });
+  try {
+    assert.equal(
+      repoBrief(dir, 'nothing named'),
+      'REPO SNAPSHOT (taken before planning; plan against what is already here — do not ticket work that already exists):\n' +
+        'FILES (3 tracked):\n  README.md\n  a.txt\n  src/b.ts\n\n--- README.md ---\nhello\n',
+    );
+    assert.equal(trackedListing(dir), 'FILES ALREADY TRACKED IN THIS TREE (3):\n  README.md\n  a.txt\n  src/b.ts');
+    assert.equal(trackedListing(path.join(dir, 'nope')), '');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
