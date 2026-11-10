@@ -1215,6 +1215,29 @@ test('output: a debriefs directory that is a link is refused, a link standing wh
   }
 });
 
+test('output: the reports are 0600, a new debriefs directory is 0700, and an existing open one is warned about, not changed', async () => {
+  const out = scratchDir('foreman-debrief-mode-');
+  const old = process.umask(0o022);
+  try {
+    const fresh = path.join(out, 'fresh');
+    const made = await runDebrief(store, null, t1.id, { noModel: true, outDir: fresh });
+    assert.equal(fs.statSync(fresh).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(made.paths.json).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(made.paths.md).mode & 0o777, 0o600);
+    assert.deepEqual(made.warnings, []);
+
+    const open = path.join(out, 'open');
+    fs.mkdirSync(open, { mode: 0o755 });
+    const again = await runDebrief(store, null, t1.id, { noModel: true, outDir: open });
+    assert.equal(fs.statSync(open).mode & 0o777, 0o755, 'an existing directory keeps its mode');
+    assert.equal(fs.statSync(again.paths.md).mode & 0o777, 0o600);
+    assert.deepEqual(again.warnings, [`${open} is open to group or others (mode 755); the reports in it are 0600, but chmod 700 it to keep their names private too`]);
+  } finally {
+    process.umask(old);
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
 test('gate class: a class that rests only on a note\'s wording says so, quotes the note, and is counted apart from a recorded one', async () => {
   const ap = (note: string) => [{ at: 10, action: 'approve' as const, by: 'human' as const, note, noteSource: 'memory' as const }];
   const pass = [{ at: 5, source: 'crew', verdict: 'pass' }];
