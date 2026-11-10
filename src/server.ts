@@ -53,7 +53,7 @@ import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts'
 import { hostAdminMintAllowed, mintToken, readMintRequest } from './security/mint.ts';
 import { authenticate, authIsOn, verifySlotAllowed } from './security/tokenAuth.ts';
 import { DEFAULT_ACTOR_ID, probeTask, STAGES } from './types.ts';
-import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
+import type { Decision, GateMode, Principal, RunEvent, Sensitivity } from './types.ts';
 
 const BOARD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'board');
 const MIME: Record<string, string> = {
@@ -127,6 +127,18 @@ function allowCoreOf(req: http.IncomingMessage, body: Record<string, unknown>): 
 
 function noteAllowCoreDropped(store: Store, taskId: string, core: { dropped: boolean }): void {
   if (core.dropped) store.record({ taskId, type: 'warning', message: 'allowCore dropped: request lacked the host-admin secret' });
+}
+
+/**
+ * Why a request may not approve or reject a pending playbook, or null when it may. These routes write the operator's
+ * catalog and four-eyes does not cover them, so with auth on (until roles, E1.3-5) they take a human principal that
+ * also carries the host-admin secret from a loopback peer. With auth off (`principal` null) nothing changes.
+ */
+function catalogApprovalRefusal(req: http.IncomingMessage, principal: Principal | null): string | null {
+  if (principal === null) return null;
+  if (principal.kind !== 'human') return 'catalog approval needs a human principal';
+  if (!hostAdminMintAllowed(req, config.home)) return 'catalog approval needs the host-admin secret, from this machine';
+  return null;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -588,12 +600,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
     // SSE included. verify-slot is the one other exception: a worker proves its run with the run token instead (below).
     // Who is acting, for the decision rows this request writes and the tasks it creates: that principal, or the operator
     // while auth is off.
-    let actorId: string = DEFAULT_ACTOR_ID.human;
+    let principal: Principal | null = null;
     if (seg[1] !== 'verify-slot' && authIsOn(store)) {
-      const principal = authenticate(store, req.headers);
+      principal = authenticate(store, req.headers);
       if (!principal) return json(res, 401, { error: 'not authenticated: send Authorization: Bearer <token>' });
-      actorId = principal.id;
     }
+    const actorId: string = principal?.id ?? DEFAULT_ACTOR_ID.human;
 
     // --- SSE -------------------------------------------------------------
     if (seg[1] === 'events' && method === 'GET') {
@@ -1337,9 +1349,11 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           return json(res, 400, { error: (err as Error).message });
         }
       }
-      // Approve/reject mirror the tool-approval routes: localhost-only like the
-      // rest of the API, no other authentication, one explicit human action.
+      // Approve/reject: one explicit human action that writes the catalog. With auth on it also needs the host-admin
+      // secret over loopback (catalogApprovalRefusal); a refusal is 403 and leaves the draft where it was.
       if (method === 'POST' && seg[2] && (seg[3] === 'approve' || seg[3] === 'reject')) {
+        const refusal = catalogApprovalRefusal(req, principal);
+        if (refusal) return json(res, 403, { error: refusal });
         try {
           return json(
             res,

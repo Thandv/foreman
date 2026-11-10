@@ -74,6 +74,12 @@
   `principal-minted` events); with auth on and one human, a protected change cannot land until a second person is
   minted, and tasks with no recorded creator (from schedules, standing asks, improvements) cannot be approved once
   there are two.
+- Playbook catalog approval (`POST /api/playbooks/:id/approve|reject`) writes the operator's playbook catalog, and
+  four-eyes does not cover it. With auth off nothing changes. With auth on, until roles exist, it is allowed only for a
+  `human` principal whose request also carries the host-admin secret in `x-foreman-host-secret` from a loopback peer
+  (the mint's check). A `service` principal, a missing or wrong secret, or a peer that is not loopback is answered
+  403 naming what is missing, and the draft stays in `pending/`, neither installed nor removed. `foreman playbook
+  approve|reject` does not send the secret yet, so with auth on it is refused; a request that sends both headers works.
 - Every task records who asked for it in `tasks.created_by`. `POST /api/tasks`, `/api/ask` (each plan node) and
   `/api/build` (the epic) set it to the principal that authenticated the request (`operator` while auth is off); a
   creator in the request body is never read. A task with a parent and no creator of its own (an epic's ticket, a
