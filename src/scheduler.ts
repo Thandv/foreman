@@ -26,7 +26,7 @@ import { factDrift } from './prose/linecheck.ts';
 import { assertSelfDiffAllowed, CoreChangeRefused, gatherEvidence, pathsInDiff, proposeImprovement, queueImprovement } from './improve.ts';
 import { checkAcceptanceMap, formatMapGaps } from './acceptanceMap.ts';
 import { checkScope, effectiveScopeRules } from './scope.ts';
-import { admit, AdmissionBlocked } from './security/admit.ts';
+import { admitAsync, AdmissionBlocked } from './security/admit.ts';
 import { coreRefusal, isSelfTask, PROTECTED_PATHS } from './security/coreGuard.ts';
 import { boundBrief, collectBriefCuts, tailLog } from './context.ts';
 import { endedReason, newRunFacts, noteBrief, noteResult, noteResumed } from './runFacts.ts';
@@ -1435,7 +1435,7 @@ export class Scheduler {
       // Asked once for the whole run (admission, brief, run check, diff
       // options): each ask is a git process the event loop waits on.
       const selfTask = isSelfTask(task, this.selfRoot);
-      const findings = admit(task, { selfRoot: this.selfRoot, isSelf: selfTask });
+      const findings = await admitAsync(task, { selfRoot: this.selfRoot, isSelf: selfTask });
       for (const f of findings) emit(`admission ${f.severity}: ${f.message}`);
       // The run log is read by nobody at the gate: a core-guard finding also
       // goes in the timeline, and on the park note below.

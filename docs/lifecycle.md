@@ -8,8 +8,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
 ```
 
 1. **admit** — the task (and any agent definition) is scanned. A blocking finding refuses the
-   task outright and is **not configurable**. Uses `frisk-scan` when installed; the built-in
-   ruleset always runs.
+   task outright and is **not configurable**. Uses `frisk-scan` when installed (20 s timeout; a
+   missing or failing scanner falls back to the rules alone); the built-in ruleset always runs.
+   The scan runs off the event loop, so the API and the board keep answering while it does.
 2. **isolate** — a code task with `--repo` gets a **git worktree on its own branch**, outside your
    checkout, one branch *per run*. Everything else gets a scratch directory. A repo with
    uncommitted changes is refused and never retried.
