@@ -1884,6 +1884,16 @@ export class Store extends EventEmitter {
 
 
   /**
+   * Store a ticket's skills list (null: the role's default) and log the change.
+   * The caller checks the list first: skills.ts setTicketSkills.
+   */
+  setTaskSkills(taskId: string, names: string[] | null): Task {
+    this.db.prepare('UPDATE tasks SET skills = ?, updated_at = ? WHERE id = ?').run(names ? JSON.stringify(names) : null, Date.now(), taskId);
+    this.record({ taskId, type: 'status', message: names ? `skills set: ${names.join(', ')}` : 'skills cleared: the role default applies' });
+    return this.getTask(taskId)!;
+  }
+
+  /**
    * Who decides this task at the gate. Only a task that has not been decided
    * can be changed: re-gating something already closed changes nothing.
    */

@@ -32,7 +32,6 @@ export const ALLOW: Record<string, Partial<RawDbCounts>> = {
   'src/roles.ts': { reads: 1 }, // a ticket's last skills line
   'src/scheduler.ts': { reads: 1, writes: 1 }, // blocked-ticket count; WRITE: pruneEvents
   'src/server.ts': { reads: 4 }, // landed decisions, last event id, prune's branch list, an artifact lookup
-  'src/skills.ts': { writes: 1 }, // WRITE: setTicketSkills
   'src/verify/crewReview.ts': { reads: 1 }, // the status event before a run's first event
   'src/verify/followUpChain.ts': { reads: 1 }, // open tickets for the follow-up chain
 };

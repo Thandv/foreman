@@ -650,15 +650,12 @@ export function assertTicketSkills(target: SkillTarget, raw: unknown): string[] 
 /**
  * Change the skills of a ticket that already exists (`foreman retry --skills`):
  * a checked list, or null to go back to the role's default. Through the
- * store's own handle and event log; the check is assertTicketSkills.
+ * store (Store.setTaskSkills); the check is assertTicketSkills.
  */
-export function setTicketSkills(store: Pick<Store, 'db' | 'getTask' | 'record'>, taskId: string, raw: unknown): Task {
+export function setTicketSkills(store: Pick<Store, 'getTask' | 'setTaskSkills'>, taskId: string, raw: unknown): Task {
   const task = store.getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
-  const names = assertTicketSkills(task, raw);
-  store.db.prepare('UPDATE tasks SET skills = ?, updated_at = ? WHERE id = ?').run(names ? JSON.stringify(names) : null, Date.now(), taskId);
-  store.record({ taskId, type: 'status', message: names ? `skills set: ${names.join(', ')}` : 'skills cleared: the role default applies' });
-  return store.getTask(taskId)!;
+  return store.setTaskSkills(taskId, assertTicketSkills(task, raw));
 }
 
 /** `foreman skills`: what is loaded and what was refused, as text. */
