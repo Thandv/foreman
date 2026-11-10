@@ -217,6 +217,41 @@ test('pin: a hand landing writes this row', async (t) => {
   }
 });
 
+/** The task's preference fact (assistant/memory.ts) and the label its ruled run carries (runs.decision). */
+function remembered(store: Store, taskId: string, runId: string): { value: string; confidence: number; source: string | null; label: unknown } {
+  const fact = store.recallFacts('global', 50).find((f) => f.key === `preference:${taskId}`)!;
+  const label = (store.db.prepare('SELECT decision FROM runs WHERE id = ?').get(runId) as { decision: unknown }).decision;
+  return { value: fact.value, confidence: fact.confidence, source: fact.source, label };
+}
+
+test('pin: the preference fact and run label a human and an owner-gate approval and rejection leave', async () => {
+  const store = new Store(':memory:');
+  try {
+    const approved = parked(store);
+    await applyApproval(store, approved.task.id, { note: 'looks right' });
+    const ownerApproved = parked(store);
+    await applyApproval(store, ownerApproved.task.id, { source: 'owner-gate', note: 'owner-gate: fine' });
+    const rejected = parked(store);
+    applyRejection(store, rejected.task.id, 'too long');
+    const ownerRejected = parked(store);
+    applyRejection(store, ownerRejected.task.id, 'owner-gate: off ticket', 'owner-gate');
+    assert.deepEqual([approved, ownerApproved, rejected, ownerRejected].map((x) => remembered(store, x.task.id, x.run.id)), [
+      { value: 'approved "Add token auth" — looks right', confidence: 0.6, source: approved.task.id, label: 'approved' },
+      {
+        value: 'the owner gate (not the operator) approved "Add token auth" — owner-gate: fine', confidence: 0.6 - 0.2,
+        source: `owner-gate:${ownerApproved.task.id}`, label: 'owner-approved',
+      },
+      { value: 'rejected "Add token auth" — too long. Do not repeat this.', confidence: 0.75, source: rejected.task.id, label: 'rejected' },
+      {
+        value: 'the owner gate (not the operator) rejected "Add token auth" — owner-gate: off ticket. Do not repeat this.',
+        confidence: 0.75 - 0.2, source: `owner-gate:${ownerRejected.task.id}`, label: 'owner-rejected',
+      },
+    ]);
+  } finally {
+    store.close();
+  }
+});
+
 /**
  * Every call of addDecision or noteDecision in src/, by file and enclosing function, with the pin above that covers
  * it. A new writer fails here until it has a pin; a writer that is gone fails until its entry goes.
@@ -360,7 +395,7 @@ async function rig(t: test.TestContext, headers: () => Record<string, string>): 
   return { store, call };
 }
 
-/** Cancel, retry, reopen, deps-drop, delete and landed through their routes: each one's newest actor_id. */
+/** Cancel, retry, reopen, deps-drop, delete, landed, approve and reject through their routes: each one's newest actor_id. */
 async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
   const { store, call } = r;
   const work = scratchDir('foreman-decision-actor-reopen-');
@@ -376,6 +411,8 @@ async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
   const { repo, sha } = repoWithCommit(t);
   const landed = store.addTask({ title: 't', prompt: 'p', repo, assignee: 'human' });
   store.setStatus(landed.id, 'awaiting-approval');
+  const approved = parked(store);
+  const rejected = parked(store);
   const calls: Array<[string, string, unknown?]> = [
     ['POST', `/api/tasks/${canceled.id}/cancel`, {}],
     ['POST', `/api/tasks/${retried.task.id}/retry`, {}],
@@ -383,17 +420,20 @@ async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
     ['POST', `/api/tasks/${b.id}/deps-drop`, { dep: a.id }],
     ['DELETE', `/api/tasks/${f1.id}`],
     ['POST', `/api/tasks/${landed.id}/landed`, { commit: sha }],
+    ['POST', `/api/tasks/${approved.task.id}/approve`, {}],
+    ['POST', `/api/tasks/${rejected.task.id}/reject`, { note: 'no' }],
   ];
   for (const [method, url, body] of calls) {
     const res = await call(method, url, body);
     assert.equal(res.status, 200, `${method} ${url}: ${JSON.stringify(res.json)}`);
   }
-  return [canceled.id, retried.task.id, reopened.task.id, b.id, f2.id, landed.id].map((id) => actorIds(store, id).at(-1));
+  return [canceled.id, retried.task.id, reopened.task.id, b.id, f2.id, landed.id, approved.task.id, rejected.task.id]
+    .map((id) => actorIds(store, id).at(-1));
 }
 
 test('with auth off, every decision route records the operator', async (t) => {
   const r = await rig(t, () => ({}));
-  assert.deepEqual(await throughRoutes(t, r), Array(6).fill('operator'));
+  assert.deepEqual(await throughRoutes(t, r), Array(8).fill('operator'));
 });
 
 test('with auth on, every decision route records the request principal', async (t) => {
@@ -402,5 +442,27 @@ test('with auth on, every decision route records the request principal', async (
   const alice = r.store.addPrincipal({ kind: 'human', name: 'alice', createdBy: 'operator' });
   secret = randomBytes(32).toString('base64url');
   r.store.addToken({ principalId: alice.id, tokenHash: createHash('sha256').update(secret).digest('hex'), expiresAt: null, createdBy: 'operator' });
-  assert.deepEqual(await throughRoutes(t, r), Array(6).fill(alice.id));
+  assert.deepEqual(await throughRoutes(t, r), Array(8).fill(alice.id));
+});
+
+/** The parameter list of each exported function `names` in src/gate.ts, as written. */
+function gateSignatures(names: string[]): Record<string, string> {
+  const file = path.resolve(import.meta.dirname, '..', 'src', 'gate.ts');
+  const sf = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const out: Record<string, string> = {};
+  sf.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node) && node.name && names.includes(node.name.text)) {
+      out[node.name.text] = node.parameters.map((p) => p.getText()).join(', ');
+    }
+  });
+  return out;
+}
+
+test('the approve and reject path takes a principal, never a source', () => {
+  const signatures = gateSignatures(['applyApproval', 'applyRejection']);
+  assert.deepEqual(Object.keys(signatures).sort(), ['applyApproval', 'applyRejection']);
+  for (const [name, params] of Object.entries(signatures)) {
+    assert.doesNotMatch(params, /\bsource\??:/, `${name} has a source parameter`);
+    assert.match(params, /\bprincipal\b/, `${name} takes no principal`);
+  }
 });
