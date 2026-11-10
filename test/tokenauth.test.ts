@@ -164,7 +164,7 @@ test('once a principal exists, a missing, invalid, revoked or expired bearer get
   for (const s of [good.secret, revoked.secret, expired.secret, disabled.secret]) assert.ok(!events.includes(s), 'no token in an event');
 });
 
-test('auth is a latch: after the only token is revoked, and after it expires, GET /api/state is 401, never 200 as operator', async (t) => {
+test('auth is a latch: after the only token is revoked, after it expires, and after its principal is disabled, GET /api/state is 401, never 200 as operator', async (t) => {
   const d = await daemon(t);
   const one = mint(d.store, 'alice');
   assert.equal((await fetch(`${d.base}/api/state`, { headers: bearer(one.secret) })).status, 200);
@@ -179,6 +179,13 @@ test('auth is a latch: after the only token is revoked, and after it expires, GE
   d2.store.db.prepare('UPDATE api_tokens SET expires_at = ? WHERE id = ?').run(Date.now() - 1, later.tokenId);
   assert.equal((await fetch(`${d2.base}/api/state`, { headers: bearer(later.secret) })).status, 401);
   assert.equal((await fetch(`${d2.base}/api/state`)).status, 401);
+
+  const d3 = await daemon(t);
+  const only = mint(d3.store, 'alice');
+  assert.equal((await fetch(`${d3.base}/api/state`, { headers: bearer(only.secret) })).status, 200);
+  d3.store.disablePrincipal(only.principalId);
+  assert.equal((await fetch(`${d3.base}/api/state`, { headers: bearer(only.secret) })).status, 401);
+  assert.equal((await fetch(`${d3.base}/api/state`)).status, 401);
 });
 
 test('authenticate checks expiry against the clock it is given, on every call', (t) => {
