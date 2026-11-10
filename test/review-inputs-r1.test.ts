@@ -202,7 +202,7 @@ test('the owner gate prompt keeps the report\'s end, where the acceptance map is
 
 // ------------------------------------------------------------------ what the daemon reads from a worker's tree
 
-test('a hard link in the tree is not read, and listing the tree does not run the program its git config names', (t) => {
+test('a hard link in the tree is not read, and listing the tree does not run the program its git config names', async (t) => {
   const outside = scratchDir('foreman-r1-out-');
   const dir = scratchDir('foreman-r1-jail-');
   t.after(() => { fs.rmSync(outside, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -224,7 +224,7 @@ test('a hard link in the tree is not read, and listing the tree does not run the
   fs.chmodSync(hook, 0o755);
   git('config', 'core.fsmonitor', hook);
   const diff = 'diff --git a/docs/adr.md b/docs/adr.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/adr.md\n@@ -0,0 +1,1 @@\n+See `src/ok.ts` and `src/hard.json`.\n';
-  const block = citedSourceBlock(diff, dir);
+  const block = await citedSourceBlock(diff, dir);
   assert.match(block, /--- src\/ok\.ts \(lines 1 of 1/);
   assert.doesNotMatch(block, /OUTSIDE-SECRET/);
   assert.match(block, /CITED BUT NOT READ[^\n]*src\/hard\.json/);
@@ -234,7 +234,7 @@ test('a hard link in the tree is not read, and listing the tree does not run the
   assert.equal(fs.existsSync(mark), true, 'control: a plain `git ls-files` runs the program');
 });
 
-test('the files a document cites keep their room when the worker\'s report names forty more, and citations past the cap are counted, not dropped', (t) => {
+test('the files a document cites keep their room when the worker\'s report names forty more, and citations past the cap are counted, not dropped', async (t) => {
   const dir = scratchDir('foreman-r1-cited-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
@@ -245,10 +245,10 @@ test('the files a document cites keep their room when the worker\'s report names
   for (let i = 0; i < 45; i++) fs.writeFileSync(path.join(dir, `src/f${i}.ts`), lines(`f${i}`, 300));
   git('add', '-A'); git('commit', '-qm', 'base');
   const diff = 'diff --git a/docs/adr.md b/docs/adr.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/adr.md\n@@ -0,0 +1,1 @@\n+The lock is taken in `src/main.ts:100-500`.\n';
-  const alone = citedSourceBlock(diff, dir, null);
+  const alone = await citedSourceBlock(diff, dir, null);
   assert.match(alone, /^--- src\/main\.ts \(lines 60-540 of 600\) ---$/m);
   const report = Array.from({ length: 45 }, (_, i) => `- claim ${i} | \`src/f${i}.ts\` lines 1-300`).join('\n');
-  const crowded = citedSourceBlock(diff, dir, report);
+  const crowded = await citedSourceBlock(diff, dir, report);
   assert.match(crowded, /^--- src\/main\.ts \(lines 60-540 of 600\) ---$/m, 'what the document cites is shown as it is with no report');
   assert.ok(crowded.length <= 64_000, `inside the budget (${crowded.length})`);
   assert.match(crowded, /^NOT LOOKED AT: 6 more cited paths\. Only the first 40 are, the document's before the report's\.$/m);

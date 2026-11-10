@@ -1347,7 +1347,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   const extras: ReviewPromptExtras = {
     reportPath: opts.reportPath ?? null,
     foremanNote: opts.foremanNote ?? null,
-    cited: opts.treeDir ? citedSourceBlock(opts.diff, opts.treeDir, opts.workerReport ?? null) : '',
+    cited: opts.treeDir ? await citedSourceBlock(opts.diff, opts.treeDir, opts.workerReport ?? null) : '',
   };
   // The caller's timeout is the budget for the WHOLE chain, not for each call:
   // it is what is left of the task deadline. The reviewers run concurrently and

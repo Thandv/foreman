@@ -410,7 +410,7 @@ test('citedPaths: slashed paths anywhere, root files only in backticks, line for
   ]);
 });
 
-test('cited source is read as regular files inside the tree only: a FIFO, a link, an ignored file and an oversized file are named, not read', (t) => {
+test('cited source is read as regular files inside the tree only: a FIFO, a link, an ignored file and an oversized file are named, not read', async (t) => {
   const outside = gitTree(t, { 'secret.ts': 'OUTSIDE-SECRET\n' });
   const dir = gitTree(t, { 'src/ok.ts': 'export const ok = 1;\n', '.gitignore': 'private/\n' });
   fs.mkdirSync(path.join(dir, 'private'));
@@ -423,20 +423,20 @@ test('cited source is read as regular files inside the tree only: a FIFO, a link
   execFileSync('git', ['add', '-A', '-N'], { cwd: dir, stdio: 'ignore' }); // as diffJail leaves the index
   const doc = proseDiff('docs/note.md', ['Reads src/ok.ts, src/fifo.ts, src/link.ts, linked/secret.ts, src/zero.ts, src/big.ts, private/keys.ts and ../x/y.ts.']);
   const started = Date.now();
-  const block = citedSourceBlock(doc, dir);
+  const block = await citedSourceBlock(doc, dir);
   assert.ok(Date.now() - started < 20_000, 'a FIFO or a device under a cited name does not hold the daemon');
   assert.match(block, /^--- src\/ok\.ts \(lines 1 of 1; no line or name in it was cited, so this is the head of the file\) ---\n1\| export const ok = 1;$/m);
   assert.doesNotMatch(block, /OUTSIDE-SECRET|IGNORED-SECRET|xxxxxxxx/);
   assert.match(block, /^CITED BUT NOT READ \([^)]*\): src\/fifo\.ts, src\/link\.ts, linked\/secret\.ts, src\/zero\.ts, src\/big\.ts, private\/keys\.ts$/m);
 });
 
-test('the cited-source block stays inside its budget and names every file it left out', (t) => {
+test('the cited-source block stays inside its budget and names every file it left out', async (t) => {
   const files: Record<string, string> = {};
   for (let i = 0; i < 12; i++) files[`src/m${i}.ts`] = numbered(`m${i}`, 400);
   const dir = gitTree(t, files);
   const doc = proseDiff('README.md', Object.keys(files).map((f, i) => `Module ${i} is ${f}:${100 + i}.`));
   for (const budget of [3_000, 8_000, 20_000]) {
-    const block = citedSourceBlock(doc, dir, null, budget);
+    const block = await citedSourceBlock(doc, dir, null, budget);
     assert.ok(block.length <= budget, `${block.length} <= ${budget}`);
     const shown = [...block.matchAll(/^--- (src\/m\d+\.ts) \(/gm)].map((m) => m[1]!);
     const leftOut = /^NOT SHOWN, over this block's \d+-character budget \(FOREMAN_CITED_SOURCE_BYTES\): (.*)$/m.exec(block)?.[1]?.split(', ') ?? [];
@@ -444,20 +444,20 @@ test('the cited-source block stays inside its budget and names every file it lef
     assert.deepEqual([...shown, ...leftOut].sort(), Object.keys(files).sort(), `every cited file is shown or named at ${budget}`);
   }
   // The default budget holds all twelve windows (81 lines each).
-  const whole = citedSourceBlock(doc, dir);
+  const whole = await citedSourceBlock(doc, dir);
   assert.equal([...whole.matchAll(/^--- src\/m\d+\.ts \(lines \d+-\d+ of 400\) ---$/gm)].length, 12);
   assert.ok(!whole.includes('NOT SHOWN'));
   // No prose in the diff, or prose that cites nothing readable: no block at all.
-  assert.equal(citedSourceBlock(proseDiff('src/a.ts', ['// src/m0.ts:5']), dir), '');
-  assert.equal(citedSourceBlock(proseDiff('README.md', ['Nothing cited here.']), dir), '');
+  assert.equal(await citedSourceBlock(proseDiff('src/a.ts', ['// src/m0.ts:5']), dir), '');
+  assert.equal(await citedSourceBlock(proseDiff('README.md', ['Nothing cited here.']), dir), '');
 });
 
-test('the cited-source block lists tracked and newly added files, and is empty for a tree git cannot list', (t) => {
+test('the cited-source block lists tracked and newly added files, and is empty for a tree git cannot list', async (t) => {
   const dir = gitTree(t, { 'src/a.ts': numbered('a', 30) });
   fs.writeFileSync(path.join(dir, 'src/new.ts'), 'export const fresh = 1;\n');
   execFileSync('git', ['add', '-N', 'src/new.ts'], { cwd: dir, stdio: 'ignore' }); // as diffJail leaves the index
   const doc = proseDiff('docs/x.md', ['See src/a.ts:20 and `new.ts`.']);
-  const block = citedSourceBlock(doc, dir, null, 4_000);
+  const block = await citedSourceBlock(doc, dir, null, 4_000);
   const a = numbered('a', 30).trimEnd().split('\n').map((l, i) => `${String(i + 1).padStart(2)}| ${l}`).join('\n');
   assert.equal(
     block,
@@ -473,10 +473,10 @@ test('the cited-source block lists tracked and newly added files, and is empty f
   const bare = scratchDir('foreman-cited-bare-');
   t.after(() => fs.rmSync(bare, { recursive: true, force: true }));
   fs.cpSync(path.join(dir, 'src'), path.join(bare, 'src'), { recursive: true });
-  assert.equal(citedSourceBlock(doc, bare, null, 4_000), '');
+  assert.equal(await citedSourceBlock(doc, bare, null, 4_000), '');
 });
 
-test('a README-only ticket: the files and names the worker\'s report maps its claims to are shown, and a base name finds its file', (t) => {
+test('a README-only ticket: the files and names the worker\'s report maps its claims to are shown, and a base name finds its file', async (t) => {
   // Shaped like a README-only trial ticket: the README states behaviour, and the report's claims table names the file and function.
   const server = Array.from({ length: 400 }, (_, i) => (i === 249 ? 'function serveStatic(req) {' : i === 251 ? '  const fresh = tokenEquals(supplied, token);' : `// server line ${i + 1}`)).join('\n') + '\n';
   const trust = Array.from({ length: 300 }, (_, i) => (i === 149 ? 'export const INCLUDE_DEPTH = 5;' : `// trust line ${i + 1}`)).join('\n') + '\n';
@@ -489,7 +489,7 @@ test('a README-only ticket: the files and names the worker\'s report maps its cl
     '- Includes are followed 5 levels deep | `src/trust.ts` `INCLUDE_DEPTH`',
     '- By-name moves are not confined | `src/fileops.ts` `moveNoReplace`',
   ].join('\n');
-  const block = citedSourceBlock(readme, dir, report);
+  const block = await citedSourceBlock(readme, dir, report);
   assert.match(block, /^--- src\/server\.ts \(lines 238-262 of 400\) ---$/m, 'twelve lines each side of the line that holds the name');
   assert.match(block, /^250\| function serveStatic\(req\) \{$/m);
   assert.match(block, /^--- src\/trust\.ts \(lines 138-162 of 300\) ---$/m);
@@ -498,7 +498,7 @@ test('a README-only ticket: the files and names the worker\'s report maps its cl
   assert.match(block, /^--- src\/fileops\.ts \(lines 1-10 of 10; no line or name in it was cited, so this is the head of the file\) ---$/m, 'a name the file does not hold: its head');
   assert.ok(!block.includes('fs.promises'), 'a backticked name that is no file of the tree is not a citation');
   // Without the report only the README's own citation is there.
-  const alone = citedSourceBlock(readme, dir);
+  const alone = await citedSourceBlock(readme, dir);
   assert.ok(alone.includes('--- src/paths.ts (') && !alone.includes('--- src/server.ts ('));
 });
 

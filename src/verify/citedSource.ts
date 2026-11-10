@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { config } from '../config.ts';
 import { gitTimeoutOpts } from '../gitTimeout.ts';
 import { readJailFile } from './jailRead.ts';
@@ -108,6 +109,8 @@ export function changedProse(diff: string): Array<{ path: string; added: string 
   return out;
 }
 
+const exec = promisify(execFile);
+
 /**
  * The pins of every git call made on a tree a worker could write (isolate.ts, verify/gateOutcome.ts): the tree's
  * repo config is the worker's too, and a plain `git ls-files` runs whatever program `core.fsmonitor` names.
@@ -116,15 +119,15 @@ const PINNED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', 
 const NOT_INHERITED = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CONFIG(_.*)?)$/;
 
 /** Every file git lists in the tree (tracked, or added by the work); null when git cannot say. */
-function listedByGit(dir: string): string[] | null {
+async function listedByGit(dir: string): Promise<string[] | null> {
   try {
     const env: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(process.env)) if (!NOT_INHERITED.test(key)) env[key] = value;
-    const raw = execFileSync('git', ['-C', dir, ...PINNED, '--no-optional-locks', 'ls-files', '-z'], {
-      encoding: 'utf8', ...gitTimeoutOpts(5_000), maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    const { stdout } = await exec('git', ['-C', dir, ...PINNED, '--no-optional-locks', 'ls-files', '-z'], {
+      encoding: 'utf8', ...gitTimeoutOpts(5_000), maxBuffer: 16 * 1024 * 1024,
       env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' },
     });
-    return raw.split('\0').filter(Boolean);
+    return stdout.split('\0').filter(Boolean);
   } catch {
     return null;
   }
@@ -200,7 +203,7 @@ function section(c: Citation, rel: string, text: string, room: number): string |
  * message: the files it names are attached after the document's own. At most
  * `budget` characters, the heading and the lists of what was left out included.
  */
-export function citedSourceBlock(diff: string, treeDir: string, report: string | null = null, budget: number = config.citedSourceBytes): string {
+export async function citedSourceBlock(diff: string, treeDir: string, report: string | null = null, budget: number = config.citedSourceBytes): Promise<string> {
   const prose = changedProse(diff);
   if (!prose.length) return '';
   // A document does not cite itself, and another changed document is already in the diff.
@@ -215,7 +218,7 @@ export function citedSourceBlock(diff: string, treeDir: string, report: string |
   const documentCites = new Map(citedPaths(added, 10 * MAX_CITED).map((c) => [c.path, c] as const));
   const byDocument = new Set(documentCites.keys());
   if (!cited.length) return '';
-  const listed = listedByGit(treeDir);
+  const listed = await listedByGit(treeDir);
   if (!listed) return '';
   const tracked = new Set(listed);
 
