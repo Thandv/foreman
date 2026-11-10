@@ -15,6 +15,12 @@ Registered tools live in a git-tracked **`toolbox/`** subfolder of the repo (see
 `toolbox/README.md`), so Foreman can both use and improve its own tools. Only
 tool *source* is stored there — usage stats and quarantine state are kept in
 `$FOREMAN_HOME/tool-state.json`, out of version control, so the toolbox stays clean
-for git. Set `FOREMAN_TOOLBOX` to point the catalog elsewhere. A pre-existing
+for git. The CLI and the daemon both update that file, so every update takes
+`tool-state.json.lock` (a lock whose process is dead, or older than 30 s, is
+reclaimed) and replaces the file whole through a temp file and a rename; a reader
+never sees half a file. A `tool-state.json` that exists but does not parse is not
+treated as empty: every tool reads as quarantined, and every update fails with an
+error naming the file and the recovery, `mv tool-state.json tool-state.json.corrupt`
+(which resets all tools' usage stats and quarantines). Set `FOREMAN_TOOLBOX` to point the catalog elsewhere. A pre-existing
 `$FOREMAN_HOME/tools` catalog is migrated into `toolbox/` once, on first start.
 

@@ -173,6 +173,7 @@ stateDiagram-v2
 <FOREMAN_HOME>/models.json            model roster overrides
 <FOREMAN_HOME>/bench.json             benchmark results
 <FOREMAN_HOME>/tool-state.json        forged-tool usage and quarantine state
+<FOREMAN_HOME>/tool-state.json.lock   held while a process rewrites tool-state.json
 <FOREMAN_HOME>/.sandbox-selftest      marker written by the sandbox self-test
 <FOREMAN_HOME>/frozen/                freeze records: process groups a process stopped, so a later `foreman serve` can end them (src/runners/freezeRecord.ts)
 ```
