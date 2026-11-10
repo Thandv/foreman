@@ -46,7 +46,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    the next approval in the repo merges while it is tested. A dependent stays `blocked` until a
    passing check covers its parent's merge; it is released at once when no check runs for that
    landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing merged), and a red or interrupted
-   check holds it with the repo. By default (`FOREMAN_POSTMERGE_MODE=coalesced`) one check runs
+   check holds it with the repo. Its epic waits the same way: it closes on the tick after the
+   check ends the hold, not at the decision. By default (`FOREMAN_POSTMERGE_MODE=coalesced`) one check runs
    per repo at a time: the next one is for the test command of the oldest landing not yet
    covered (the ticket's `testCmd`, or none, which detects the command at the checked HEAD),
    at the newest HEAD merged with that command, and it covers every landing with that command

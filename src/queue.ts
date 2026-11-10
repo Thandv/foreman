@@ -643,8 +643,9 @@ export class Store extends EventEmitter {
     this.record({ taskId, type: 'status', message: error ? `${status}: ${error}` : status });
     // The single funnel every status transition passes through (the gate, the
     // scheduler, cancel). One extra lookup only when a task with a parent
-    // moves, so an epic settles the moment its last ticket does rather than a
-    // tick later — and reopens the moment one of them starts over.
+    // moves, so an epic settles the moment its last ticket does (a tick later
+    // when that ticket is still under its landing hold) — and reopens the
+    // moment one of them starts over.
     const parent = this.parentIdOf(taskId);
     if (!parent) return;
     if (TERMINAL_STATUSES.includes(status)) this.closeEpicIfComplete(parent);
