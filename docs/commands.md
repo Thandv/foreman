@@ -39,7 +39,8 @@ land-clear  `land-clear <repo>`: release a repo a crash left mid-merge, once you
 
 Every command that talks to the daemon over HTTP uses `FOREMAN_URL` (default: the local daemon at `FOREMAN_HOST` and
 `FOREMAN_PORT`) and sends `FOREMAN_TOKEN` as `Authorization: Bearer` when it is set. The CLI refuses a token for
-`http://` to any host but this machine. Commands that open the ledger directly (`backup`, `restore`, `prune`, ...)
+`http://` to any host but this machine. `--allow-core` (`add`, `improve`) sends this machine's host-admin secret, so
+it is refused unless `FOREMAN_URL` is unset or names the local daemon. Commands that open the ledger directly (`backup`, `restore`, `prune`, ...)
 still act on the local `FOREMAN_HOME`.
 
 **HTTP status codes for ledger failures.** A route that rejects its input answers 400 with the reason, and any

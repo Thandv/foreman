@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { secretWarning, servicePlist, skippedSecrets, stableNodePath } from './service.ts';
@@ -361,13 +362,15 @@ function refuseCorrectedFlags(args: Args, cmd: string): void {
  * all. `fetch` gives up on a response whose headers take longer than 300s
  * (undici's headersTimeout, not settable without undici itself), and a
  * planner given a repo snapshot legitimately takes longer than that; the
- * daemon would finish the plan and nobody would be listening. node:http has
- * no such ceiling, so this waits as long as the daemon's own timeouts allow.
+ * daemon would finish the plan and nobody would be listening. node:http (and
+ * node:https, for an https FOREMAN_URL) has no such ceiling, so this waits as
+ * long as the daemon's own timeouts allow.
  */
 function apiCallLong(path: string, body: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
-    const req = http.request(`${base}${path}`, {
+    const request = new URL(base).protocol === 'https:' ? https.request : http.request;
+    const req = request(`${base}${path}`, {
       method: 'POST',
       headers: requestHeaders({ 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) }),
     }, (res) => {
@@ -423,8 +426,14 @@ async function apiCall(path: string, init?: Omit<RequestInit, 'headers'> & { hea
   return body;
 }
 
-/** The header that lets a request carry allowCore (src/security/hostSecret.ts); the secret is created on first use. */
+/**
+ * The header that lets a request carry allowCore (src/security/hostSecret.ts); the secret is created on first use.
+ * It is this machine's secret, so it goes only to this machine's daemon: any other FOREMAN_URL is refused.
+ */
 function hostAdminHeaders(): Record<string, string> {
+  if (base !== daemonUrl(config.host, config.port)) {
+    throw new Error(`--allow-core reaches only the local daemon (${daemonUrl(config.host, config.port)}), not FOREMAN_URL ${base}`);
+  }
   return { [HOST_SECRET_HEADER]: ensureHostSecret(config.home) };
 }
 

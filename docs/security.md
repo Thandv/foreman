@@ -26,7 +26,8 @@
   that directory). `POST /api/tasks` and `POST /api/improve` compare it with `timingSafeEqual`; without
   a match the task is still queued, without `allowCore`, and records the warning event
   `allowCore dropped: request lacked the host-admin secret`. The secret is never logged, never in an
-  event and never in a worker's environment. This stops a process that can only reach the local API;
+  event and never in a worker's environment. The CLI sends it only to the local daemon: with a
+  `FOREMAN_URL` that names any other daemon, `--allow-core` is refused before any request. This stops a process that can only reach the local API;
   it is **not a boundary against a worker**: while workers run unsandboxed as the daemon's user, a
   worker can read the file.
 - Runners work in a worktree or scratch dir, never in your checkout, and only an approval makes
