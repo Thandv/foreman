@@ -88,7 +88,7 @@ What the gate recorded before: only its own test stage, plus timeline lines whil
 At collection (before the gate's own tests touch the jail) the daemon reads `savedOutputs(outputDir, runId)` — the run key matched exactly, so output under `r_1-2` does not count for `r_1` — and writes one `worker-suite` event, a `worker-suite` artifact (its summary is the line, so it shows in `foreman show` and `/api/state`) and a line (on the run's timeline and as that artifact's summary; it is not put in the reviewers' input):
 
 - `worker suite: PASSED|FAILED at <time> (advisory, written by worker-side code)`, read from the `.result` file the wrapper writes beside the output once the suite has ended (a run cut short has none and says `no result line`), with `; changed after the worker's suite` when a file or folder in the jail (not `.git`, not `node_modules`) has a newer mtime than the last saved output (a folder's changes when a file in it is deleted or renamed);
-- `the worker never ran the suite` when there is no saved output;
+- `the worker never ran the suite` when there is no saved output, or `worker suite: not run (FOREMAN_WORKER_SUITE=targeted)` under that setting, where no run is the policy, not an omission (a run the worker made anyway is reported as above);
 - `worker suite: could not read its saved output (<reason>)` when the output folder cannot be read. Collection goes on.
 
 The line is **advisory** and holds nothing: the output is written by worker-side code in a folder the worker can write, and "changed after" is a file-mtime comparison, so an unsandboxed worker can forge either. The gate's own test stage is the result that counts. The daemon looks in its own temp dir (`os.tmpdir()`), which is the worker's only when they share it.
@@ -204,6 +204,14 @@ it behaves as `tests` and the `claude-code` worker is not sandboxed, so nothing 
 A `claude-code` worker runs the full suite through the slot wrapper,
 `node <foreman>/src/verify/testSlot.ts [-- <cmd>]`, which takes one of the `FOREMAN_MAX_VERIFIES`
 slots from the daemon and runs the command while it holds it.
+
+Under `FOREMAN_WORKER_SUITE=targeted` (default `full`, see [configuration](configuration.md)) the worker's brief
+instead asks it to run only the tests for what it changed, says the gate runs the full suite and its result is the
+one that counts, and names the wrapper as the only route for a full run if it must make one. A `codex-cli` worker,
+which has no wrapper, gets only that first instruction. The policy is advisory, not enforced: the worker's
+`--allowedTools` and `--disallowedTools` are unchanged (`Bash(node --test:*)` and `Bash(npm run:*)` could start a full
+run anyway), so the wrapper stays allowed and a full run the worker still makes takes a verify slot. The gate's own
+test stage is unchanged.
 
 - **One suite run per ticket at a time.** The worker session carries `FOREMAN_RUN_ID` and its proof
   `FOREMAN_RUN_TOKEN` (see [security](security.md)); the wrapper sends both, and the daemon refuses

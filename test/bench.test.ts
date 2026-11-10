@@ -55,8 +55,11 @@ test('the pipeline bench lands every ticket with gate batching on and off, and b
   const runs = out as Array<{
     gateBatch: 'on' | 'off'; tickets: number; landed: number; modelCalls: number; ticketsPerHour: number;
     suiteRunsPerLanded: number; unlanded: unknown[]; dispatchMs: { p50: number }; gateMs: { p50: number }; landingMs: { p50: number };
+    workerSuite: string; workerLeasesPerLanded: number;
   }>;
   assert.deepEqual(runs.map((r) => r.gateBatch), ['on', 'off']);
+  // The default, FOREMAN_WORKER_SUITE=full: each worker runs the suite once through the slot wrapper, which leases a slot.
+  for (const r of runs) assert.deepEqual([r.workerSuite, r.workerLeasesPerLanded], ['full', 1], `${r.gateBatch}: worker leases`);
   for (const r of runs) {
     assert.equal(r.landed, 3, `${r.gateBatch}: every ticket landed; not landed: ${JSON.stringify(r.unlanded)}`);
     assert.ok(r.ticketsPerHour > 0);
@@ -67,6 +70,17 @@ test('the pipeline bench lands every ticket with gate batching on and off, and b
   const [on, off] = runs as [(typeof runs)[0], (typeof runs)[0]];
   assert.equal(off.modelCalls, 3, 'batching off: one owner-gate call per ticket');
   assert.ok(on.modelCalls < off.modelCalls, `batching on made ${on.modelCalls} calls`);
+});
+
+test('under FOREMAN_WORKER_SUITE=targeted the pipeline bench\'s workers take no verify slot, and every ticket still lands', async () => {
+  const out = await bench('pipeline.ts', ['--tickets', '2', '--suite-ms', '10', '--model-ms', '10', '--worker-suite', 'targeted']);
+  const runs = out as Array<{ workerSuite: string; tickets: number; landed: number; suiteRunsPerLanded: number; workerLeasesPerLanded: number; unlanded: unknown[] }>;
+  for (const r of runs) {
+    assert.equal(r.workerSuite, 'targeted');
+    assert.equal(r.landed, r.tickets, `every ticket landed; not landed: ${JSON.stringify(r.unlanded)}`);
+    assert.equal(r.workerLeasesPerLanded, 0, 'a worker that follows the targeted brief never runs the wrapper');
+    assert.ok(r.suiteRunsPerLanded >= 2, 'the gate still runs the suite on every ticket');
+  }
 });
 
 test('the pipeline bench waits for the owner gate to finish a landing before it counts the ticket', () => {

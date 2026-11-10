@@ -20,10 +20,10 @@ For each size it seeds a temp ledger file through the `Store` API: one running t
 ## Pipeline: `scripts/bench/pipeline.ts`
 
 ```
-node scripts/bench/pipeline.ts [--tickets 20] [--workers 4] [--suite-ms 500] [--model-ms 2000]
+node scripts/bench/pipeline.ts [--tickets 20] [--workers 4] [--suite-ms 500] [--model-ms 2000] [--worker-suite full|targeted]
 ```
 
-One epic of `--tickets` tickets, run twice: with `FOREMAN_GATE_BATCH` on, then off. Each ticket is a shell worker that writes its own file in a real temp git repo, so every ticket lands without a conflict. The ticket's test command is the fake suite: it counts itself and sleeps `--suite-ms`; it runs as the ticket's own check and as the post-merge check on main. A fake `claude` (through `FOREMAN_CLAUDE_BIN`) waits `--model-ms` and then passes every review and approves every ticket the owner gate asks about, one at a time or in a batch. The bench's playbook has one reviewer and the owner gate deciding, with `FOREMAN_CREW_REVIEW=always`, because the gate signs off only work with a review verdict. The scheduler runs at its default tick.
+One epic of `--tickets` tickets, run twice: with `FOREMAN_GATE_BATCH` on, then off. Each ticket is a shell worker that writes its own file in a real temp git repo, so every ticket lands without a conflict. The ticket's test command is the fake suite: it counts itself and sleeps `--suite-ms`; it runs as the ticket's own check and as the post-merge check on main. A fake `claude` (through `FOREMAN_CLAUDE_BIN`) waits `--model-ms` and then passes every review and approves every ticket the owner gate asks about, one at a time or in a batch. The bench's playbook has one reviewer and the owner gate deciding, with `FOREMAN_CREW_REVIEW=always`, because the gate signs off only work with a review verdict. The scheduler runs at its default tick. Each worker follows its brief under `FOREMAN_WORKER_SUITE` (`--worker-suite`, default `full`): under `full` it runs a stand-in suite (it sleeps `--suite-ms` and counts nothing) once through the slot wrapper against the bench's own server, under `targeted` it does not.
 
 It reports, per run, from the ledger:
 
@@ -34,6 +34,7 @@ It reports, per run, from the ledger:
 | gate | parked at the gate → merged (the owner model's call, the wait for the repo's merge section, the merge; the approve decision row) |
 | landing | merged → its post-merge check passing, which releases dependents (the owner gate logs its approval then) |
 | suite runs/landed | fake suite runs (own checks, post-merge checks, re-runs) per landed ticket |
+| worker leases/landed | verify slots the workers' own wrapper runs were granted, per landed ticket; not in suite runs |
 | gate/review calls | owner-gate calls (a batch is one) and reviewer calls the fake model answered |
 
 A ticket counts as landed once the owner gate has logged its approval, the approval's decision row records that it merged, and the ticket's landing has settled. The post-merge check can end the landing hold before the approval's decision row and the gate's verdict are written (both wait on git after the merge), so the bench waits for the verdict rather than for the hold. Tickets get the default two attempts, so a transient failure retries as it would in production. A ticket that does not land is listed under `unlanded` in `--json` output, with its status, the gate's marker and the end of its last events (a failed git command's message ends with git's error).
@@ -66,8 +67,18 @@ Pipeline, 20 tickets, 4 workers, a 500 ms suite and a 2 s model, ms:
 | on | 20/20 | 5/20 | 1,969 | 2,068/4,599 | 14,826/26,173 | 623/625 | 2 |
 | off | 20/20 | 20/20 | 1,053 | 2,031/4,241 | 29,824/53,839 | 620/623 | 2 |
 
+The table above was measured before the bench's workers ran the wrapper, which is the same as `--worker-suite targeted` today. One later pair at the same sizes, on a machine that was not idle, both modes landing 20/20 with the same gate/review calls and 2 suite runs per landed ticket:
+
+| Worker suite | Gate batch | Tickets/h | Dispatch p50/p90 | Worker leases/landed |
+| --- | --- | --- | --- | --- |
+| full | on | 1,850 | 4,335/9,281 | 1 |
+| full | off | 1,019 | 4,254/9,145 | 1 |
+| targeted | on | 1,950 | 2,080/4,706 | 0 |
+| targeted | off | 1,052 | 2,063/4,246 | 0 |
+
 What they say:
 
 - `claimable` and `record` do not grow with the ledger. `reconcileBlocked` grows with the number of blocked tasks (one dependency query each) and the snapshot with every task not archived: at 100k tasks a board poll costs about 1.6 s of the daemon's one thread. Archiving closed work is what keeps the snapshot small.
 - With one model call per ticket, the owner gate is the pipeline's bottleneck: tickets queue behind each other's calls. Batching cut the gate's calls from 20 to 5 and its p50 wait in half, and nearly doubled throughput. Dispatch and landing do not depend on it.
 - Every landed ticket ran the suite twice, its own check and one post-merge check: no re-runs, no coalescing.
+- A worker's own run through the wrapper takes one of the verify slots the gate's runs use. Under `full` each worker held one for a suite's length before it finished, and dispatch p50 roughly doubled; under `targeted` the workers took none and the gate's runs per ticket did not change.

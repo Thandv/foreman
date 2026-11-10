@@ -1,7 +1,10 @@
 import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shellBrief } from '../src/scheduler.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { config, effectiveConfig } from '../src/config.ts';
+import { shellBrief, TARGETED_BRIEF } from '../src/scheduler.ts';
 import { testSlotCommand, workerShellAllowlist, workerShellDenylist } from '../src/runners/cliRunners.ts';
 import { readWorkerSuite } from '../src/verify/workerSuite.ts';
 
@@ -44,3 +47,58 @@ for (const testCmd of ['npm run verify', null]) {
     assert.equal(readWorkerSuite(scratchDir('foreman-wsp-'), 'r_1', null).line, NONE_LINE);
   });
 }
+
+function targeted(t: test.TestContext): void {
+  process.env['FOREMAN_WORKER_SUITE'] = 'targeted';
+  t.after(() => delete process.env['FOREMAN_WORKER_SUITE']);
+}
+
+for (const testCmd of ['npm run verify', null]) {
+  test(`targeted: the same tools, a brief for targeted runs only, and the policy on the worker-suite line (testCmd ${testCmd})`, (t) => {
+    targeted(t);
+    assert.equal(config.workerSuite, 'targeted');
+    // Advisory: the wrapper stays allowed, so a full run the worker still makes takes a verify slot.
+    assert.deepEqual(workerShellAllowlist({ testCmd }), ALLOWED);
+    assert.deepEqual(workerShellDenylist({ testCmd }), DENIED);
+    const brief = shellBrief({ runner: 'claude-code', testCmd });
+    assert.ok(brief.includes(TARGETED_BRIEF), 'targeted runs only, and the gate runs the full suite');
+    assert.ok(brief.includes(`Only if you must run the whole suite, use \`${W}\``), 'the wrapper is the only route for a full run');
+    assert.ok(brief.includes('use the wrapper: npm test, npm t, npm run test, npm run verify. '));
+    assert.doesNotMatch(brief, /Run the suite yourself before you finish|ONCE, alone, at the end|Run the FULL test suite/);
+    assert.ok(brief.startsWith(BRIEF.slice(0, BRIEF.indexOf('Run the FULL'))), 'what runs without approval is unchanged');
+    assert.ok(brief.endsWith(BRIEF.slice(BRIEF.indexOf('Acceptance items'))), 'the operator line is unchanged');
+    assert.equal(shellBrief({ runner: 'codex-cli', testCmd }), `\n---\nTESTS: ${TARGETED_BRIEF}`, 'codex: the brief only');
+    for (const runner of ['api', 'shell', 'echo'] as const) assert.equal(shellBrief({ runner, testCmd }), '');
+    assert.equal(readWorkerSuite(null, 'r_1', null).line, 'worker suite: not run (FOREMAN_WORKER_SUITE=targeted)');
+  });
+}
+
+test('targeted: a worker run through the wrapper that did happen is reported as before', (t) => {
+  targeted(t);
+  const out = scratchDir('foreman-wsp-');
+  const log = path.join(out, 'r_1-1-1.log');
+  fs.writeFileSync(log, 'some output\n');
+  fs.writeFileSync(log.replace(/\.log$/, '.result'), 'testSlot: npm test PASSED\n');
+  assert.match(readWorkerSuite(out, 'r_1', null).line, /^worker suite: PASSED at .* \(advisory, written by worker-side code\)$/);
+});
+
+test('targeted without the wrapper allowed: targeted runs, in the foreground', (t) => {
+  targeted(t);
+  process.env['FOREMAN_CLAUDE_ALLOWED_TOOLS'] = 'Bash(make:*)';
+  t.after(() => delete process.env['FOREMAN_CLAUDE_ALLOWED_TOOLS']);
+  const brief = shellBrief({ runner: 'claude-code', testCmd: 'make test' });
+  assert.ok(brief.includes(`${TARGETED_BRIEF}Run them in the foreground before you finish. `));
+  assert.doesNotMatch(brief, /wrapper/);
+});
+
+test('FOREMAN_WORKER_SUITE: anything but targeted is full, and config --effective lists it', (t) => {
+  t.after(() => delete process.env['FOREMAN_WORKER_SUITE']);
+  for (const [raw, want] of [[' Targeted ', 'targeted'], ['full', 'full'], ['', 'full'], ['bogus', 'full']] as const) {
+    process.env['FOREMAN_WORKER_SUITE'] = raw;
+    assert.equal(config.workerSuite, want, JSON.stringify(raw));
+  }
+  delete process.env['FOREMAN_WORKER_SUITE'];
+  assert.deepEqual(effectiveConfig().knobs.find((k) => k.name === 'FOREMAN_WORKER_SUITE'), { name: 'FOREMAN_WORKER_SUITE', value: 'full', source: 'default' });
+  process.env['FOREMAN_WORKER_SUITE'] = 'targeted';
+  assert.deepEqual(effectiveConfig().knobs.find((k) => k.name === 'FOREMAN_WORKER_SUITE'), { name: 'FOREMAN_WORKER_SUITE', value: 'targeted', source: 'env' });
+});

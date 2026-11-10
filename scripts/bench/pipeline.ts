@@ -1,12 +1,19 @@
 // The whole pipeline under load, with nothing real behind it: shell workers that each write one file, a real temp git
 // repo they land in, a fake test suite and a fake owner model. Reports tickets/h, dispatch, gate and landing latency,
-// and suite runs per landed ticket, once with FOREMAN_GATE_BATCH on and once off.
-// Usage: node scripts/bench/pipeline.ts [--tickets 20] [--workers 4] [--suite-ms 500] [--model-ms 2000] [--json]
+// and suite runs per landed ticket, once with FOREMAN_GATE_BATCH on and once off. Each worker follows its brief under
+// FOREMAN_WORKER_SUITE (--worker-suite): under full it runs the suite once through the slot wrapper, under targeted it
+// does not; the slots its wrapper was granted are counted apart from the gate's suite runs.
+// Usage: node scripts/bench/pipeline.ts [--tickets 20] [--workers 4] [--suite-ms 500] [--model-ms 2000]
+//   [--worker-suite full|targeted] [--json]
 // Not part of npm run verify (too slow); docs/capacity.md holds the numbers it printed and how to read them.
 import { scratch, options, count } from './env.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import type { AddressInfo } from 'node:net';
+import { config } from '../../src/config.ts';
+import { testSlotCommand } from '../../src/runners/cliRunners.ts';
+import { createServer } from '../../src/server.ts';
 import { percentile } from '../../src/latency.ts';
 import { Store } from '../../src/queue.ts';
 import { Scheduler } from '../../src/scheduler.ts';
@@ -16,6 +23,7 @@ interface Spread { p50: number; p90: number; max: number }
 
 export interface PipelineResult {
   gateBatch: 'on' | 'off';
+  workerSuite: 'full' | 'targeted';
   tickets: number;
   landed: number;
   /** Owner-gate calls the fake model answered (a batch is one call). */
@@ -32,6 +40,8 @@ export interface PipelineResult {
   landingMs: Spread;
   /** Fake suite runs (the ticket's own check, post-merge checks, re-runs) per landed ticket. */
   suiteRunsPerLanded: number;
+  /** Verify slots the workers' own suite runs (the slot wrapper) were granted, per landed ticket; not in suiteRunsPerLanded. */
+  workerLeasesPerLanded: number;
   /** Each ticket that did not land: its status, the owner gate's marker and its last events, to say why. */
   unlanded: Array<ReturnType<typeof whyNotLanded>>;
 }
@@ -104,6 +114,19 @@ function playbooks(): string {
   return dir;
 }
 
+/**
+ * A bench worker that follows its brief: it writes its file, and under FOREMAN_WORKER_SUITE=full runs the suite once
+ * through the slot wrapper against this process's daemon, counting the run in `leases` only when the wrapper says it
+ * was granted a slot. Its suite is a stand-in that takes suiteMs and counts nothing; the gate's runs count themselves.
+ */
+function workerCommand(i: number, o: { port: number; tmp: string; leases: string; suiteMs: number }): string {
+  const write = `printf '${i}\\n' > ticket-${i}.txt`;
+  if (config.workerSuite === 'targeted') return write;
+  const env = `FOREMAN_PORT=${o.port} TMPDIR='${o.tmp}' FOREMAN_WORKER_TEST_CMD='sleep ${o.suiteMs / 1000}'`;
+  const granted = `$(${env} ${testSlotCommand()} 2>&1 | grep -c '^testSlot: slot held')`;
+  return `${write} && if [ "${granted}" = 1 ]; then printf 'x\\n' >> '${o.leases}'; fi`;
+}
+
 /** The lines of `file` equal to `line`, or every non-empty line; 0 when there is no file. */
 const lines = (file: string, line?: string): number => (fs.existsSync(file)
   ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => (line === undefined ? l !== '' : l === line)).length
@@ -113,6 +136,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
   const dir = scratch(`run-${gateBatch}`);
   const calls = path.join(dir, 'model-calls');
   const suiteRuns = path.join(dir, 'suite-runs');
+  const workerLeases = path.join(dir, 'worker-leases');
   process.env['FOREMAN_CLAUDE_BIN'] = fakeModel(o.modelMs, calls);
   process.env['FOREMAN_GATE_BATCH'] = gateBatch;
   const repo = gitRepo();
@@ -121,10 +145,14 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
   const suite = `printf 'x\\n' >> '${suiteRuns}'; sleep ${o.suiteMs / 1000}`;
   const store = new Store(path.join(dir, 'foreman.db'));
   const sched = new Scheduler(store, { maxWorkers: o.workers });
+  // The daemon a worker's slot wrapper leases its test slot from.
+  const server = createServer(store, sched);
   try {
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const worker = { port: (server.address() as AddressInfo).port, tmp: scratch('worker-tmp'), leases: workerLeases, suiteMs: o.suiteMs };
     const epic = store.addTask({ title: 'bench epic', prompt: 'bench', runner: 'shell', isEpic: true, playbook: 'bench' });
     const ids = Array.from({ length: o.tickets }, (_, i) => store.addTask({
-      title: `bench ticket ${i}`, prompt: `printf '${i}\\n' > ticket-${i}.txt`, kind: 'code', runner: 'shell',
+      title: `bench ticket ${i}`, prompt: workerCommand(i, worker), kind: 'code', runner: 'shell',
       repo, testCmd: suite, parentId: epic.id, playbook: 'bench', role: 'dev',
     }).id);
     sched.start();
@@ -161,6 +189,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
     }
     return {
       gateBatch,
+      workerSuite: config.workerSuite,
       tickets: o.tickets,
       landed,
       modelCalls: lines(calls, 'gate'),
@@ -169,16 +198,25 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
       dispatchMs: spread(dispatch),
       gateMs: spread(gate),
       landingMs: spread(landing),
-      suiteRunsPerLanded: landed ? Math.round((lines(suiteRuns) / landed) * 100) / 100 : 0,
+      suiteRunsPerLanded: perLanded(lines(suiteRuns), landed),
+      workerLeasesPerLanded: perLanded(lines(workerLeases), landed),
       unlanded,
     };
   } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
     await sched.stop();
     store.close();
   }
 }
 
-const { values, json } = options({ tickets: '20', workers: '4', 'suite-ms': '500', 'model-ms': '2000' });
+const perLanded = (n: number, landed: number): number => (landed ? Math.round((n / landed) * 100) / 100 : 0);
+
+const { values, json } = options({ tickets: '20', workers: '4', 'suite-ms': '500', 'model-ms': '2000', 'worker-suite': 'full' });
+if (values['worker-suite'] !== 'full' && values['worker-suite'] !== 'targeted') {
+  throw new Error(`--worker-suite must be full or targeted, got ${JSON.stringify(values['worker-suite'])}`);
+}
+process.env['FOREMAN_WORKER_SUITE'] = values['worker-suite'];
 const o = {
   tickets: count('tickets', values.tickets),
   workers: count('workers', values.workers),
@@ -192,12 +230,12 @@ for (const batch of ['on', 'off'] as const) results.push(await runOnce(batch, o)
 if (json) {
   console.log(JSON.stringify(results));
 } else {
-  console.log(`${o.tickets} tickets, ${o.workers} workers, suite ${o.suiteMs} ms, owner model ${o.modelMs} ms`);
-  console.log('gate batch\tlanded\tgate/review calls\ttickets/h\tdispatch p50/p90 ms\tgate p50/p90 ms\tlanding p50/p90 ms\tsuite runs/landed');
+  console.log(`${o.tickets} tickets, ${o.workers} workers, suite ${o.suiteMs} ms, owner model ${o.modelMs} ms, worker suite ${config.workerSuite}`);
+  console.log('gate batch\tlanded\tgate/review calls\ttickets/h\tdispatch p50/p90 ms\tgate p50/p90 ms\tlanding p50/p90 ms\tsuite runs/landed\tworker leases/landed');
   for (const r of results) {
     console.log([
       r.gateBatch, `${r.landed}/${r.tickets}`, `${r.modelCalls}/${r.reviewCalls}`, r.ticketsPerHour, `${r.dispatchMs.p50}/${r.dispatchMs.p90}`,
-      `${r.gateMs.p50}/${r.gateMs.p90}`, `${r.landingMs.p50}/${r.landingMs.p90}`, r.suiteRunsPerLanded,
+      `${r.gateMs.p50}/${r.gateMs.p90}`, `${r.landingMs.p50}/${r.landingMs.p90}`, r.suiteRunsPerLanded, r.workerLeasesPerLanded,
     ].join('\t'));
   }
 }

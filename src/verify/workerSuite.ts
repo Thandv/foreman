@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { config } from '../config.ts';
 import { OUTPUT_DIR_NAME, resultFileFor, savedOutputs } from './suiteOutput.ts';
 import type { Store } from '../queue.ts';
 import type { Run } from '../types.ts';
@@ -98,7 +99,9 @@ export function outcomeOfLog(file: string): 'PASSED' | 'FAILED' | null {
 
 /** Never throws: a read error is a result with a visible line. */
 export function readWorkerSuite(outDir: string | null, runId: string, jailDir: string | null): WorkerSuiteResult {
-  const none: WorkerSuiteResult = { version: 1, status: 'none', at: null, log: null, changedAfter: false, line: 'the worker never ran the suite' };
+  // Under FOREMAN_WORKER_SUITE=targeted no run is the policy, not an omission; a run that did happen reads as below.
+  const noRun = config.workerSuite === 'targeted' ? 'worker suite: not run (FOREMAN_WORKER_SUITE=targeted)' : 'the worker never ran the suite';
+  const none: WorkerSuiteResult = { version: 1, status: 'none', at: null, log: null, changedAfter: false, line: noRun };
   try {
     if (!outDir) return none;
     try {

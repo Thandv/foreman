@@ -219,6 +219,15 @@ export const config = {
     const ms = Number(process.env['FOREMAN_SLOT_WAIT_CREDIT_MS']);
     return Number.isFinite(ms) && ms >= 0 ? ms : 30 * 60_000;
   },
+  /**
+   * Who runs the full test suite on a code ticket (src/scheduler.ts shellBrief): `full`, the default, has the worker
+   * run it once through the slot wrapper before it finishes; `targeted` tells the worker to run only the tests for
+   * what it changed and leave the full suite to the gate, whose run is the one that counts. Advisory: the worker's
+   * tools are the same either way. Anything but `targeted` (any case, spaces trimmed) is `full`.
+   */
+  get workerSuite(): 'full' | 'targeted' {
+    return (process.env['FOREMAN_WORKER_SUITE'] ?? '').trim().toLowerCase() === 'targeted' ? 'targeted' : 'full';
+  },
   /** Step delay of the echo runner (src/runners/echo.ts), the demo/self-test worker. */
   get echoStepMs(): number {
     return Number(process.env['FOREMAN_ECHO_STEP_MS'] ?? 900);
@@ -278,6 +287,7 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   postMergeCheck: 'FOREMAN_POSTMERGE_CHECK',
   limitBackoffMs: 'FOREMAN_LIMIT_BACKOFF_MS',
   slotWaitCreditMs: 'FOREMAN_SLOT_WAIT_CREDIT_MS',
+  workerSuite: 'FOREMAN_WORKER_SUITE',
   echoStepMs: 'FOREMAN_ECHO_STEP_MS',
   leftoverSampleMs: 'FOREMAN_LEFTOVER_SAMPLE_MS',
 };

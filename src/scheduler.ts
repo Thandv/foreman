@@ -357,6 +357,11 @@ export const SUITE_ONCE_BRIEF =
   'iterating use `node --test <one file>`. The wrapper saves the full output to a file and prints its path on its ' +
   'last line: to see more of a run, read that file (or run the wrapper with `--saved`), do not run the suite again. ';
 
+/** FOREMAN_WORKER_SUITE=targeted (docs/configuration.md): the worker leaves the full suite to the gate. */
+export const TARGETED_BRIEF =
+  'Run only the tests for what you changed — the test files you added or touched — and do not run the whole suite: ' +
+  "Foreman's gate runs the full suite on this ticket, and its result is the one that counts. ";
+
 /**
  * What the headless worker may run, said up front. A worker that is not told
  * spends its turns discovering the allowlist one refusal at a time: on an
@@ -364,6 +369,9 @@ export const SUITE_ONCE_BRIEF =
  * turn, was refused each time, and delivered nothing.
  */
 export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
+  const targeted = config.workerSuite === 'targeted';
+  // codex has no slot wrapper and no shell brief: under `targeted` it is told the policy, and nothing else.
+  if (task.runner === 'codex-cli') return targeted ? `\n---\nTESTS: ${TARGETED_BRIEF}` : '';
   if (task.runner !== 'claude-code') return '';
   const allowed = workerShellAllowlist(task).slice(1);
   if (!allowed.length) return '';
@@ -374,15 +382,26 @@ export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
   const wrapper = testSlotCommand();
   // The full suite goes through the slot wrapper, in the foreground: 48 runs ended their turn with
   // `npm run verify` "still running in the background", and 26 of those failed review unconfirmed.
-  const suite = allowed.some((t) => asCmd(t) === wrapper)
-    ? `Run the FULL test suite only as \`${wrapper}\` (it waits for a shared test slot, runs this ticket's ` +
-      'test command and exits with its result; append `-- npm run <script>` for another suite script). Run it in the ' +
-      'FOREGROUND with the longest Bash timeout: never with run_in_background, and never end your turn while a test ' +
-      'run is still going. A single targeted test file may be run directly with `node --test <file>`. ' +
-      (denied.length ? `These are refused when run directly — use the wrapper: ${denied.join(', ')}. ` : '') +
-      SUITE_ONCE_BRIEF +
-      'Run the suite yourself before you finish and report its result. '
-    : 'Run the test command yourself, in the foreground, before you finish. ';
+  const refused = denied.length ? `These are refused when run directly — use the wrapper: ${denied.join(', ')}. ` : '';
+  const hasWrapper = allowed.some((t) => asCmd(t) === wrapper);
+  // FOREMAN_WORKER_SUITE=targeted is advisory: the tools are the same, and a full run the worker still makes goes
+  // through the wrapper, so it counts against the verify-slot cap.
+  const suite = targeted
+    ? hasWrapper
+      ? TARGETED_BRIEF + 'A single test file may be run directly with `node --test <file>`. Only if you must run the ' +
+        `whole suite, use \`${wrapper}\` (it waits for a shared test slot, runs this ticket's test command and exits ` +
+        'with its result), once, in the FOREGROUND with the longest Bash timeout, never with run_in_background. ' +
+        refused + 'Report which tests you ran and their result. '
+      : `${TARGETED_BRIEF}Run them in the foreground before you finish. `
+    : hasWrapper
+      ? `Run the FULL test suite only as \`${wrapper}\` (it waits for a shared test slot, runs this ticket's ` +
+        'test command and exits with its result; append `-- npm run <script>` for another suite script). Run it in the ' +
+        'FOREGROUND with the longest Bash timeout: never with run_in_background, and never end your turn while a test ' +
+        'run is still going. A single targeted test file may be run directly with `node --test <file>`. ' +
+        refused +
+        SUITE_ONCE_BRIEF +
+        'Run the suite yourself before you finish and report its result. '
+      : 'Run the test command yourself, in the foreground, before you finish. ';
   return (
     '\n---\nSHELL: this session is headless and nobody can approve a command. These run without ' +
     `approval: ${cmds} (plus read-only inspection). Anything else — a bare interpreter, compiler or ` +

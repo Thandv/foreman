@@ -5,7 +5,7 @@ fails when a variable is read and has no row, or has a row and is never read. "U
 environment. Leave a variable unset rather than empty or wrong. A number read in `src/config.ts` keeps its default when
 empty, and a value that is not a number throws, except the settings it reads on each call for one module: those never
 throw. A value they cannot use keeps the default (`FOREMAN_ASSIGNEE`, `FOREMAN_MIN_FREE_MB`, `FOREMAN_GIT_TIMEOUT_MS`,
-`FOREMAN_LIMIT_BACKOFF_MS`, `FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`), and an empty
+`FOREMAN_LIMIT_BACKOFF_MS`, `FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`, `FOREMAN_WORKER_SUITE`), and an empty
 `FOREMAN_SLOT_WAIT_CREDIT_MS` or `FOREMAN_LEFTOVER_SAMPLE_MS` reads as 0. The numbers read in `budget.ts` and the slot code check the parsed
 value and keep the default. A reader written as `value ?? default` uses an empty value as it is: an empty path or URL
 stays empty (for example `FOREMAN_TOOLS_DIR`, `FOREMAN_OLLAMA_URL`), an empty number reads as 0, and a value that is
@@ -38,6 +38,7 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_MAX_VERIFIES` | `2` | Cap on test commands running at once, FIFO across all tasks: gate checks, playbook checks, the post-merge main check and its re-run, and a worker's full-suite run through the slot wrapper (`src/verify/testSlot.ts`, which leases a slot from the daemon). A single-file `node --test` a worker runs directly takes no slot | `src/verify/slots.ts` |
 | `FOREMAN_SLOT_WAIT_MS` | `600000` (10 min) | How long the slot wrapper waits for a slot before giving up | `src/verify/testSlot.ts` |
 | `FOREMAN_SLOT_WAIT_CREDIT_MS` | `1800000` (30 min) | How much of a worker's own wait for a test slot is not charged to its run clock | `src/config.ts` |
+| `FOREMAN_WORKER_SUITE` | `full` | Who runs a code ticket's full suite. `full`: the worker runs it once through the slot wrapper before it finishes. `targeted`: the worker's brief asks it to run only the tests for what it changed and says the gate runs the full suite, whose result is the one that counts; the worker-suite line then reads `worker suite: not run (FOREMAN_WORKER_SUITE=targeted)`. Advisory: the worker's tools are the same either way, so a full run it still makes goes through the wrapper and takes a slot. Anything but `targeted` is `full`. See [lifecycle](lifecycle.md) | `src/config.ts` |
 | `FOREMAN_TASK_TIMEOUT_MS` | `1800000` (30 min); `5400000` (90 min) on the local plane | Hard ceiling on one run's wall clock; the local default applies under local-only mode or the cloud fallback | `src/config.ts` |
 | `FOREMAN_TEST_TIMEOUT_MIN` | `30` | Minutes before a test command Foreman runs is killed | `src/verify/tests.ts` |
 | `FOREMAN_TEST_REAL_HOME` | unset | `1` runs test commands with the real home instead of a private one; refused while the sandbox is on | `src/verify/tests.ts` |
