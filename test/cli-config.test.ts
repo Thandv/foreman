@@ -44,3 +44,14 @@ test('no knob whose value config --effective prints is a secret', async () => {
   assert.ok(knobs.length > 0);
   for (const k of knobs) assert.doesNotMatch(k.name, /_(KEY|TOKEN|SECRET|PASSWORD)$/, `${k.name} would be printed; redact it first`);
 });
+
+test('with no landing.json, config --effective prints the knob table and the names line, and nothing else', async () => {
+  const { effectiveConfig } = await import('../src/config.ts');
+  const { knobs } = effectiveConfig();
+  const r = run(['config', '--effective'], {});
+  assert.equal(r.code, 0, r.stderr);
+  const lines = r.stdout.trimEnd().split('\n');
+  assert.equal(lines.length, knobs.length + 1, r.stdout);
+  knobs.forEach((k, i) => assert.deepEqual(lines[i]!.split(/\s{2,}/), [k.name, k.value, k.source], lines[i]));
+  assert.match(lines.at(-1)!, /^\d+ other FOREMAN_\* names are read in place \(not shown\)/);
+});
