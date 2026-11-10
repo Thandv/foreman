@@ -360,7 +360,8 @@ export const SUITE_ONCE_BRIEF =
 /** FOREMAN_WORKER_SUITE=targeted (docs/configuration.md): the worker leaves the full suite to the gate. */
 export const TARGETED_BRIEF =
   'Run only the tests for what you changed — the test files you added or touched — and do not run the whole suite: ' +
-  "Foreman's gate runs the full suite on this ticket, and its result is the one that counts. ";
+  "Foreman's gate runs the full suite on this ticket, and its result is the one that counts. " +
+  'This replaces any instruction above to run the full suite yourself. ';
 
 /**
  * What the headless worker may run, said up front. A worker that is not told

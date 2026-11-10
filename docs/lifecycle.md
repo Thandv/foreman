@@ -207,8 +207,9 @@ slots from the daemon and runs the command while it holds it.
 
 Under `FOREMAN_WORKER_SUITE=targeted` (default `full`, see [configuration](configuration.md)) the worker's brief
 instead asks it to run only the tests for what it changed, says the gate runs the full suite and its result is the
-one that counts, and names the wrapper as the only route for a full run if it must make one. A `codex-cli` worker,
-which has no wrapper, gets only that first instruction. The policy is advisory, not enforced: the worker's
+one that counts, says this replaces any full-suite step in the role's prompt above it (the software playbook's dev
+and qa roles say to run the suite once), and names the wrapper as the only route for a full run if it must make one.
+A `codex-cli` worker, which has no wrapper, gets all of that but the wrapper route. The policy is advisory, not enforced: the worker's
 `--allowedTools` and `--disallowedTools` are unchanged (`Bash(node --test:*)` and `Bash(npm run:*)` could start a full
 run anyway), so the wrapper stays allowed and a full run the worker still makes takes a verify slot. The gate's own
 test stage is unchanged.
