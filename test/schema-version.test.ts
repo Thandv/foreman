@@ -184,3 +184,80 @@ test('any opener creates a brand-new ledger, including an empty file already on 
   assert.equal(userVersion(empty), SCHEMA_VERSION);
   assert.ok(hasColumn(empty, 'tasks', 'repair_notes'));
 });
+
+/** The tables a version-1 ledger has; any table a later version adds is dropped to rebuild one. */
+const V1_TABLES = new Set([
+  'tasks', 'task_deps', 'runs', 'events', 'artifacts', 'verdicts', 'receipts', 'memory', 'council_cache',
+  'crew_review_cache', 'schedules', 'settings', 'red_repos', 'landings', 'shadow_verdicts', 'archive', 'decisions',
+  'daemon_starts',
+]);
+/** Columns a later version added to a version-1 table (a column on a later table goes with its table). */
+const ADDED_SINCE_V1: Array<[table: string, column: string]> = [['tasks', 'awaiting_since']];
+
+function tableNames(db: DatabaseSync): string[] {
+  return (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
+    .map((r) => r.name);
+}
+
+/** Every row of every table, by rowid, as the columns it has now: what "byte-identical" is compared on. */
+function rowsOf(db: DatabaseSync): Record<string, Array<Record<string, unknown>>> {
+  const out: Record<string, Array<Record<string, unknown>>> = {};
+  for (const name of tableNames(db)) {
+    out[name] = (db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all() as Array<Record<string, unknown>>).map((row) => ({ ...row }));
+  }
+  return out;
+}
+
+/** A version-1 ledger holding a task, a decision and a receipt: today's ledger less what later versions added. */
+function v1Ledger(dbPath: string): void {
+  const store = new Store(dbPath);
+  const task = store.addTask({ title: 'from v1', prompt: 'x' });
+  store.addDecision({ taskId: task.id, action: 'approve', note: 'kept as it was' });
+  store.addReceipt({ taskId: task.id, kind: 'chat', provider: 'test', model: 'm', local: true, tokensIn: 3, costUsd: 0.25 });
+  store.close();
+  const db = new DatabaseSync(dbPath);
+  for (const name of tableNames(db)) if (!V1_TABLES.has(name)) db.exec(`DROP TABLE ${name}`);
+  for (const [table, column] of ADDED_SINCE_V1) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  db.exec('PRAGMA user_version = 1');
+  db.close();
+}
+
+test('a version-1 ledger: refused by a non-serve opener, then migrated by serve twice with every row unchanged', (t) => {
+  const home = scratch(t);
+  const dbPath = path.join(home, 'foreman.db');
+  v1Ledger(dbPath);
+  const before = (() => {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      return rowsOf(db);
+    } finally {
+      db.close();
+    }
+  })();
+  assert.deepEqual(Object.keys(before).sort(), [...V1_TABLES].sort());
+  assert.equal(before['decisions']!.length, 1);
+  assert.equal(before['receipts']!.length, 1);
+
+  assert.throws(() => new Store(dbPath), (err: Error) => err.name === 'OlderSchemaError' && err.message.includes('schema version 1,'));
+
+  new Store(dbPath, { migrate: true }).close();
+  new Store(dbPath, { migrate: true }).close();
+  assert.equal(userVersion(dbPath), SCHEMA_VERSION);
+
+  const db = new DatabaseSync(dbPath);
+  t.after(() => db.close());
+  const after = rowsOf(db);
+  for (const [table, rows] of Object.entries(before)) {
+    const kept = after[table]!.map((row) => Object.fromEntries(Object.keys(rows[0] ?? {}).map((c) => [c, row[c]])));
+    assert.deepEqual(kept, rows, `rows of ${table} changed`);
+  }
+  for (const [table, column] of ADDED_SINCE_V1) assert.ok(hasColumn(dbPath, table, column), `${table}.${column} was not added`);
+
+  const id = String(before['decisions']![0]!['id']);
+  assert.throws(() => db.prepare("UPDATE decisions SET note = 'rewritten' WHERE id = ?").run(id), /append-only: a row is never updated/);
+  assert.throws(() => db.prepare('DELETE FROM decisions WHERE id = ?').run(id), /append-only: a row is never deleted/);
+  assert.throws(
+    () => db.prepare("INSERT OR REPLACE INTO decisions (id, task_id, at, action, actor) VALUES (?, 't_x', 0, 'reject', 'human')").run(id),
+    /append-only: a row is never replaced/,
+  );
+});
