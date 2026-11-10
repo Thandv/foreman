@@ -4,8 +4,9 @@
  * keeps only its hash (tokenAuth.ts). The first mint latches auth on. It works with auth on too, without a bearer,
  * as the lockout recovery path.
  *
- * Every mint records one visible event (Store.mintHostAdminToken). That is the only defence today against the known
- * gap: an unsandboxed worker runs as the daemon's user, can read the secret and is a loopback peer, so it can mint.
+ * Every mint records one event (Store.mintHostAdminToken), seen only on GET /api/events and in the events table: the
+ * board and `foreman watch` do not show it. Known gap: an unsandboxed worker runs as the daemon's user, can read the
+ * secret and is a loopback peer, so it can mint; only the macOS worker sandbox prevents that (docs/security.md).
  */
 import { randomBytes } from 'node:crypto';
 import type http from 'node:http';

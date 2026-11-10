@@ -28,7 +28,10 @@
   `principal-minted` when it made the principal, else `token-minted`, with the name, principal id,
   kind, token id and `hostAdmin: true`, never the secret. **Known gap:** an unsandboxed worker runs as
   the daemon's user, can read `<FOREMAN_HOME>/secrets/host-admin` and is a loopback peer, so it can
-  mint a principal for itself. The event makes that visible; only the macOS worker sandbox prevents it.
+  mint a principal for itself. Only the macOS worker sandbox prevents it. The event records the mint,
+  but it carries no task id, so it is seen only on the raw stream (`GET /api/events`) or in the
+  ledger's events table: neither the board (which shows events only in a task's drawer, and whose API
+  requests, SSE included, get 401 once auth is on) nor `foreman watch` (which shows the task table) shows it yet.
 - `POST /api/verify-slot` takes no bearer token; the run it names counts only with `x-foreman-run-token`
   beside `x-foreman-run`, an HMAC-SHA256 of the run id under a key the daemon draws at start
   (32 random bytes, held in memory, never written to disk; no run outlives its daemon). Workers get
