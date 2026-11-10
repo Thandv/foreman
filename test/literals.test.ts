@@ -70,6 +70,36 @@ test('no claim about a tree that cannot be listed, and none when nothing is dema
   }
 });
 
+test('only readable, small, text, non-ignored source grounds a literal; a tree that cannot be listed yields none', async () => {
+  const dir = repo(
+    {
+      '.gitignore': 'ignored.js\n',
+      'src/real.js': 'const grounded = 1;\n',
+      'src/bin.dat': 'binaryLiteral\0',
+      'src/big.js': `oversizedLiteral${' '.repeat(1024 * 1024)}`,
+      'spec/x.js': 'specLiteral\n',
+      'src/a.spec.ts': 'suffixLiteral\n',
+    },
+    { 'ignored.js': 'ignoredLiteral\n', 'src/fresh.js': 'untrackedLiteral\n' },
+  );
+  // Followed, the link would ground the ignored file's literal; it is skipped as a non-file.
+  fs.symlinkSync(path.join(dir, 'ignored.js'), path.join(dir, 'src', 'link.js'));
+  try {
+    const ask = ['grounded', 'binaryLiteral', 'oversizedLiteral', 'specLiteral', 'suffixLiteral', 'ignoredLiteral', 'untrackedLiteral']
+      .map((l) => `includes('${l}')`)
+      .join(' ');
+    assert.deepEqual(await ungroundedLiterals(ask, dir), ['binaryLiteral', 'oversizedLiteral', 'specLiteral', 'suffixLiteral', 'ignoredLiteral']);
+    const plain = scratchDir('foreman-literals-unlistable-');
+    try {
+      assert.deepEqual(await ungroundedLiterals(ask, plain), []);
+    } finally {
+      fs.rmSync(plain, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the note names each missing string and tells the reviewer it may not fail on it again', () => {
   const note = literalNote(["closest('[data-card]')"]);
   assert.match(note, /^FOREMAN CHECK \(deterministic\)/);
