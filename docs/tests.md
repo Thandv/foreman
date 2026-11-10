@@ -16,6 +16,14 @@ case that falls through), `noImplicitReturns` (a function that returns a value o
 `noImplicitOverride` (an overriding member without `override`). Tickets queued before this landed must rebase
 onto it; a new failure on an unused binding after the rebase is expected, not a regression.
 
+`scripts/forge/fakeGitlab.ts` is a local fake GitLab for the merge-request landing tests and the demo: a `node:http`
+server (no dependencies, no network) over real bare repos, serving the REST v4 subset Foreman uses (project, merge
+requests, merge by `sha`) with GitLab's field names and status codes: 409 on a stale `sha`, 405 while
+`detailed_merge_status` is `checking` or the pipeline is not green, 401 without the token. Import `startFakeGitlab`
+in a test, or run it with `node scripts/forge/fakeGitlab.ts --project group/app=<bare repo>` (token in
+`FAKE_GITLAB_TOKEN`, never printed or logged). `POST /__fake/pipelines/:sha {status}` flips a pipeline.
+`test/fake-gitlab.test.ts` pins it.
+
 Covered: DAG promotion and dependency-failure propagation, exactly-once claim, crash recovery,
 orphaned-process-group reaping on recovery, pid recording over a child's lifetime, the daemon
 pidfile lock (live conflict and stale reclaim), pool concurrency, cancel and timeout aborts,
