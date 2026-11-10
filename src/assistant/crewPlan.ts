@@ -737,7 +737,7 @@ export async function crewPlan(opts: CrewPlanOptions): Promise<CrewPlan> {
     (opts.repo ? `TARGET REPO: ${opts.repo}\n` : '') +
     (opts.revise?.notes.length ? revisionBrief(opts.revise) : '') +
     // Last: it is the largest and least cache-stable part of the prompt.
-    (opts.repo ? `\n${repoBrief(opts.repo, ask)}` : '');
+    (opts.repo ? `\n${await repoBrief(opts.repo, ask)}` : '');
 
   let text: string;
   let costUsd = 0;

@@ -1,6 +1,7 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { redact } from '../align/redact.ts';
 import { PINNED, pinnedEnv } from '../gitExec.ts';
 import { gitTimeoutOpts } from '../gitTimeout.ts';
@@ -25,7 +26,7 @@ const MAX_DOC_BYTES = 16_000;
 const MAX_TOTAL_DOC_BYTES = 40_000;
 const MAX_NAMED_DOCS = 3;
 
-export function repoBrief(repo: string | null | undefined, ask: string): string {
+export async function repoBrief(repo: string | null | undefined, ask: string): Promise<string> {
   if (!repo) return '';
   let root: string;
   try {
@@ -35,7 +36,7 @@ export function repoBrief(repo: string | null | undefined, ask: string): string 
     return '';
   }
 
-  const files = trackedFiles(root);
+  const files = await trackedFiles(root);
   if (!files.length) return '';
 
   const docs: string[] = [];
@@ -65,22 +66,23 @@ export function repoBrief(repo: string | null | undefined, ask: string): string 
  * The tracked files of a tree, listed compactly — for a reviewer that sees only
  * a diff and must not mistake "absent from the diff" for "absent".
  */
-export function trackedListing(dir: string): string {
-  const files = trackedFiles(dir);
+export async function trackedListing(dir: string): Promise<string> {
+  const files = await trackedFiles(dir);
   return files.length ? `FILES ALREADY TRACKED IN THIS TREE (${files.length}):\n${listing(files)}` : '';
 }
 
-function trackedFiles(root: string): string[] {
+const exec = promisify(execFile);
+
+async function trackedFiles(root: string): Promise<string[]> {
   try {
     // Pinned (gitExec.ts): the reviewer's tree is a jail, whose config the worker can write; `ls-files` ran its core.fsmonitor.
-    const raw = execFileSync('git', ['-C', root, ...PINNED, 'ls-files', '-z'], {
+    const { stdout } = await exec('git', ['-C', root, ...PINNED, 'ls-files', '-z'], {
       env: pinnedEnv(),
       encoding: 'utf8',
-      ...gitTimeoutOpts(5_000), // synchronous: it holds the event loop
+      ...gitTimeoutOpts(5_000),
       maxBuffer: 16 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return raw.split('\0').filter(Boolean).sort();
+    return stdout.split('\0').filter(Boolean).sort();
   } catch {
     return [];
   }

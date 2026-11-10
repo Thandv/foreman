@@ -1342,7 +1342,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   }
 
   const acceptance = boundBrief(task.acceptance ?? '', config.acceptanceBytes);
-  const tracked = opts.treeDir ? trackedListing(opts.treeDir) : '';
+  const tracked = opts.treeDir ? await trackedListing(opts.treeDir) : '';
   const judged = judgedItems(task, opts.tests ?? null);
   const extras: ReviewPromptExtras = {
     reportPath: opts.reportPath ?? null,

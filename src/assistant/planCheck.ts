@@ -497,7 +497,7 @@ export async function critiquePlan(
     `TICKETS:\n${JSON.stringify(plan.tickets.map(ticketBrief))}` +
     // The critic judges the plan against the same snapshot the planner saw;
     // without it, it flags committed work as unowned.
-    (plan.repo ? `\n\n${repoBrief(plan.repo, plan.ask)}` : '');
+    (plan.repo ? `\n\n${await repoBrief(plan.repo, plan.ask)}` : '');
   try {
     const { text } = await ownerCall(prompt, {
       sensitivity: opts.sensitivity ?? 'S1',
