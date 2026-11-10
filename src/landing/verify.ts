@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, type PostMergeMode } from '../config.ts';
+import { swallowed } from '../debug.ts';
 import { pinnedGit } from '../gitExec.ts';
 import { checkMain, type MainCheck } from '../postMerge.ts';
 // Type-only: gate.ts value-imports this file, so a value edge back would be a cycle.
@@ -211,6 +212,12 @@ function settle(store: Store, covered: Pending[], answer: (p: Pending) => void):
   }
 }
 
-/** Whether `older` is an ancestor of `newer`; a git that cannot say leaves the landing for a later check. */
+/**
+ * Whether `older` is an ancestor of `newer` (git exits 1 when it is not); a git that cannot say is logged and
+ * leaves the landing for a later check.
+ */
 const isAncestor = (repo: string, older: string, newer: string): Promise<boolean> =>
-  pinnedGit(repo, ['merge-base', '--is-ancestor', older, newer]).then(() => true, () => false);
+  pinnedGit(repo, ['merge-base', '--is-ancestor', older, newer]).then(() => true, (err: { code?: unknown }) => {
+    if (err.code !== 1) swallowed('landing', 'is-ancestor', err);
+    return false;
+  });
