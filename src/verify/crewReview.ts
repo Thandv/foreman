@@ -1421,6 +1421,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
 
     try {
       const res = await ownerCall(prompt, {
+        sensitivity: task.sensitivity,
         signal: opts.signal,
         model,
         maxTurns: REVIEW_MAX_TURNS,
@@ -1618,6 +1619,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
     });
     try {
       const res = await ownerCall(prompt, {
+        sensitivity: task.sensitivity,
         signal: opts.signal,
         model: chairModel,
         maxTurns: 1,

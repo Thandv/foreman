@@ -10,6 +10,7 @@ import {
   type Playbook,
 } from '../playbooks.ts';
 import type { Store } from '../queue.ts';
+import type { Sensitivity } from '../types.ts';
 import { ownerCall } from './ownerCall.ts';
 
 /**
@@ -124,6 +125,8 @@ export interface ForgeOptions {
   /** The original ask, when the forge was triggered by one — context, not scope. */
   ask?: string;
   store: Store;
+  /** The sensitivity of the request that asked for the forge; defaults to the queue's S1. */
+  sensitivity?: Sensitivity;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -326,6 +329,7 @@ export async function forgePlaybook(opts: ForgeOptions): Promise<ForgeResult> {
     (opts.ask ? `The ask that found no playbook: ${opts.ask.trim().slice(0, 2000)}\n` : '');
 
   const { text, costUsd } = await ownerCall(prompt, {
+    sensitivity: opts.sensitivity ?? 'S1',
     signal: opts.signal,
     // One reply, one file — this is a drafting call, not an agent loop.
     maxTurns: 2,

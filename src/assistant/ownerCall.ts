@@ -4,8 +4,9 @@ import { extractJson } from '../models.ts';
 import type { Store } from '../queue.ts';
 import { spawnStreaming } from '../runners/proc.ts';
 import { cloudDown, cloudFallback, localOnly, localOnlyLabel } from '../localOnly.ts';
-import { isAuthFailure, markCloudDown } from '../models.ts';
+import { assertAllowed, isAuthFailure, markCloudDown } from '../models.ts';
 import { tierModel, type Tier } from '../roles.ts';
+import type { Sensitivity } from '../types.ts';
 
 export interface OwnerCallResult {
   text: string;
@@ -25,6 +26,8 @@ export class OwnerCallError extends Error {
 }
 
 export interface OwnerCallOptions {
+  /** The work's sensitivity; S2 is refused before the hosted CLI is spawned. */
+  sensitivity: Sensitivity;
   signal?: AbortSignal;
   /** Hard cap on CLI turns — planning is one shot, not an agent loop. */
   maxTurns?: number;
@@ -69,7 +72,7 @@ export const OWNER_PROVIDER = 'claude-cli';
  * json` makes the whole reply a single result envelope, so this stays a
  * request/response call with no streaming state machine.
  */
-export async function ownerCall(prompt: string, opts: OwnerCallOptions = {}): Promise<OwnerCallResult> {
+export async function ownerCall(prompt: string, opts: OwnerCallOptions): Promise<OwnerCallResult> {
   if (!prompt.trim()) throw new OwnerCallError('spawn', 'prompt cannot be empty');
   // This lane spawns the hosted CLI directly and so never passes through the
   // broker's `assertAllowed` — which is the single choke point everything else
@@ -83,6 +86,10 @@ export async function ownerCall(prompt: string, opts: OwnerCallOptions = {}): Pr
       `${localOnlyLabel()}: the owner CLI is a hosted model and may not be called`,
     );
   }
+  const model = opts.model ?? tierModel(opts.tier ?? 'owner');
+  // The same choke point the broker uses, so S2 never leaves the machine even
+  // when a caller forgot its own check.
+  assertAllowed(opts.sensitivity, { alias: model, provider: OWNER_PROVIDER, local: false });
   // Not a promise being kept but a CLI known not to answer: every caller
   // already degrades on a spawn error (keyword classification, park for a
   // human, the council's verdict), and that beats a 30-second wait to learn it.
@@ -90,7 +97,6 @@ export async function ownerCall(prompt: string, opts: OwnerCallOptions = {}): Pr
     throw new OwnerCallError('spawn', `the Claude CLI is unreachable (${cloudDown()}); not calling it`);
   }
   const bin = process.env['FOREMAN_CLAUDE_BIN'] ?? 'claude';
-  const model = opts.model ?? tierModel(opts.tier ?? 'owner');
   const startedAt = Date.now();
   // Owner spend is real money that never passes through the broker, so it has
   // to be settled here or `spentToday()`/`foreman receipts` under-report it.

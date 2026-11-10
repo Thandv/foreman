@@ -6,7 +6,11 @@ Aliases default to local Ollama models (`local-fast`, `local-general`, `local-re
 
 - **S2 is enforced, not advisory.** A non-local alias throws before the request is built, hosted
   CLI runners are refused at admission, and `nonLocalCallsForTask()` proves after the fact that
-  nothing left the machine.
+  nothing left the machine. The owner CLI lane (`ownerCall`: planner, plan critic, playbook forge,
+  crew reviewers, owner gate) takes the work's sensitivity as a required argument and runs the same
+  `assertAllowed` check before it spawns, so an S2 call throws `SensitivityViolation` and nothing is
+  sent. A batched owner gate counts as the most sensitive ticket in it; planning and the forge
+  default to the queue's `S1`.
 - **Every model call goes through the broker**: reserve against the caps → wait for a provider
   slot → call → settle into a receipt. Runners cannot call models directly.
 - Per-task ceilings (`--budget`) and a daily cap (`FOREMAN_DAILY_USD_CAP`, default $5). A breach

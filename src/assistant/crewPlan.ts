@@ -223,6 +223,7 @@ export async function classifyAsk(
     `\n\nREQUEST: ${ask}`;
   try {
     const { text } = await ownerCall(prompt, {
+      sensitivity: opts.sensitivity ?? 'S1',
       // Picking one of a handful of playbooks is a one-word decision; it does
       // not need the owner tier's most expensive model, and paying for it on
       // every ambiguous ask is spend nobody gets value from.
@@ -742,6 +743,7 @@ export async function crewPlan(opts: CrewPlanOptions): Promise<CrewPlan> {
   let costUsd = 0;
   try {
     const res = await ownerCall(prompt, {
+      sensitivity: opts.sensitivity ?? 'S1',
       signal: opts.signal,
       maxTurns: opts.maxTurns ?? 5,
       timeoutMs: opts.timeoutMs ?? planTimeoutMs(),

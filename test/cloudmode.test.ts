@@ -80,7 +80,7 @@ test('auto: a signed-out CLI reroutes Claude-dependent work locally — and is N
       // Codex is somebody else's CLI: a Claude sign-out must not refuse it.
       const codexReason = await getRunner('codex-cli').preflight(probeTask({ runner: 'codex-cli' }));
       assert.doesNotMatch(String(codexReason), /Claude CLI is unreachable|FOREMAN_LOCAL_ONLY/);
-      await assert.rejects(ownerCall('classify this'), /Claude CLI is unreachable/);
+      await assert.rejects(ownerCall('classify this', { sensitivity: 'S1' }), /Claude CLI is unreachable/);
     });
   } finally {
     fs.rmSync(out.dir, { recursive: true, force: true });
@@ -279,7 +279,7 @@ test('an owner call failing on auth starts the fallback too — the planner, gat
   const expired = fakeCli('{"type":"result","is_error":true,"result":"Invalid API key · Please run /login"}', 1);
   try {
     await withCli(expired.bin, undefined, async () => {
-      await assert.rejects(ownerCall('plan this'));
+      await assert.rejects(ownerCall('plan this', { sensitivity: 'S1' }));
       assert.equal(cloudFallback(), true);
     });
   } finally {

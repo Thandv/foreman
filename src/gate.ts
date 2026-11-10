@@ -20,7 +20,7 @@ import { leftoverMarkers, unmergedPaths } from './isolate.ts';
 import type { Store } from './queue.ts';
 import { registerApprovedTool, type RegisterResult } from './tools/forge.ts';
 import { checkMain, postMergeCheckEnabled, repoHead, type MainCheck } from './postMerge.ts';
-import type { Decision, GateMode, Run, Task } from './types.ts';
+import type { Decision, GateMode, Run, Sensitivity, Task } from './types.ts';
 import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
 import { checkRepo } from './gitTripwire.ts';
@@ -1417,6 +1417,7 @@ export async function ownerGate(opts: OwnerGateOptions): Promise<GateDecision> {
   let text: string;
   try {
     const res = await ownerCall(prompt, {
+      sensitivity: task.sensitivity,
       tier: 'owner',
       store,
       kind: 'gate',
@@ -1530,6 +1531,9 @@ export async function ownerGateBatch(opts: OwnerGateBatchOptions): Promise<Map<s
   let text: string;
   try {
     const res = await ownerCall(prompt, {
+      // One call carries every ticket, so it is as sensitive as the most
+      // sensitive of them ('S0' < 'S1' < 'S2' compare as strings).
+      sensitivity: eligible.reduce<Sensitivity>((top, { task }) => (task.sensitivity > top ? task.sensitivity : top), 'S0'),
       tier: 'owner',
       store,
       // Its own kind, so the ledger can tell one call that decided five tickets

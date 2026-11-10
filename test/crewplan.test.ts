@@ -757,7 +757,7 @@ test('ownerCall: a timeout kills the child rather than abandoning it', async () 
   fs.chmodSync(bin, 0o755);
   process.env['FOREMAN_CLAUDE_BIN'] = bin;
   try {
-    const err = await ownerCall('plan this', { timeoutMs: 100 }).then(() => null, (e: unknown) => e);
+    const err = await ownerCall('plan this', { sensitivity: 'S1', timeoutMs: 100 }).then(() => null, (e: unknown) => e);
     assert.ok(err instanceof OwnerCallError);
     assert.equal(err.reason, 'timeout');
     await new Promise((r) => setTimeout(r, 1400));
@@ -778,7 +778,7 @@ test('ownerCall: the envelope decides, not the exit code', async () => {
   try {
     // A usable reply survives a non-zero exit (the CLI warns on the way out).
     fs.writeFileSync(bodyFile, envelope('the plan'));
-    const ok = await ownerCall('plan this', { store, kind: 'plan' });
+    const ok = await ownerCall('plan this', { sensitivity: 'S1', store, kind: 'plan' });
     assert.equal(ok.text, 'the plan');
     assert.equal(ok.costUsd, 0.02);
 
@@ -787,11 +787,11 @@ test('ownerCall: the envelope decides, not the exit code', async () => {
       bodyFile,
       JSON.stringify({ type: 'result', is_error: true, total_cost_usd: 0.03, result: 'rate limited' }),
     );
-    await assert.rejects(ownerCall('plan this', { store, kind: 'plan' }), /no usable reply/);
+    await assert.rejects(ownerCall('plan this', { sensitivity: 'S1', store, kind: 'plan' }), /no usable reply/);
 
     // No envelope at all, non-zero exit: an exit failure, not a parse failure.
     fs.writeFileSync(bodyFile, 'segfault');
-    const err = await ownerCall('plan this', {}).then(() => null, (e: unknown) => e);
+    const err = await ownerCall('plan this', { sensitivity: 'S1' }).then(() => null, (e: unknown) => e);
     assert.ok(err instanceof OwnerCallError);
     assert.equal(err.reason, 'exit');
 
