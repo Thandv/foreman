@@ -23,6 +23,8 @@ import { acquireDaemonLock } from './lock.ts';
 import { stopDaemon, systemDescribe, systemListeners } from './daemonOwner.ts';
 import { Store } from './queue.ts';
 import { Scheduler } from './scheduler.ts';
+import { registerExtension } from './extensions.ts';
+import { alignExtension } from './align/extension.ts';
 import { listen } from './server.ts';
 import { installProcessRecorder } from './runners/freezeInstall.ts';
 import { freezeSweepOptionsFromEnv, runFreezeSweep } from './runners/freezeSweep.ts';
@@ -493,6 +495,7 @@ async function main(): Promise<number> {
     const releaseLock = acquireDaemonLock();
     // The one opener that migrates an older ledger; every other command refuses it.
     const store = new Store(config.dbPath, { migrate: true });
+    registerExtension(alignExtension);
     const scheduler = new Scheduler(store);
     const tracer = new Tracer(store);
     tracer.start();

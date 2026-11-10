@@ -9,9 +9,8 @@ import path from 'node:path';
 import { Broker, BudgetExceeded } from './budget.ts';
 import { config } from './config.ts';
 import { DEFAULT_ARCHIVE_AFTER_DAYS } from './archive.ts';
-import { startAdoptedPersonas } from './align/personaHealth.ts';
 import { shadowEnabled } from './agreement.ts';
-import { localModelLockHolder } from './align/localLock.ts';
+import { registeredExtensions } from './extensions.ts';
 import { provisionDeps } from './deps.ts';
 import {
   effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
@@ -187,6 +186,17 @@ export interface VerifyArgs {
  * slot through it left workers idle in `verifying` while ready tasks queued.
  */
 type Lane = 'work' | 'verify';
+
+/** Why a queued ticket is held: its kind and the message it is recorded with. */
+interface TicketHold {
+  kind: string;
+  message: string;
+}
+
+const HOME_DISK_HOLD: TicketHold = {
+  kind: 'disk-home',
+  message: 'held: low disk under the Foreman home (below FOREMAN_MIN_FREE_MB); new work waits until space is freed',
+};
 
 const RECONCILE_MS = 60_000;
 /** Unclean starts within CRASH_LOOP_WINDOW_MS that make a crash loop: the daemon starts under a dispatch hold. */
@@ -729,8 +739,8 @@ export class Scheduler {
   private readonly recheckAttempts = new Map<string, number>();
   /** Per task: not before this instant — a re-check that came back provisional again waits. */
   private readonly recheckNotBefore = new Map<string, number>();
-  /** Edge-tracking, so "paused" and "resumed" are logged once, not per tick. */
-  private deferredForLock = false;
+  /** Names of the extensions holding dispatch: "paused" and "released" are logged once, on the edge, not per tick. */
+  private readonly extensionsHolding = new Set<string>();
   /** Dirs held for low free space: one event when a dir goes low, one when a later check finds it recovered. */
   private readonly diskHeld = new Set<string>();
   private readonly statfsFn: StatfsFn | undefined;
@@ -890,19 +900,15 @@ export class Scheduler {
     // Fills only blanks: decisions an older daemon made after this ledger was
     // migrated (the open-time pass ran before them) get their label here.
     backfillRunDecisions(this.store.db);
-    // An adopted persona is already routed live work by modelForTask, so the
-    // daemon owning its server is not a convenience — it is what keeps routing
-    // and reality in step. Fire-and-forget: a
-    // model server that will not start is a reason to refuse the tickets that
-    // want it, never a reason to refuse to boot the queue.
-    void startAdoptedPersonas()
-      .then((reports) => {
-        for (const r of reports) {
-          if (r.reason === 'already serving') continue;
-          this.store.record({ type: 'status', message: `persona ${r.id}: ${r.ok ? 'serving' : `not serving — ${r.reason}`}` });
-        }
-      })
-      .catch(() => {});
+    // Fire-and-forget: an extension that fails to start is a warning, never a reason to refuse to boot the queue.
+    for (const ext of registeredExtensions()) {
+      if (!ext.onStart) continue;
+      void Promise.resolve()
+        .then(() => ext.onStart!(this.store))
+        .catch((err: unknown) => {
+          safeRecord(this.store, { type: 'warning', message: `extension ${ext.name}: start failed — ${err instanceof Error ? err.message : String(err)}` });
+        });
+    }
     this.timer = setInterval(() => void this.pulse(), this.tickMs);
     this.timer.unref?.();
     void this.pulse();
@@ -1069,7 +1075,7 @@ export class Scheduler {
       if (!this.hold) this.stage('dispatch', () => this.dispatch(free));
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
-      // (It is also never reached while the training lock defers dispatch, or
+      // (It is also never reached while an extension holds dispatch, or
       // while every worker slot is taken — both return above.)
       this.stage('runDueRechecks', () => this.runDueRechecks());
       this.stage('recheckRedRepos', () => this.recheckRedRepos());
@@ -1081,15 +1087,12 @@ export class Scheduler {
 
   /** The worker slots dispatch may fill this tick, or null when a gate defers dispatch (and the stages after it). */
   private dispatchSlots(): number | null {
-    // A trainer or an adoption gate holds the machine-wide local-model lock
-    // for hours, and starting new work under it is how a 17 GB machine ends
-    // up 33 GB into swap — the exact collision the lock was created for after
-    // it happened once for real. Work already running is left alone; only
-    // dispatch pauses, so the queue drains the moment the lock frees.
-    if (this.deferForLocalModelLock()) { this.refreshHolds('local-lock'); return null; }
+    // Work already running is left alone; only dispatch pauses, so the queue drains the moment the hold lifts.
+    const extensionHold = this.extensionHold();
+    if (extensionHold) { this.refreshHolds(extensionHold); return null; }
     // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
     this.diskVolumeCache.clear();
-    if (this.diskLow(config.home)) { this.refreshHolds('home-disk'); return null; }
+    if (this.diskLow(config.home)) { this.refreshHolds(HOME_DISK_HOLD); return null; }
     // Only the work lane consumes worker slots.
     const free = this.maxWorkers - this.laneCount('work');
     if (free <= 0) { this.refreshHolds(null); return null; }
@@ -2644,20 +2647,17 @@ export class Scheduler {
    * Make every hold on a queued ticket visible (Store.syncHolds records one event per episode). Mirrors the
    * conditions dispatch applies; it changes none of them.
    */
-  private refreshHolds(global: 'local-lock' | 'home-disk' | null): void {
-    const now = new Map<string, { kind: string; message: string }>();
+  private refreshHolds(global: TicketHold | null): void {
+    const now = new Map<string, TicketHold>();
     const limited = this.limitHoldUntil > Date.now();
     const fallback = cloudFallback();
     for (const t of this.store.queuedForHolds()) {
       if (this.active.has(t.id)) continue;
-      let h: { kind: string; message: string } | null = null;
+      let h: TicketHold | null = null;
       const red = this.store.repoRed(t.repo);
       const dirty = t.repo ? this.dirtyHolds.get(path.resolve(t.repo)) : undefined;
-      if (global === 'local-lock') {
-        const holder = localModelLockHolder();
-        h = { kind: 'local-lock', message: `held: ${holder ? `${holder.label} (pid ${holder.pid})` : 'a trainer or adoption gate'} holds the local-model lock; new work waits until it releases the lock` };
-      } else if (global === 'home-disk') {
-        h = { kind: 'disk-home', message: 'held: low disk under the Foreman home (below FOREMAN_MIN_FREE_MB); new work waits until space is freed' };
+      if (global) {
+        h = global;
       } else if (red) {
         // A failed check's reason is the last lines of its test output (control codes included): named, not printed.
         const why = /[\u0000-\u001f\u007f]/.test(red.reason) || red.reason.length > 120 ? `its tests failed; output in foreman show ${red.taskId}` : red.reason;
@@ -3190,39 +3190,26 @@ export class Scheduler {
   }
 
   /**
-   * True when new work must not start because something else owns the
-   * machine's inference.
-   *
-   * Deliberately blunt: it pauses ALL dispatch, not just tasks that would touch
-   * a local model. A cloud-runner ticket looks harmless until its verify stage
-   * asks the local council for two opinions, and by then a worktree has been
-   * cut and a model is loading. Distinguishing the two cases correctly means
-   * predicting what a task will do before it does it, which is not knowable;
-   * pausing for a few hours while an adapter trains is cheap and is correct.
-   *
-   * `FOREMAN_IGNORE_TRAINING_LOCK=1` opts out for an operator with the memory
-   * headroom to run both — this machine does not, but another might.
+   * The first registered extension's dispatch hold that is in force, as each queued ticket is held, or null. Every
+   * hold is read each tick so each one's start and release is recorded once, on the edge.
    */
-  private deferForLocalModelLock(): boolean {
-    if (process.env['FOREMAN_IGNORE_TRAINING_LOCK'] === '1') return false;
-    const holder = localModelLockHolder();
-    if (!holder) {
-      // Say so once, on the edge, so the log explains why the queue moved
-      // again rather than leaving the operator to infer it.
-      if (this.deferredForLock) {
-        this.deferredForLock = false;
-        this.store.record({ type: 'status', message: 'local-model lock released; dispatch resumed' });
+  private extensionHold(): TicketHold | null {
+    let first: TicketHold | null = null;
+    for (const ext of registeredExtensions()) {
+      const hold = ext.dispatchHold;
+      if (!hold) continue;
+      const now = hold.current();
+      if (!now) {
+        if (this.extensionsHolding.delete(ext.name)) this.store.record({ type: 'status', message: hold.released });
+        continue;
       }
-      return false;
+      if (!this.extensionsHolding.has(ext.name)) {
+        this.extensionsHolding.add(ext.name);
+        this.store.record({ type: 'status', message: now.paused });
+      }
+      first ??= { kind: hold.kind, message: now.held };
     }
-    if (!this.deferredForLock) {
-      this.deferredForLock = true;
-      this.store.record({
-        type: 'status',
-        message: `dispatch paused: ${holder.label} (pid ${holder.pid}) holds the local-model lock. Running work continues.`,
-      });
-    }
-    return true;
+    return first;
   }
 
   /**

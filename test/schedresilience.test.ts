@@ -214,7 +214,7 @@ test('a throwing dispatch is named, counted, and the idle-time stages still run 
 test('a throwing dispatch gate defers dispatch and the idle-time stages, as a gate that says no does', async () => {
   const store = new Store(':memory:');
   const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1, now: () => 1_700_000_000_000 });
-  (sched as unknown as { deferForLocalModelLock: () => boolean }).deferForLocalModelLock = () => { throw new Error('gate boom'); };
+  (sched as unknown as { extensionHold: () => unknown }).extensionHold = () => { throw new Error('gate boom'); };
   let claims = 0;
   const realClaimable = store.claimable.bind(store);
   store.claimable = ((...args: Parameters<Store['claimable']>) => { claims++; return realClaimable(...args); }) as Store['claimable'];

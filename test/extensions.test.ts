@@ -6,6 +6,10 @@ import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { personaAdapterDir, savePersona, seedPersonas } from '../src/align/personas.ts';
 import { acquireLocalModelLock, releaseLocalModelLock } from '../src/align/localLock.ts';
+import { registerExtension } from '../src/extensions.ts';
+import { alignExtension } from '../src/align/extension.ts';
+
+registerExtension(alignExtension);
 
 function setEnv(t: TestContext, name: string, value: string): void {
   const prev = process.env[name];
@@ -67,4 +71,17 @@ test('a held local-model lock pauses dispatch and holds queued work with the sam
   await s.tick();
   assert.deepEqual(statuses().slice(1), ['local-model lock released; dispatch resumed']);
   assert.notEqual(store.getTask(task.id)!.status, 'queued');
+});
+
+test('an extension whose start fails is recorded as a warning, and the queue still dispatches', async (t) => {
+  registerExtension({ name: 'broken', onStart: () => Promise.reject(new Error('cannot reach its server')) });
+  assert.throws(() => registerExtension({ name: 'broken' }), /already registered/);
+  const store = new Store(':memory:');
+  const s = new Scheduler(store, { tickMs: 60_000, verifyEnabled: false });
+  t.after(async () => { await s.stop(); store.close(); });
+  const task = store.addTask({ title: 'a', prompt: 'x', runner: 'echo' });
+  s.start();
+  const warning = 'extension broken: start failed — cannot reach its server';
+  await until(() => store.eventsSince(0).some((e) => e.type === 'warning' && e.message === warning));
+  await until(() => store.getTask(task.id)!.status !== 'queued');
 });

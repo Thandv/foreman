@@ -139,7 +139,7 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_BACKUP_DIR` | `$FOREMAN_HOME/backups` | Where backups are written | `src/backup.ts` |
 | `FOREMAN_BACKUP_COPY_DIR` | unset | A second copy on another disk; unset, `serve` warns | `src/backup.ts` |
 | `FOREMAN_DEPS_MODE` | `clone` | How a worktree gets its dependencies: `clone`, `symlink` or `off` | `src/deps.ts` |
-| `FOREMAN_IGNORE_TRAINING_LOCK` | unset | `1` keeps the queue running while an adapter trains (otherwise it pauses) | `src/scheduler.ts` |
+| `FOREMAN_IGNORE_TRAINING_LOCK` | unset | `1` keeps the queue running while an adapter trains (otherwise it pauses) | `src/align/extension.ts` |
 | `FOREMAN_MIN_FREE_MB` | `2048` | Free megabytes required on the volume holding `FOREMAN_HOME` (and on a task's repo volume) before a new run is dispatched. Below it dispatch pauses with one `dispatch paused: disk` event and resumes when space returns; running work is untouched. Empty, negative or non-numeric falls back to the default | `src/config.ts` |
 | `FOREMAN_SANDBOX` | `tests` | `off`, `tests` or `all`: what runs inside the sandbox; anything else throws. `src/deps.ts` reads it only to warn that `FOREMAN_DEPS_MODE=symlink` leaves a sandboxed command without its dependencies. See [The sandbox](security.md#the-sandbox-foreman_sandbox) | `src/security/sandbox.ts`, `src/deps.ts` |
 | `FOREMAN_SANDBOX_RO` | unset | Colon-separated extra read-only paths for a sandboxed command | `src/security/sandbox.ts` |

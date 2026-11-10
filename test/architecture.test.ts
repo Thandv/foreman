@@ -176,6 +176,7 @@ const QUEUE_IMPORTS = [
 // prose features only through these.
 const ALIGN_PROSE_EDGES: Record<string, string> = {
   'src/assistant/repoBrief.ts -> src/align/redact.ts': 'the repo brief redacts secrets before it leaves the machine',
+  'src/cli.ts -> src/align/extension.ts': '`serve` registers the align extension (persona start, local-model-lock hold)',
   'src/cli.ts -> src/align/dataset.ts': '`align` builds its datasets (dynamic import)',
   'src/cli.ts -> src/align/extract.ts': '`align` extracts its samples (dynamic import)',
   'src/cli.ts -> src/align/governor.ts': '`persona train` runs under the machine governor (dynamic import)',
@@ -194,8 +195,6 @@ const ALIGN_PROSE_EDGES: Record<string, string> = {
   'src/roles.ts -> src/align/personas.ts': 'a role picks the persona for a task',
   'src/runners/api.ts -> src/align/personaHealth.ts': 'the api runner refuses an unreachable persona',
   'src/runners/api.ts -> src/prose/contextPack.ts': 'the api runner briefs a prose ticket with its context pack',
-  'src/scheduler.ts -> src/align/localLock.ts': 'the scheduler holds local work while training holds the lock',
-  'src/scheduler.ts -> src/align/personaHealth.ts': 'the scheduler starts adopted persona servers',
   'src/scheduler.ts -> src/prose/auditWorker.ts': 'the scheduler audits prose off the main thread',
   'src/scheduler.ts -> src/prose/linecheck.ts': 'the scheduler checks a prose change for fact drift',
   'src/server.ts -> src/align/personaHealth.ts': 'the API reports persona health',
@@ -207,6 +206,7 @@ const ALIGN_PROSE_EDGES: Record<string, string> = {
 // (e) FOREMAN_* names read outside config.ts, per file: each module's own tuning, read where it is used.
 const ENV_READS: Record<string, string[]> = {
   'src/agreement.ts': ['FOREMAN_SHADOW_LOCAL'],
+  'src/align/extension.ts': ['FOREMAN_IGNORE_TRAINING_LOCK'],
   'src/align/extract.ts': ['FOREMAN_ALIGN_DIR', 'FOREMAN_CLAUDE_PROJECTS', 'FOREMAN_COWORK_SESSIONS'],
   'src/align/governor.ts': ['FOREMAN_PYTHON', 'FOREMAN_TRAIN_MEMORY_SHARE', 'FOREMAN_TRAIN_NICE'],
   'src/align/localLock.ts': ['FOREMAN_LOCAL_LOCK'],
@@ -235,7 +235,7 @@ const ENV_READS: Record<string, string[]> = {
   'src/runners/cliRunners.ts': ['FOREMAN_CLAUDE_ALLOWED_TOOLS', 'FOREMAN_CLAUDE_DISALLOWED_TOOLS', 'FOREMAN_CLAUDE_PERMISSION_MODE'],
   'src/runners/freezeSweep.ts': ['FOREMAN_FREEZE_SWEEP_CAP_MS', 'FOREMAN_FREEZE_SWEEP_FAULT', 'FOREMAN_FREEZE_SWEEP_GRACE_MS'],
   'src/scheduler.ts': [
-    'FOREMAN_ARCHIVE_AFTER_DAYS', 'FOREMAN_CLAUDE_RESUME', 'FOREMAN_COUNCIL_DEADLINE_SHARE', 'FOREMAN_IGNORE_TRAINING_LOCK',
+    'FOREMAN_ARCHIVE_AFTER_DAYS', 'FOREMAN_CLAUDE_RESUME', 'FOREMAN_COUNCIL_DEADLINE_SHARE',
     'FOREMAN_RECHECK_MS', 'FOREMAN_REDCHECK_MS', 'FOREMAN_VERIFY',
   ],
   'src/security/sandbox.ts': ['FOREMAN_SANDBOX', 'FOREMAN_SANDBOX_ALLOW', 'FOREMAN_SANDBOX_DENY_PORTS', 'FOREMAN_SANDBOX_RO'],
@@ -255,7 +255,7 @@ const ENV_READS: Record<string, string[]> = {
 // (f) Every src file that references process.env outside a comment, config.ts and whole-env passes to a child
 // included: a new file reading any variable, or handing the daemon's environment on, is a reviewed change.
 const PROCESS_ENV_FILES: string[] = [
-  'src/agreement.ts', 'src/align/extract.ts', 'src/align/governor.ts', 'src/align/localLock.ts',
+  'src/agreement.ts', 'src/align/extension.ts', 'src/align/extract.ts', 'src/align/governor.ts', 'src/align/localLock.ts',
   'src/align/personaAdopt.ts', 'src/align/personaServe.ts', 'src/align/personas.ts', 'src/align/redact.ts',
   'src/align/train.ts', 'src/assistant/crewPlan.ts', 'src/assistant/ownerCall.ts', 'src/backup.ts', 'src/budget.ts',
   'src/cli.ts', 'src/config.ts', 'src/deps.ts', 'src/gate.ts', 'src/gitExec.ts', 'src/improve.ts', 'src/localOnly.ts',
