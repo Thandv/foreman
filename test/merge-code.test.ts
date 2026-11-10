@@ -489,3 +489,28 @@ test('prepareLandingCommit counts and core-guards against the sha it is given, a
     d.close();
   }
 });
+
+test('prepareLandingCommit puts core back to the checkout\'s own HEAD, not to `against`, on a guarded refusal', async () => {
+  // Main moved past the base with a core change; the ticket branched from main and changed a.txt.
+  const d = direct(null);
+  const dir = d.dir;
+  try {
+    const base = git(dir, 'rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'src', 'security', 'admit.ts'), 'export const admit = 2;\n');
+    git(dir, 'commit', '-qam', 'main moved');
+    const head = git(dir, 'rev-parse', 'HEAD');
+    git(dir, 'branch', '-qf', 'ticket', 'HEAD'); git(dir, 'checkout', '-q', 'ticket');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'TICKET\n'); git(dir, 'commit', '-qam', 'ticket');
+    git(dir, 'checkout', '-q', '-');
+    // A protected path is dirty in the checkout, so the refusal puts core back.
+    fs.writeFileSync(path.join(dir, 'src', 'security', 'admit.ts'), 'export const admit = 3;\n');
+    const run = { ...d.run, reviewedTree: treeOf(dir, 'ticket') };
+
+    const guarded = await prepareLandingCommit(d.task, run, { source: 'human', against: base, selfRoot: dir });
+    assert.ok('code' in guarded);
+    assert.equal(guarded.code, 'core-refused');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'the checkout stays on its own HEAD');
+  } finally {
+    d.close();
+  }
+});
