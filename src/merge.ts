@@ -375,7 +375,11 @@ export async function prepareLandingCommit(
     } catch (err) {
       refusal = `core change refused: the paths ${branch} would land could not be listed (${(err as Error).message.slice(0, 200)})`;
     }
-    if (refusal) return { merged: false, code: 'core-refused', reason: refusal + (await putCoreBack(repo, against)), branch };
+    // Put back to the checkout's own HEAD, never to `against`: a reset to that would move the operator's branch.
+    if (refusal) {
+      const head = (await git(repo, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+      return { merged: false, code: 'core-refused', reason: refusal + (await putCoreBack(repo, head)), branch };
+    }
   }
 
   // The reviewed-tree check, on the commit that is about to land: its tree is
