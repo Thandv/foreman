@@ -452,6 +452,30 @@ test('the cited-source block stays inside its budget and names every file it lef
   assert.equal(citedSourceBlock(proseDiff('README.md', ['Nothing cited here.']), dir), '');
 });
 
+test('the cited-source block lists tracked and newly added files, and is empty for a tree git cannot list', (t) => {
+  const dir = gitTree(t, { 'src/a.ts': numbered('a', 30) });
+  fs.writeFileSync(path.join(dir, 'src/new.ts'), 'export const fresh = 1;\n');
+  execFileSync('git', ['add', '-N', 'src/new.ts'], { cwd: dir, stdio: 'ignore' }); // as diffJail leaves the index
+  const doc = proseDiff('docs/x.md', ['See src/a.ts:20 and `new.ts`.']);
+  const block = citedSourceBlock(doc, dir, null, 4_000);
+  const a = numbered('a', 30).trimEnd().split('\n').map((l, i) => `${String(i + 1).padStart(2)}| ${l}`).join('\n');
+  assert.equal(
+    block,
+    `${CITED_SOURCE_HEADING}\n` +
+      "The diff adds or changes docs/x.md. Below are the repo files that its added lines, or the worker's report, cite, as " +
+      'they are in the work tree now: the cited lines with their surroundings, the lines around a name given beside the file, ' +
+      "or the head of the file when neither is cited. Check the document's claims against this text. A claim about source " +
+      'that is neither here nor in the diff was not shown to you.\n\n' +
+      `--- src/a.ts (lines 1-30 of 30) ---\n${a}\n\n` +
+      '--- src/new.ts (lines 1 of 1; no line or name in it was cited, so this is the head of the file) ---\n1| export const fresh = 1;',
+  );
+  // The same files outside any repository: git cannot list them, so nothing is shown.
+  const bare = scratchDir('foreman-cited-bare-');
+  t.after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  fs.cpSync(path.join(dir, 'src'), path.join(bare, 'src'), { recursive: true });
+  assert.equal(citedSourceBlock(doc, bare, null, 4_000), '');
+});
+
 test('a README-only ticket: the files and names the worker\'s report maps its claims to are shown, and a base name finds its file', (t) => {
   // Shaped like a README-only trial ticket: the README states behaviour, and the report's claims table names the file and function.
   const server = Array.from({ length: 400 }, (_, i) => (i === 249 ? 'function serveStatic(req) {' : i === 251 ? '  const fresh = tokenEquals(supplied, token);' : `// server line ${i + 1}`)).join('\n') + '\n';
