@@ -2,7 +2,6 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startFakeGitlab, type FakeGitlab, type FakeGitlabOptions } from '../scripts/forge/fakeGitlab.ts';
@@ -110,7 +109,8 @@ test('merge with the head sha makes a merge commit whose second parent is that s
     assert.equal(parents.length, 3);
     assert.equal(parents[2], head);
     assert.equal(git(f.bare, 'rev-parse', 'refs/heads/main'), merged.merge_commit_sha);
-    assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('foreman-fakegitlab-')), [], 'no temp worktree is left behind');
+    const worktrees = git(f.bare, 'worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree '));
+    assert.equal(worktrees.length, 1, 'no temp worktree is left behind: only the bare repo itself is listed');
   });
 });
 
