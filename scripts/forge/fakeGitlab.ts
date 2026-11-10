@@ -4,7 +4,7 @@
 //   - runnable:   `node scripts/forge/fakeGitlab.ts --project group/app=/path/to/bare.git [--port N]
 //                  [--checking-ms N] [--pipeline success|failed|manual] [--pipeline-delay-ms N]`, token in FAKE_GITLAB_TOKEN.
 // A project id is the URL-encoded path ("group%2Fapp"), as GitLab accepts. Every request is recorded (method, path, query,
-// never headers) in `requests`. A head sha gets one pipeline; POST /__fake/pipelines/:sha {status} flips it.
+// body, never headers) in `requests`. A head sha gets one pipeline; POST /__fake/pipelines/:sha {status} flips it.
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -36,7 +36,8 @@ export interface FakeGitlabOptions {
 
 export interface FakeGitlab {
   url: string;
-  requests: Array<{ method: string; path: string; query: Record<string, string> }>;
+  /** `body` is the raw request body, when there was one. */
+  requests: Array<{ method: string; path: string; query: Record<string, string>; body?: string }>;
   close(): Promise<void>;
 }
 
@@ -104,7 +105,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
       source_branch: mr.source, target_branch: mr.target, sha: mr.sha, squash: mr.squash,
       web_url: `${url}/${project.path}/-/merge_requests/${mr.iid}`,
       detailed_merge_status: mergeStatus(mr),
-      head_pipeline: { id: pl.id, sha: pl.sha, status: pipelineStatus(pl) },
+      head_pipeline: { id: pl.id, sha: pl.sha, status: pipelineStatus(pl), web_url: `${url}/${project.path}/-/pipelines/${pl.id}` },
       merge_commit_sha: mr.mergeCommitSha,
     };
   };
@@ -202,13 +203,13 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     };
     const parsed = new URL(req.url ?? '/', 'http://fake.invalid');
     const method = req.method ?? 'GET';
-    requests.push({ method, path: parsed.pathname, query: Object.fromEntries(parsed.searchParams) });
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      requests.push({ method, path: parsed.pathname, query: Object.fromEntries(parsed.searchParams), ...(text ? { body: text } : {}) });
       if (opts.token !== undefined && req.headers['private-token'] !== opts.token) return reply(401, { message: '401 Unauthorized' });
       void (async () => {
-        const text = Buffer.concat(chunks).toString('utf8');
         const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
         reply(200, await route(method, parsed.pathname.split('/').filter(Boolean), parsed.searchParams, { ...Object.fromEntries(parsed.searchParams), ...body }));
       })().catch((e: unknown) => {

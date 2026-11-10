@@ -21,10 +21,13 @@ server (no dependencies, no network) over real bare repos, serving the REST v4 s
 requests, merge by `sha`) with GitLab's field names and status codes: 409 on a stale `sha`, 405 while
 `detailed_merge_status` is `checking` or the pipeline is not green, 401 without the token. Import `startFakeGitlab`
 in a test, or run it with `node scripts/forge/fakeGitlab.ts --project group/app=<bare repo>` (token in
-`FAKE_GITLAB_TOKEN`, never printed or logged). `POST /__fake/pipelines/:sha {status}` flips a pipeline. Limits:
+`FAKE_GITLAB_TOKEN`, never printed or logged). `POST /__fake/pipelines/:sha {status}` flips a pipeline. Its
+`requests` log holds each request's method, path, query and raw body, never its headers. Limits:
 the fake checks the `sha` before mergeability (GitLab checks mergeability first), so do not rely on 409 winning over
 405; and a delayed pipeline that turns green on its own opens no `checking` window (only a push or a flip does).
-`test/fake-gitlab.test.ts` pins it.
+`test/fake-gitlab.test.ts` pins it. `test/landing-gitlab.test.ts` runs Foreman's GitLab adapter
+(`src/landing/gitlab.ts`) against it, and against small stub servers for a hang, an oversized or malformed body and
+a token echoed back.
 
 Covered: DAG promotion and dependency-failure propagation, exactly-once claim, crash recovery,
 orphaned-process-group reaping on recovery, pid recording over a child's lifetime, the daemon
