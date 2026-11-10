@@ -74,6 +74,7 @@ test('project, findOpenMr, openMr, getMr and merge work against the fake; the me
     const found = await forge.findOpenMr('group/app', 'foreman/t1');
     assert.equal(found?.iid, opened.iid);
     assert.match(found.webUrl, /\/group\/app\/-\/merge_requests\/1$/);
+    assert.deepEqual(found.pipeline && { sha: found.pipeline.sha, status: found.pipeline.status }, { sha: head, status: 'success' });
     const mr = await forge.getMr('group/app', opened.iid);
     assert.equal(mr.mergeStatus, 'mergeable');
     assert.deepEqual(mr.pipeline && { sha: mr.pipeline.sha, status: mr.pipeline.status }, { sha: head, status: 'success' });
