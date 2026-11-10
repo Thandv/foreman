@@ -119,6 +119,15 @@ export const config = {
    * passed a 14 KB security module having read only an excerpt of its tests.
    */
   crewCodeDiffCapBytes: int('FOREMAN_CREW_CODE_DIFF_CAP_BYTES', 96_000),
+  /** Where the CLI reaches a daemon (src/cli.ts): FOREMAN_URL, else the local daemon at FOREMAN_HOST:FOREMAN_PORT. */
+  get cliUrl(): string {
+    const raw = process.env['FOREMAN_URL']?.trim().replace(/\/+$/, '');
+    return raw || daemonUrl(config.host, config.port);
+  },
+  /** The bearer token the CLI sends (FOREMAN_TOKEN), or null. A secret: it is in no KNOB_ENV row and never printed. */
+  get cliToken(): string | null {
+    return process.env['FOREMAN_TOKEN']?.trim() || null;
+  },
   /** FOREMAN_DEBUG=1: one `[foreman debug]` line per event on stderr (src/debug.ts). Read on each call, like taskTimeoutMs. */
   get debug(): boolean {
     return process.env['FOREMAN_DEBUG'] === '1';
@@ -259,9 +268,9 @@ export const config = {
 export type Config = typeof config;
 
 /**
- * The FOREMAN_* variable behind each config key, or null for a path derived from the others. Keyed by every key of
- * Config, so a knob added above without a row here fails the typecheck. None is a secret: `foreman config
- * --effective` prints these values as they are.
+ * The FOREMAN_* variable behind each config key, or null for a path derived from the others and for the one secret (cliToken). Keyed by every key of
+ * Config, so a knob added above without a row here fails the typecheck. None named here is a secret: `foreman
+ * config --effective` prints these values as they are.
  */
 const KNOB_ENV: Record<keyof Config, string | null> = {
   home: 'FOREMAN_HOME',
@@ -272,6 +281,8 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   artifactRoot: null,
   port: 'FOREMAN_PORT',
   host: 'FOREMAN_HOST',
+  cliUrl: 'FOREMAN_URL',
+  cliToken: null,
   maxWorkers: 'FOREMAN_MAX_WORKERS',
   maxVerifying: 'FOREMAN_MAX_VERIFYING',
   taskTimeoutMs: 'FOREMAN_TASK_TIMEOUT_MS',

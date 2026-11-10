@@ -7,8 +7,8 @@ import path from 'node:path';
 import { removeAfterStops } from './helpers/removal.ts';
 import { probeTask } from '../src/types.ts';
 import type { RunnerContext } from '../src/runners/index.ts';
-import { codexCliRunner, resetPreflightCache } from '../src/runners/cliRunners.ts';
-import { claudeConfigDir, claudeWorkerEnv } from '../src/runners/claudeIsolation.ts';
+import { codexCliRunner, resetPreflightCache, workerEnv } from '../src/runners/cliRunners.ts';
+import { CODEX_ENV, claudeConfigDir, claudeWorkerEnv, cliWorkerEnv } from '../src/runners/claudeIsolation.ts';
 
 /** Set env vars for one test and put them back (or remove them) afterwards. */
 function withEnv(t: TestContext, vars: Record<string, string | undefined>): void {
@@ -154,5 +154,14 @@ test('pinned: the claude worker\'s environment is exactly what it was, byte for 
   for (const [env, names] of cases) {
     const got = onlyEnv(env, () => claudeWorkerEnv({ id: 't_pin' }));
     assert.equal(JSON.stringify(got), JSON.stringify({ ...kept(env, names), ...isolation }));
+  }
+});
+
+test('no worker environment carries FOREMAN_URL or FOREMAN_TOKEN, which are the CLI operator\'s', (t) => {
+  withEnv(t, { FOREMAN_URL: 'https://foreman.example.test', FOREMAN_TOKEN: 'tok-secret' });
+  const envs = [workerEnv({ testCmd: null }, 'run1'), claudeWorkerEnv({ id: 't_env' }), cliWorkerEnv(CODEX_ENV)];
+  for (const env of envs) {
+    assert.equal(env['FOREMAN_URL'], undefined);
+    assert.equal(env['FOREMAN_TOKEN'], undefined);
   }
 });

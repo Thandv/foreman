@@ -235,7 +235,26 @@ const flagStr = (args: Args, key: string): string | undefined => {
   return typeof v === 'string' ? v : undefined;
 };
 
-const base = daemonUrl(config.host, config.port);
+const base = config.cliUrl;
+
+/** Hosts a token may cross in clear text: this machine. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * The headers every HTTP call carries: the bearer token when FOREMAN_TOKEN is set, then the caller's own (the
+ * host-secret header, where it applies). A token is refused, before any request, for http:// to a host that is not
+ * this machine. The token is only ever in the header, never in a message.
+ */
+function requestHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = config.cliToken;
+  if (token) {
+    const url = new URL(base);
+    if (url.protocol !== 'https:' && !LOOPBACK_HOSTS.has(url.hostname)) {
+      throw new Error(`refusing to send FOREMAN_TOKEN over ${url.protocol}// to ${url.host}: use an https FOREMAN_URL`);
+    }
+  }
+  return { ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra };
+}
 
 /** `--skills a,b` as a list; `--skills default` as null (the role's default); undefined when the flag is absent. */
 function skillsFlag(args: Args): string[] | null | undefined {
@@ -350,7 +369,7 @@ function apiCallLong(path: string, body: unknown): Promise<any> {
     const payload = JSON.stringify(body);
     const req = http.request(`${base}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      headers: requestHeaders({ 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) }),
     }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
@@ -373,11 +392,12 @@ function apiCallLong(path: string, body: unknown): Promise<any> {
 }
 
 async function apiCall(path: string, init?: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }): Promise<any> {
+  const headers = requestHeaders({ ...(init?.body ? { 'content-type': 'application/json' } : {}), ...init?.headers });
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
       ...init,
-      headers: { ...(init?.body ? { 'content-type': 'application/json' } : {}), ...init?.headers },
+      headers,
     });
   } catch (err) {
     // A bare `catch {}` here reported every failure as "is foreman serve

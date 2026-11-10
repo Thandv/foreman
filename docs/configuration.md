@@ -21,7 +21,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 `src/config.ts`): its name, the value in effect and whether it came from the environment (`env`, set and not empty) or
 the default. Where an empty value reads as 0 or `''` (`FOREMAN_AGENTS_DIR`, `FOREMAN_PLAYBOOKS_DIR`,
 `FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_ECHO_STEP_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`), an empty value shows as `env`. Its last line counts and names every other `FOREMAN_*` variable set in the environment; those are read
-where they are used, so their values are never printed, only their names. No `src/config.ts` setting is a secret.
+where they are used, so their values are never printed, only their names. No setting it prints is a secret: `FOREMAN_TOKEN` is read in `src/config.ts` and never printed.
 
 | Name | Default | Effect | Read in |
 |---|---|---|---|
@@ -31,6 +31,8 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_TOOLS_DIR` | `$FOREMAN_TOOLBOX` | Overrides the catalog directory outright (used in tests) | `src/tools/catalog.ts` |
 | `FOREMAN_PORT` | `4100` | Port the daemon and board listen on; workers use it to reach the daemon for a test slot | `src/config.ts` |
 | `FOREMAN_HOST` | `127.0.0.1` | Address the daemon binds. A non-loopback address is refused unless `FOREMAN_ALLOW_REMOTE=1` | `src/config.ts` |
+| `FOREMAN_URL` | `http://<FOREMAN_HOST>:<FOREMAN_PORT>` | Daemon the CLI's HTTP commands reach (`add`, `ls`, `approve`, `watch`, ...). It does not move the daemon and is not passed to workers | `src/config.ts` |
+| `FOREMAN_TOKEN` | unset | Bearer token the CLI sends as `Authorization: Bearer`, only in that header; a daemon without auth ignores it. The CLI refuses to send it over `http://` to a host other than this machine, before any request. Not passed to workers, and never printed by `config --effective` | `src/config.ts` |
 | `FOREMAN_ALLOW_REMOTE` | unset | `1` lets the daemon bind a non-loopback address; the API can run shell commands, so this is an explicit decision | `src/server.ts` |
 | `FOREMAN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the API accepts, for a reverse proxy or a LAN name (loopback and the bind address are always accepted) | `src/server.ts` |
 | `FOREMAN_MAX_WORKERS` | `4` | Tasks run at once in the work lane (at least 1) | `src/config.ts` |

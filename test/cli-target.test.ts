@@ -51,3 +51,39 @@ for (const c of COMMANDS) {
     } finally { stub.close(); }
   });
 }
+
+const TOKEN = 'tok-secret-4711';
+
+for (const c of COMMANDS) {
+  test(`${c.name} reaches FOREMAN_URL, not the local daemon, and sends FOREMAN_TOKEN as a bearer header`, async () => {
+    const target = await stubDaemon();
+    const local = await stubDaemon();
+    try {
+      await runCli(c.argv, { FOREMAN_PORT: String(local.port), FOREMAN_URL: `http://127.0.0.1:${target.port}/`, FOREMAN_TOKEN: TOKEN }, () => c.done(target.seen));
+      assert.ok(target.seen.some((s) => s.path === c.path), `no ${c.path} request in ${JSON.stringify(target.seen)}`);
+      assert.ok(target.seen.every((s) => s.authorization === `Bearer ${TOKEN}`));
+      assert.deepEqual(local.seen, []);
+    } finally { target.close(); local.close(); }
+  });
+}
+
+test('a token is refused before any request for http:// to a remote host, and is not in the message', async () => {
+  const stub = await stubDaemon();
+  try {
+    const r = await runCli(['ls'], { FOREMAN_URL: 'http://192.0.2.7:4100', FOREMAN_TOKEN: TOKEN, FOREMAN_PORT: String(stub.port) }, () => false);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /refusing to send FOREMAN_TOKEN over http:\/\/ to 192\.0\.2\.7:4100/);
+    assert.ok(!(r.stdout + r.stderr).includes(TOKEN));
+    assert.deepEqual(stub.seen, []);
+  } finally { stub.close(); }
+});
+
+test('an unreachable daemon error does not carry the token', async () => {
+  const stub = await stubDaemon();
+  const port = stub.port;
+  stub.close();
+  const r = await runCli(['ls'], { FOREMAN_URL: `http://127.0.0.1:${port}`, FOREMAN_TOKEN: TOKEN }, () => false);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /cannot reach foreman/);
+  assert.ok(!(r.stdout + r.stderr).includes(TOKEN));
+});
