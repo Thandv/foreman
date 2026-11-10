@@ -352,6 +352,117 @@ test('with auth on, the owner model\'s approval is refused by four-eyes once per
   }
 });
 
+/**
+ * The three ways a parked ticket reaches the owner model: the single gate, a batch of one (which takes the single
+ * path) and a batch of several. Each answers `decision` for `item`; in the batch, a second ticket is held beside it.
+ */
+const OWNER_GATE_SITES: Array<{
+  name: string;
+  decide(store: Store, item: { task: Task; run: Run }, decision: string, rationale: string): Promise<{ decision: string; asked: number }>;
+}> = [
+  {
+    name: 'the single gate',
+    async decide(store, item, decision, rationale) {
+      const stub = stubClaude([gateReply(decision, rationale)]);
+      try {
+        return { decision: await ownerGate({ ...item, store }), asked: stub.count() };
+      } finally {
+        fs.rmSync(stub.dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a batch of one',
+    async decide(store, item, decision, rationale) {
+      const stub = stubClaude([gateReply(decision, rationale)]);
+      try {
+        const out = await ownerGateBatch({ items: [item], store });
+        return { decision: out.get(item.task.id)!, asked: stub.count() };
+      } finally {
+        fs.rmSync(stub.dir, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a batch',
+    async decide(store, item, decision, rationale) {
+      const beside = parked(store, { title: 'beside it' });
+      const stub = stubClaude([batchReply([
+        { id: item.task.id, decision, rationale },
+        { id: beside.task.id, decision: 'hold', rationale: 'held beside it' },
+      ])]);
+      try {
+        const out = await ownerGateBatch({ items: [item, beside], store });
+        return { decision: out.get(item.task.id)!, asked: stub.count() };
+      } finally {
+        fs.rmSync(stub.dir, { recursive: true, force: true });
+      }
+    },
+  },
+];
+
+for (const site of OWNER_GATE_SITES) {
+  test(`with auth off, ${site.name} lands an unprotected ticket, parks a human-only path and rejects a reject`, async () => {
+    const pbDir = withPlaybooks({ 'auto.md': AUTO });
+    const repo = fixtureRepo();
+    const store = new Store(':memory:');
+    try {
+      const plain = parked(store);
+      const landed = await site.decide(store, plain, 'approve', 'the diff matches the ticket');
+      assert.deepEqual(landed, { decision: 'approved', asked: 1 });
+      assert.equal(store.getTask(plain.task.id)!.status, 'done');
+      assert.deepEqual(store.decisionsForTask(plain.task.id).map((d) => [d.action, d.actorId]), [['approve', 'owner-model']]);
+
+      const script = landing(store, repo, { gate: 'owner' }, { files: ['scripts/build.sh'] });
+      assert.equal((await site.decide(store, script, 'approve', 'should never be asked')).decision, 'hold');
+      assert.match(gateEvents(store, script.task.id).join('\n'), /^owner-gate: hold — hard-human: the diff touches scripts\/build\.sh/);
+      assert.equal(store.getTask(script.task.id)!.status, 'awaiting-approval');
+
+      const wrong = parked(store);
+      assert.equal((await site.decide(store, wrong, 'reject', 'it edits files nobody asked about')).decision, 'rejected');
+      assert.equal(store.getTask(wrong.task.id)!.status, 'rejected');
+    } finally {
+      store.close();
+      cleanup([pbDir, repo]);
+    }
+  });
+
+  test(`with auth on, ${site.name} parks an owner approval for a person with its verdict, and never tries to approve`, async () => {
+    const pbDir = withPlaybooks({ 'auto.md': AUTO });
+    const repo = fixtureRepo();
+    const store = new Store(':memory:');
+    try {
+      store.addPrincipal({ kind: 'human', name: 'alice', createdBy: 'operator' });
+      const parks = async (item: { task: Task; run: Run }): Promise<void> => {
+        assert.equal((await site.decide(store, item, 'approve', 'the diff matches the ticket')).decision, 'hold');
+        assert.equal(store.getTask(item.task.id)!.status, 'awaiting-approval');
+        assert.deepEqual(store.decisionsForTask(item.task.id), [], 'no approve decision is written');
+        assert.match(store.gateDecision(item.task.id) ?? '', /^hold@\d+$/, 'parked once, not asked again on every sweep');
+        const timeline = events(store, item.task.id);
+        assert.ok(!timeline.some((m) => /nothing was decided/.test(m)), `no approval was tried: ${timeline.join(' | ')}`);
+      };
+      const verdict = /^owner-gate: hold — four-eyes: .+; parked for a person\. The owner model would approve: the diff matches the ticket$/m;
+
+      // One human, unprotected: the owner model is still not a person.
+      const solo = parked(store);
+      await parks(solo);
+      assert.match(gateEvents(store, solo.task.id).join('\n'), verdict);
+
+      // One human, protected: parked as a human-only path, before the model is asked.
+      await parks(landing(store, repo, { gate: 'owner' }, { files: ['scripts/build.sh'] }));
+
+      // Two humans.
+      store.addPrincipal({ kind: 'human', name: 'bob', createdBy: 'operator' });
+      const pair = parked(store);
+      await parks(pair);
+      assert.match(gateEvents(store, pair.task.id).join('\n'), verdict);
+    } finally {
+      store.close();
+      cleanup([pbDir, repo]);
+    }
+  });
+}
+
 test('a human-gated playbook is overridden by an explicit per-ticket opt-in, not by the env', async () => {
   const pbDir = withPlaybooks({ 'manual.md': MANUAL });
   const stub = stubClaude([gateReply('approve', 'the diff matches the ticket')]);
