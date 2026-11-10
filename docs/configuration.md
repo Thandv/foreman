@@ -198,4 +198,6 @@ prints a FAIL line when its merge method is not `merge` (landing is confirmed by
 the reviewed commit) or the project cannot be read (no default branch, unknown project, refused token). Doctor calls
 the network only for a real GitLab in the file. Commits reach `pushUrl` only through a Foreman-owned mirror under
 `<FOREMAN_HOME>/forge/`, never by a fetch or push in the repo itself (see
-[The forge mirror](security.md#the-forge-mirror-srclandingpushts)).
+[The forge mirror](security.md#the-forge-mirror-srclandingpushts)). The repo path is matched against the checkout's top
+level as git reports it. What an approval in a mapped repo does is in
+[lifecycle](lifecycle.md) (merge, "By merge request").

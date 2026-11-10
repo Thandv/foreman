@@ -73,7 +73,8 @@ const landingRows = (store: Store): number =>
   Number((store.db.prepare('SELECT count(*) AS n FROM landings').get() as { n: number }).n);
 
 const decisions = (store: Store, taskId: string): Array<{ action: string; merged: number }> =>
-  store.db.prepare("SELECT action, merged FROM decisions WHERE task_id = ? AND action = 'approve' ORDER BY rowid").all(taskId) as Array<{ action: string; merged: number }>;
+  (store.db.prepare("SELECT action, merged FROM decisions WHERE task_id = ? AND action = 'approve' ORDER BY rowid").all(taskId) as Array<{ action: string; merged: number }>)
+    .map((r) => ({ action: r.action, merged: r.merged }));
 
 const mrPosts = (fake: FakeGitlab): number =>
   fake.requests.filter((r) => r.method === 'POST' && /\/merge_requests$/.test(r.path)).length;

@@ -710,7 +710,9 @@ export class Store extends EventEmitter {
       this.setStatus(epicId, 'canceled', 'every ticket under this epic was deleted');
       return;
     }
-    if (children.some((c) => !TERMINAL_STATUSES.includes(String(c['status']) as TaskStatus))) return;
+    // A child still under its landing hold (an MR not merged yet, a merge not yet checked) has not landed; the epic
+    // settles on the reconcileBlocked after the hold ends.
+    if (children.some((c) => !TERMINAL_STATUSES.includes(String(c['status']) as TaskStatus) || this.landing.has(String(c['id'])))) return;
     const bad = children.find((c) => String(c['status']) !== 'done');
     this.setStatus(
       epicId,

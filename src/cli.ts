@@ -16,6 +16,7 @@ import { localOnly, modeSummary } from './localOnly.ts';
 import { sandboxMode, sandboxSummary, selfTest } from './security/sandbox.ts';
 import { ensureHostSecret, HOST_SECRET_HEADER } from './security/hostSecret.ts';
 import { landingDoctorLines, loadLanding } from './landing/config.ts';
+import { useLanding } from './landing/mr.ts';
 import { probeCloud } from './models.ts';
 import { skillVariantFor, tierModel } from './roles.ts';
 import { workerSuiteInJail } from './doctorJail.ts';
@@ -529,8 +530,9 @@ async function main(): Promise<number> {
       return 1;
     }
     // FOREMAN_LANDING=mr with <home>/landing.json (landing/config.ts): validated once, here; a bad file or a refused
-    // token file is a refusal to start.
+    // token file is a refusal to start. Approvals in a mapped repo then open a merge request (landing/mr.ts).
     const landing = loadLanding(config.home, config.landing);
+    useLanding(landing, config.home);
     const releaseLock = acquireDaemonLock();
     // The one opener that migrates an older ledger; every other command refuses it.
     const store = new Store(config.dbPath, { migrate: true });

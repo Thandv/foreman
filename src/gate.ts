@@ -8,6 +8,7 @@ import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
 import { landingRefusal, mergeApproved, type MergeCode, type MergeResult } from './merge.ts';
 import { withRepoMergeSection } from './landing/queue.ts';
+import { mrLandingFor, openForApproval } from './landing/mr.ts';
 import { NOTHING_TO_CHANGE_CLOSED, personPark } from './verify/gateOutcome.ts';
 import { extractJson } from './models.ts';
 import { cloudFallback, localOnly } from './localOnly.ts';
@@ -298,7 +299,7 @@ export async function applyApproval(
 }
 
 /** Landings an approval sends back to the gate for a person to put right before approving again. */
-const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused']);
+const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused', 'mr-refused']);
 
 type ApproveOpts = {
   principal: string; note?: string | null; mainCheck?: MainChecker; postMergeMode?: PostMergeMode;
@@ -412,11 +413,12 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
   const { before, run, task, merge, landable, checkAt } = settled;
   // The approval returns once the merge has settled; its post-merge check runs on, tracked so a shutdown aborts and
   // waits for it. The landing hold ends with the check that covers it: a dependent is released by a passing check at
-  // a HEAD its parent's merge reached, or at once when no check runs.
+  // a HEAD its parent's merge reached, or at once when no check runs. An opened merge request keeps it: the hold is
+  // the pending MR's (landing/mr.ts) until the MR merges.
   const postMerge = checkAt === null
     ? undefined
     : tracker.track(checkLanding(store, settled, checkAt, opts.mainCheck ?? checkMergedHead, tracker, opts.postMergeMode));
-  if (landable && !postMerge) store.endLanding(taskId);
+  if (landable && !postMerge && merge.code !== 'mr-opened') store.endLanding(taskId);
   if (merge.branch) {
     store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
   }
@@ -512,8 +514,14 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
   try {
     let task = store.decide(taskId, true, undefined, source);
     recordDecision(store, task, true, note, source);
+    // A mapped repo lands by merge request (landing/mr.ts), every other one by the local merge.
+    const land = async (): Promise<MergeResult> => {
+      const map = marker === null ? null : await mrLandingFor(task, opts.selfRoot);
+      if (map && marker !== null) return openForApproval(task, run, map, { marker, selfRoot: opts.selfRoot, ...who });
+      return mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who });
+    };
     let merge: MergeResult = landable
-      ? await mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who }).catch((err: Error): MergeResult => ({
+      ? await land().catch((err: Error): MergeResult => ({
         merged: false,
         code: 'failed',
         reason: `merge failed: ${err.message}`,
@@ -528,7 +536,8 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
         branch: run!.branch,
       }
       : { merged: false, code: 'nothing-to-land', reason: 'nothing to land: no run was approved', branch: null };
-    if (marker !== null) store.closeLanding(marker);
+    // An opened merge request keeps the marker open until it merges (landing/mr.ts).
+    if (marker !== null && merge.code !== 'mr-opened') store.closeLanding(marker);
     // A run that changed nothing (it recorded no diff) and whose branch the landing found empty: the approval
     // closes the ticket, and says so instead of reading like a merge that went missing. Nothing above is skipped —
     // the reviewed-tree check and mergeApproved ran as for any approval, and found nothing to merge.

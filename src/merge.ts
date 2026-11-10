@@ -7,12 +7,15 @@ import type { Run, Task } from './types.ts';
 /**
  * What a landing came to, for every caller to decide on (gate.ts, cli.ts): the
  * `reason` beside it is only ever shown, never matched. The first group is what
- * `mergeApproved` answers; the second is what gate.ts answers for an approval
- * that did not reach it, or that it reads on.
+ * `mergeApproved` answers; the second is what landing by merge request
+ * (landing/mr.ts) adds: an MR opened at the reviewed commit, or the forge or
+ * mirror failing; the third is what gate.ts answers for an approval that did
+ * not reach either, or that it reads on.
  */
 export type MergeCode =
   | 'not-approved' | 'nothing-to-merge' | 'merge-disabled' | 'core-refused' | 'branch-gone' | 'uncommitted'
   | 'nothing-ahead' | 'not-reviewed' | 'conflict' | 'merged'
+  | 'mr-opened' | 'mr-refused'
   | 'conflict-round-abandoned' | 'failed' | 'interrupted-leftover' | 'nothing-to-land' | 'nothing-to-change-closed';
 
 export interface MergeResult {

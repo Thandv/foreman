@@ -83,6 +83,24 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    park, not again on every sweep. With auth off the owner gate is unchanged. Approvals in different repos land side by side. The queue is keyed by
    the ticket's repo path, so two tickets naming different directories of one checkout are not
    queued together.
+   **By merge request.** With `FOREMAN_LANDING=mr`, an approval in a repo whose checkout's top
+   level is mapped in `landing.json` ([configuration](configuration.md#merge-request-landing-landingjson))
+   does not merge into the checkout (`src/landing/mr.ts`). Inside the repo's merge section it
+   fetches the target branch through the forge mirror, runs every `prepareLandingCommit` check
+   against that commit (a refusal is the same code and reason as for a local merge, and work changed
+   after review is refused before anything is pushed), pushes the checked commit to
+   `foreman/<task id>`, finds the open merge request from that branch or opens one, and confirms
+   the MR's head is that commit. The answer is `mr-opened` (`opened !<iid> <url>`). The ticket is
+   `done`, but its landing hold and its `landings` row stay: its dependents stay `blocked` and its
+   epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, or an MR
+   head that is not the reviewed commit is `mr-refused`: the ticket goes back to
+   `awaiting-approval` with the reason, the hold ends and the row is deleted; approving again
+   writes a second decision and reuses the MR still open. Only those steps run in the section, so
+   the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
+   section for at most about four forge calls of 15 s each, plus the mirror's git. A change to
+   Foreman itself always lands by the local merge. Nothing merges an MR yet: the ticket stays held
+   until it does. A daemon that stops with an MR open leaves its `landings` row, so the next start
+   holds the repo until `foreman land-clear <repo>`.
 
 ### A dependent waiting on a canceled ticket
 

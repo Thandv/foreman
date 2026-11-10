@@ -233,8 +233,9 @@ test('every MergeCode in the union is an outcome a row above produces', () => {
   const source = fs.readFileSync(new URL('merge.ts', SRC), 'utf8');
   const union = /export type MergeCode =([^;]+);/.exec(source)?.[1] ?? '';
   const declared = [...union.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]!).sort();
-  // conflict-round-abandoned is produced and asserted in test/conflictrepair.test.ts.
-  const covered = new Set<string>([...ROWS.map((r) => r.code), 'not-approved', 'nothing-to-merge', 'conflict-round-abandoned']);
+  // conflict-round-abandoned is produced and asserted in test/conflictrepair.test.ts; mr-opened and mr-refused in
+  // test/landing-mr.test.ts.
+  const covered = new Set<string>([...ROWS.map((r) => r.code), 'not-approved', 'nothing-to-merge', 'conflict-round-abandoned', 'mr-opened', 'mr-refused']);
   assert.ok(declared.length > 0, 'the union was found');
   assert.deepEqual(declared.filter((c) => !covered.has(c)), []);
   assert.deepEqual([...covered].filter((c) => !declared.includes(c)), []);
