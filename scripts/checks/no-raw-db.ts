@@ -30,7 +30,7 @@ export const ALLOW: Record<string, Partial<RawDbCounts>> = {
   'src/improve.ts': { reads: 1 }, // gatherEvidence's SELECT helper
   'src/metrics.ts': { reads: 1 }, // parked tickets for GET /api/metrics
   'src/roles.ts': { reads: 1 }, // a ticket's last skills line
-  'src/scheduler.ts': { reads: 1, writes: 1 }, // blocked-ticket count; WRITE: pruneEvents
+  'src/scheduler.ts': { reads: 1 }, // blocked-ticket count
   'src/server.ts': { reads: 4 }, // landed decisions, last event id, prune's branch list, an artifact lookup
   'src/verify/crewReview.ts': { reads: 1 }, // the status event before a run's first event
   'src/verify/followUpChain.ts': { reads: 1 }, // open tickets for the follow-up chain

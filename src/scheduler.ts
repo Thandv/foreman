@@ -3397,18 +3397,6 @@ export class Scheduler {
   }
 
   private pruneEvents(taskId: string): void {
-    // The admission core-guard warning is written first in a run and read back
-    // for every later park note (Store.withCoreGuard), so it is never pruned.
-    // Nor is a `decision` (what was decided at the gate, by whom, with what
-    // note) or a run's `skills` line (which skills its brief carried): one of
-    // each per decision or run, and a long ticket's log pushed both out.
-    this.store.db
-      .prepare(
-        `DELETE FROM events WHERE task_id = ? AND id NOT IN
-           (SELECT id FROM events WHERE task_id = ? ORDER BY id DESC LIMIT ?)
-           AND type NOT IN ('decision', 'skills')
-           AND NOT (type = 'warning' AND substr(message, 1, ?) = ?)`,
-      )
-      .run(taskId, taskId, config.logLinesPerRun, CORE_GUARD_PREFIX.length, CORE_GUARD_PREFIX);
+    this.store.pruneTaskEvents(taskId, config.logLinesPerRun);
   }
 }

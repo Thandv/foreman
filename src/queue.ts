@@ -375,6 +375,25 @@ export class Store extends EventEmitter {
   }
 
   /**
+   * Drop a task's events older than its last `keep`, as the scheduler does at
+   * the end of every run. The admission core-guard warning is written first in
+   * a run and read back for every later park note (withCoreGuard), so it is
+   * never pruned. Nor is a `decision` (what was decided at the gate, by whom,
+   * with what note) or a run's `skills` line (which skills its brief carried):
+   * one of each per decision or run, and a long ticket's log pushed both out.
+   */
+  pruneTaskEvents(taskId: string, keep: number): void {
+    this.db
+      .prepare(
+        `DELETE FROM events WHERE task_id = ? AND id NOT IN
+           (SELECT id FROM events WHERE task_id = ? ORDER BY id DESC LIMIT ?)
+           AND type NOT IN ('decision', 'skills')
+           AND NOT (type = 'warning' AND substr(message, 1, ?) = ?)`,
+      )
+      .run(taskId, taskId, keep, CORE_GUARD_PREFIX.length, CORE_GUARD_PREFIX);
+  }
+
+  /**
    * A park note with the admission core-guard warnings of the task's latest
    * run in front of it: the ticket names a protected path, and whoever decides
    * at the gate should know that before reading the rest. Read back from the
