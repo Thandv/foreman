@@ -8,6 +8,7 @@ import { startFakeGitlab, type FakeGitlab } from '../scripts/forge/fakeGitlab.ts
 import { Store } from '../src/queue.ts';
 import { ApprovalTracker, applyApproval } from '../src/gate.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
+import type { Forge, NewMr } from '../src/landing/forge.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
 import { pendingMrs, useLanding } from '../src/landing/mr.ts';
 import type { Task } from '../src/types.ts';
@@ -176,6 +177,34 @@ test('an unreachable forge returns the ticket to the gate with the reason', asyn
   assert.match(store.getTask(a.id)!.error ?? '', /approved, but not landed: /);
   assert.equal(store.isLanding(a.id), false);
   assert.equal(landingRows(store), 0);
+});
+
+test('an MR whose head is not the reviewed commit is refused and the ticket returns to the gate', async (t) => {
+  const f = await fixture(t);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'moved');
+  // Something else moves foreman/<id> on the forge after Foreman's push was confirmed, before the MR is opened.
+  class MovingLanding extends Landing {
+    override forge(m: LandingMapping): Forge {
+      const real = super.forge(m);
+      const openMr = real.openMr.bind(real);
+      real.openMr = (project: string, mr: NewMr) => {
+        git(f.forge, 'update-ref', `refs/heads/${mr.sourceBranch}`, 'refs/heads/main');
+        return openMr(project, mr);
+      };
+      return real;
+    }
+  }
+  useLanding(new MovingLanding([f.map], null), f.home);
+  const tip = git(f.repo, 'rev-parse', 'moved');
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-refused', out.merge.reason);
+  assert.match(out.merge.reason, new RegExp(`is ${git(f.repo, 'rev-parse', 'main')}, not the reviewed commit ${tip}`));
+  assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
+  assert.equal(store.isLanding(a.id), false, 'the hold ended');
+  assert.equal(landingRows(store), 0, 'the marker closed');
+  assert.ok(pendingMrs().every((p) => p.taskId !== a.id));
 });
 
 test('work changed after review is refused before anything is pushed', async (t) => {
