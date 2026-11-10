@@ -3,7 +3,10 @@
 Every `FOREMAN_*` variable `src/` reads has one row below; `scripts/checks/config-truth.ts` (run by `npm run verify`)
 fails when a variable is read and has no row, or has a row and is never read. "Unset" means the variable is not in the
 environment. Leave a variable unset rather than empty or wrong. A number read in `src/config.ts` keeps its default when
-empty, and a value that is not a number throws. The numbers read in `budget.ts` and the slot code check the parsed
+empty, and a value that is not a number throws, except the settings it reads on each call for one module: those never
+throw. A value they cannot use keeps the default (`FOREMAN_ASSIGNEE`, `FOREMAN_MIN_FREE_MB`, `FOREMAN_GIT_TIMEOUT_MS`,
+`FOREMAN_LIMIT_BACKOFF_MS`, `FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`), and an empty
+`FOREMAN_SLOT_WAIT_CREDIT_MS` or `FOREMAN_LEFTOVER_SAMPLE_MS` reads as 0. The numbers read in `budget.ts` and the slot code check the parsed
 value and keep the default. A reader written as `value ?? default` uses an empty value as it is: an empty path or URL
 stays empty (for example `FOREMAN_TOOLS_DIR`, `FOREMAN_OLLAMA_URL`), an empty number reads as 0, and a value that is
 not a number reads as NaN (for example `FOREMAN_HIGH_PRIORITY`, `FOREMAN_TOOL_QUARANTINE_AFTER`,
@@ -33,7 +36,7 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_MAX_VERIFYING` | `2 x FOREMAN_MAX_WORKERS` | Tasks allowed in the verify lane at once (at least 1) | `src/config.ts` |
 | `FOREMAN_MAX_VERIFIES` | `2` | Cap on test commands running at once, FIFO across all tasks: gate checks, playbook checks, the post-merge main check and its re-run, and a worker's full-suite run through the slot wrapper (`src/verify/testSlot.ts`, which leases a slot from the daemon). A single-file `node --test` a worker runs directly takes no slot | `src/verify/slots.ts` |
 | `FOREMAN_SLOT_WAIT_MS` | `600000` (10 min) | How long the slot wrapper waits for a slot before giving up | `src/verify/testSlot.ts` |
-| `FOREMAN_SLOT_WAIT_CREDIT_MS` | `1800000` (30 min) | How much of a worker's own wait for a test slot is not charged to its run clock | `src/runClock.ts` |
+| `FOREMAN_SLOT_WAIT_CREDIT_MS` | `1800000` (30 min) | How much of a worker's own wait for a test slot is not charged to its run clock | `src/config.ts` |
 | `FOREMAN_TASK_TIMEOUT_MS` | `1800000` (30 min); `5400000` (90 min) on the local plane | Hard ceiling on one run's wall clock; the local default applies under local-only mode or the cloud fallback | `src/config.ts` |
 | `FOREMAN_TEST_TIMEOUT_MIN` | `30` | Minutes before a test command Foreman runs is killed | `src/verify/tests.ts` |
 | `FOREMAN_TEST_REAL_HOME` | unset | `1` runs test commands with the real home instead of a private one; refused while the sandbox is on | `src/verify/tests.ts` |
@@ -61,18 +64,18 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_REVERT_TESTS` | off | `on` runs each test a code diff adds or changes with the diff's non-test files put back to base, and shows the per-test table to the reviewer and the owner gate. Anything but `on`/`off` throws. See [The revert check, per test](security.md#the-revert-check-per-test-foreman_revert_tests) | `src/config.ts` |
 | `FOREMAN_DEBUG` | off | `1` writes one `[foreman debug]` line per event to stderr: model and HTTP calls (start, end, status, ms, sizes), subprocess spawns (program name, argument count, cwd, exit code, ms) and swallowed errors (error type only). Never a prompt, body, argument, URL query or error message; secrets are redacted. Unset or `0`: no output at all | `src/config.ts` |
 | `FOREMAN_VERIFY` | on | `off` skips the review (the pre-review checks, the council and the crew chain). The tests still run and a failure still sends the work back; work that passes parks for approval unreviewed | `src/scheduler.ts` |
-| `FOREMAN_POSTMERGE_CHECK` | on | `off` skips the main check after a merge | `src/postMerge.ts` |
+| `FOREMAN_POSTMERGE_CHECK` | on | `off` skips the main check after a merge | `src/config.ts` |
 | `FOREMAN_FAST_VERIFY` | off | `1` or `on` gives a whitespace-only diff, or a small one that touches only docs or config, one review instead of the full council (anything but a pass goes on to the full council); code and security-adjacent paths never qualify | `src/verify/triage.ts` |
 | `FOREMAN_FAST_VERIFY_MAX_LINES` | `20` | Largest changed-line count that still counts as small | `src/verify/triage.ts` |
 | `FOREMAN_CREW_REVIEW` | `escalate` | `always` runs the crew chain on every ticket and its verdict lands; anything else escalates to it only when needed | `src/verify/crewReview.ts` |
 | `FOREMAN_GATE` | `human` | `owner` lets the Owner model decide a ticket this process watched park at the gate when neither the ticket (`--gate`), its playbook nor the board's switch says who decides; never under local-only mode or while the Claude CLI is down. See [Crew mode](crews.md#crew-mode) | `src/gate.ts` |
 | `FOREMAN_GATE_BATCH` | on | `off` gates tickets one by one instead of in batches | `src/gate.ts` |
-| `FOREMAN_ASSIGNEE` | `ai` | `ai` or `human`: who a ticket is assigned to when neither the ticket nor its playbook says. The board's toggle, once flipped, wins over this variable | `src/assign.ts` |
+| `FOREMAN_ASSIGNEE` | `ai` | `ai` or `human`: who a ticket is assigned to when neither the ticket nor its playbook says. The board's toggle, once flipped, wins over this variable | `src/config.ts` |
 | `FOREMAN_COUNCIL_DEADLINE_SHARE` | `0.4` | Share of the remaining run time the gate council may use (clamped to 0.1-0.9, at least 30 s) | `src/scheduler.ts` |
 | `FOREMAN_COUNCIL_MAX_TOKENS` | `350` | Output-token ceiling on a council advisor or chair call | `src/config.ts` |
 | `FOREMAN_COUNCIL_NUM_CTX` | `16384` | Context-window ceiling of a council call | `src/verify/council.ts` |
 | `FOREMAN_HIGH_PRIORITY` | `5` | Priority at which a ticket gets one rung more review | `src/verify/council.ts` |
-| `FOREMAN_LIMIT_BACKOFF_MS` | `900000` (15 min) | How long a provider that reported a usage limit is left alone | `src/providerLimit.ts` |
+| `FOREMAN_LIMIT_BACKOFF_MS` | `900000` (15 min) | How long a provider that reported a usage limit is left alone | `src/config.ts` |
 | `FOREMAN_DAILY_USD_CAP` | `5` | Daily ceiling on model spend in dollars; 0 or less means no cap | `src/budget.ts` |
 | `FOREMAN_DAILY_SUBSCRIPTION_USD_CAP` | `200` | Daily ceiling on notional subscription spend, at list price | `src/budget.ts` |
 | `FOREMAN_IMPROVE_PRIORITY` | `-10` | Priority of a self-improvement task (below real work) | `src/improve.ts` |
@@ -113,7 +116,7 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_OLLAMA_KEEP_ALIVE_COLD` | `5m` | Keep-alive for any other local model | `src/budget.ts` |
 | `FOREMAN_PREWARM` | on | `off` skips loading the roster's models at start | `src/warm.ts` |
 | `FOREMAN_PREWARM_TIMEOUT_MS` | `120000` | Time allowed to load one model | `src/warm.ts` |
-| `FOREMAN_GIT_TIMEOUT_MS` | `120000` | Longest any daemon-side git process may run before it is killed with SIGKILL; the call then fails with `git <subcommand> timed out after <n>ms`. An empty, non-numeric or non-positive value keeps the default | `src/gitTimeout.ts` |
+| `FOREMAN_GIT_TIMEOUT_MS` | `120000` | Longest any daemon-side git process may run before it is killed with SIGKILL; the call then fails with `git <subcommand> timed out after <n>ms`. An empty, non-numeric or non-positive value keeps the default | `src/config.ts` |
 | `FOREMAN_DOWNSHIFT` | on | `off` stops a local model stepping down to a smaller one that fits | `src/budget.ts` |
 | `FOREMAN_DOWNSHIFT_HOLD_MS` | `600000` (10 min) | How long a model that did not fit is skipped before it is tried again | `src/budget.ts` |
 | `FOREMAN_VRAM_GUARD` | on | `off` dispatches without the memory-fit check (single-model installs) | `src/budget.ts` |
@@ -125,8 +128,8 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_GATEWAY_IN_RATE` | `3` | Dollars per million input tokens charged for a gateway call | `src/models.ts` |
 | `FOREMAN_GATEWAY_OUT_RATE` | `15` | Dollars per million output tokens charged for a gateway call | `src/models.ts` |
 | `FOREMAN_GATEWAY_CONCURRENCY` | `4` | Concurrent gateway calls | `src/budget.ts` |
-| `FOREMAN_AGENTS_DIR` | `$FOREMAN_HOME/agents` | Where agent definitions are read | `src/agents.ts` |
-| `FOREMAN_PLAYBOOKS_DIR` | `$FOREMAN_HOME/playbooks` | Where playbooks are read | `src/playbooks.ts` |
+| `FOREMAN_AGENTS_DIR` | `$FOREMAN_HOME/agents` | Where agent definitions are read | `src/config.ts` |
+| `FOREMAN_PLAYBOOKS_DIR` | `$FOREMAN_HOME/playbooks` | Where playbooks are read | `src/config.ts` |
 | `FOREMAN_SKILLS_DIR` | unset | The skills repository; unset turns skills off | `src/config.ts` |
 | `FOREMAN_SKILL_BRIEF_BYTES` | `9000` | Byte budget for the skills block of one brief | `src/config.ts` |
 | `FOREMAN_TRACE_SINK` | unset | URL each trace event is also posted to: at most 32 posts in flight (an event past that is dropped, not queued) and each aborted after 10 s | `src/trace.ts` |
@@ -136,14 +139,14 @@ where they are used, so their values are never printed, only their names. No `sr
 | `FOREMAN_BACKUP_COPY_DIR` | unset | A second copy on another disk; unset, `serve` warns | `src/backup.ts` |
 | `FOREMAN_DEPS_MODE` | `clone` | How a worktree gets its dependencies: `clone`, `symlink` or `off` | `src/deps.ts` |
 | `FOREMAN_IGNORE_TRAINING_LOCK` | unset | `1` keeps the queue running while an adapter trains (otherwise it pauses) | `src/scheduler.ts` |
-| `FOREMAN_MIN_FREE_MB` | `2048` | Free megabytes required on the volume holding `FOREMAN_HOME` (and on a task's repo volume) before a new run is dispatched. Below it dispatch pauses with one `dispatch paused: disk` event and resumes when space returns; running work is untouched. Empty, negative or non-numeric falls back to the default | `src/diskSpace.ts` |
+| `FOREMAN_MIN_FREE_MB` | `2048` | Free megabytes required on the volume holding `FOREMAN_HOME` (and on a task's repo volume) before a new run is dispatched. Below it dispatch pauses with one `dispatch paused: disk` event and resumes when space returns; running work is untouched. Empty, negative or non-numeric falls back to the default | `src/config.ts` |
 | `FOREMAN_SANDBOX` | `tests` | `off`, `tests` or `all`: what runs inside the sandbox; anything else throws. `src/deps.ts` reads it only to warn that `FOREMAN_DEPS_MODE=symlink` leaves a sandboxed command without its dependencies. See [The sandbox](security.md#the-sandbox-foreman_sandbox) | `src/security/sandbox.ts`, `src/deps.ts` |
 | `FOREMAN_SANDBOX_RO` | unset | Colon-separated extra read-only paths for a sandboxed command | `src/security/sandbox.ts` |
 | `FOREMAN_SANDBOX_DENY_PORTS` | `8000,8001,8002,3010` | Loopback ports a sandboxed command may not connect to, besides the control port (at most 4; a bad list is refused) | `src/security/sandbox.ts` |
 | `FOREMAN_SANDBOX_ALLOW` | unset | Allowances a sandboxed command gets only when named (comma or space separated): `fsevents`, file watching, is the only one; an unknown name is refused | `src/security/sandbox.ts` |
 | `FOREMAN_FREEZE_SWEEP_GRACE_MS` | `2000` | Shortens the start-up freeze sweep's grace (digits only) | `src/runners/freezeSweep.ts` |
 | `FOREMAN_FREEZE_SWEEP_CAP_MS` | grace plus 5 s | Shortens the start-up freeze sweep's cap (digits only; never above grace plus 5 s) | `src/runners/freezeSweep.ts` |
-| `FOREMAN_LEFTOVER_SAMPLE_MS` | `3000` | Interval between samples of a command's process tree while it runs, used to find processes it leaves behind; `0` turns sampling off (an empty value also reads as 0) | `src/runners/proctree.ts` |
+| `FOREMAN_LEFTOVER_SAMPLE_MS` | `3000` | Interval between samples of a command's process tree while it runs, used to find processes it leaves behind; `0` turns sampling off (an empty value also reads as 0) | `src/config.ts` |
 | `FOREMAN_PYTHON` | `/opt/homebrew/bin/python3` (`python3` for catalog tools) | Python for training, persona serving and catalog tools | `src/align/train.ts`, `src/align/governor.ts`, `src/align/personaAdopt.ts`, `src/align/personaServe.ts`, `src/tools/run.ts` |
 | `FOREMAN_ALIGN_DIR` | `$FOREMAN_HOME/align` | Alignment data and local-model lock | `src/align/extract.ts` |
 | `FOREMAN_CLAUDE_PROJECTS` | `~/.claude/projects` | Claude Code transcripts read for alignment | `src/align/extract.ts` |

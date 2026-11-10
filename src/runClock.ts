@@ -1,3 +1,5 @@
+import { config } from './config.ts';
+
 /**
  * The one deadline a run has, as a clock that can be stopped.
  *
@@ -13,12 +15,9 @@
  * runs again even while that wait is still open.
  */
 
-export const DEFAULT_SLOT_WAIT_CREDIT_MS = 30 * 60_000;
-
 /** The total a run may be credited for its worker's own slot waits. Read per clock, so tests can set it per case. */
 export function slotWaitCreditMs(): number {
-  const ms = Number(process.env['FOREMAN_SLOT_WAIT_CREDIT_MS']);
-  return Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_SLOT_WAIT_CREDIT_MS;
+  return config.slotWaitCreditMs;
 }
 
 /** setTimeout/clearTimeout, injectable with the clock so a test moves time by hand. */

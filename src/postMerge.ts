@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { config } from './config.ts';
 import { provisionDeps } from './deps.ts';
 import { pinnedGit } from './gitExec.ts';
 import { checkoutWorktree } from './isolate.ts';
@@ -20,7 +21,7 @@ import { detectTestCmd, runTests, type SandboxRunOpts } from './verify/tests.ts'
  */
 
 export function postMergeCheckEnabled(): boolean {
-  return (process.env['FOREMAN_POSTMERGE_CHECK'] ?? '').trim().toLowerCase() !== 'off';
+  return config.postMergeCheck;
 }
 
 export interface MainCheck {

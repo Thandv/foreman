@@ -1,3 +1,4 @@
+import { config } from './config.ts';
 import { getPlaybook, type PlaybookCatalog } from './playbooks.ts';
 import type { Assignee, Task } from './types.ts';
 
@@ -53,8 +54,7 @@ export function effectiveAssignee(
  * in the sense that matters here (work keeps moving).
  */
 export function envAssignee(): Assignee | null {
-  const raw = (process.env['FOREMAN_ASSIGNEE'] ?? '').trim().toLowerCase();
-  return raw === 'human' || raw === 'ai' ? raw : null;
+  return config.assignee;
 }
 
 /** The status a task should be born into (or promoted to) given its assignee. */

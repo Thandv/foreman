@@ -176,6 +176,58 @@ export const config = {
   },
   /** Output-token ceiling on a council advisor/chair call (num_predict / max_tokens). */
   councilMaxOutputTokens: int('FOREMAN_COUNCIL_MAX_TOKENS', 350),
+  // The getters below are modules' own tuning, read on each call (tests set them per case). Each keeps the parsing
+  // its module had; none throws, so a typo never stops a running daemon.
+  /** Where agent definitions are read (src/agents.ts). */
+  get agentsDir(): string {
+    return process.env['FOREMAN_AGENTS_DIR'] ?? path.join(home, 'agents');
+  },
+  /** Where playbooks are read (src/playbooks.ts). */
+  get playbooksDir(): string {
+    return process.env['FOREMAN_PLAYBOOKS_DIR'] ?? path.join(home, 'playbooks');
+  },
+  /** Who a ticket goes to when neither it nor its playbook says (src/assign.ts); anything but ai or human is null. */
+  get assignee(): 'human' | 'ai' | null {
+    const raw = (process.env['FOREMAN_ASSIGNEE'] ?? '').trim().toLowerCase();
+    return raw === 'human' || raw === 'ai' ? raw : null;
+  },
+  /** Free MB a volume needs before dispatch (src/diskSpace.ts); empty, non-numeric or negative is 2048. */
+  get minFreeMb(): number {
+    const raw = process.env['FOREMAN_MIN_FREE_MB'];
+    if (raw === undefined || raw.trim() === '') return 2048;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 2048;
+  },
+  /** Limit on every daemon-side git process (src/gitTimeout.ts); empty, non-numeric or non-positive is 120000. */
+  get gitTimeoutMs(): number {
+    const raw = process.env['FOREMAN_GIT_TIMEOUT_MS']?.trim();
+    if (!raw) return 120_000;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120_000;
+  },
+  /** The main check after a merge (src/postMerge.ts): on unless `off`. */
+  get postMergeCheck(): boolean {
+    return (process.env['FOREMAN_POSTMERGE_CHECK'] ?? '').trim().toLowerCase() !== 'off';
+  },
+  /** How long a usage-limited runner is left alone (src/providerLimit.ts); default 15 minutes. */
+  get limitBackoffMs(): number {
+    const raw = Number(process.env['FOREMAN_LIMIT_BACKOFF_MS']);
+    return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60_000;
+  },
+  /** Total credit for a worker's own slot waits (src/runClock.ts); default 30 minutes, an empty value reads as 0. */
+  get slotWaitCreditMs(): number {
+    const ms = Number(process.env['FOREMAN_SLOT_WAIT_CREDIT_MS']);
+    return Number.isFinite(ms) && ms >= 0 ? ms : 30 * 60_000;
+  },
+  /** Step delay of the echo runner (src/runners/echo.ts), the demo/self-test worker. */
+  get echoStepMs(): number {
+    return Number(process.env['FOREMAN_ECHO_STEP_MS'] ?? 900);
+  },
+  /** Leftover-process sampling interval (src/runners/proctree.ts); 0 is off, an empty value reads as 0. */
+  get leftoverSampleMs(): number {
+    const raw = Number(process.env['FOREMAN_LEFTOVER_SAMPLE_MS'] ?? 3_000);
+    return Number.isFinite(raw) && raw >= 0 ? raw : 3_000;
+  },
 } as const;
 
 export type Config = typeof config;
@@ -218,6 +270,16 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   skillsDir: 'FOREMAN_SKILLS_DIR',
   skillBriefBytes: 'FOREMAN_SKILL_BRIEF_BYTES',
   councilMaxOutputTokens: 'FOREMAN_COUNCIL_MAX_TOKENS',
+  agentsDir: 'FOREMAN_AGENTS_DIR',
+  playbooksDir: 'FOREMAN_PLAYBOOKS_DIR',
+  assignee: 'FOREMAN_ASSIGNEE',
+  minFreeMb: 'FOREMAN_MIN_FREE_MB',
+  gitTimeoutMs: 'FOREMAN_GIT_TIMEOUT_MS',
+  postMergeCheck: 'FOREMAN_POSTMERGE_CHECK',
+  limitBackoffMs: 'FOREMAN_LIMIT_BACKOFF_MS',
+  slotWaitCreditMs: 'FOREMAN_SLOT_WAIT_CREDIT_MS',
+  echoStepMs: 'FOREMAN_ECHO_STEP_MS',
+  leftoverSampleMs: 'FOREMAN_LEFTOVER_SAMPLE_MS',
 };
 
 export interface Knob {

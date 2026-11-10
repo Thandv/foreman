@@ -1,6 +1,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { constants as fsConstants, promises as fsp } from 'node:fs';
 import path from 'node:path';
+import { config } from '../config.ts';
 import { FREEZE_MEMBERS_MAX, activeRecorder, type FreezeGroup, type FreezeRecorder } from './freezeRecord.ts';
 
 /**
@@ -470,8 +471,7 @@ export interface ReaperOptions {
 
 /** Samples of a command's tree are taken this often while it runs (FOREMAN_LEFTOVER_SAMPLE_MS; 0 = off). */
 export function leftoverSampleMs(): number {
-  const raw = Number(process.env['FOREMAN_LEFTOVER_SAMPLE_MS'] ?? 3_000);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 3_000;
+  return config.leftoverSampleMs;
 }
 
 /** At most this many processes are remembered per command (a suite that forks thousands stops adding, not growing). */

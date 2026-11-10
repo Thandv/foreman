@@ -1,3 +1,5 @@
+import { config } from './config.ts';
+
 /**
  * A provider usage limit is not a defect in the ticket.
  *
@@ -31,6 +33,5 @@ export function isProviderLimit(text: string | null | undefined): boolean {
 
 /** How long to stop claiming work for a limited runner (FOREMAN_LIMIT_BACKOFF_MS, default 15 minutes). */
 export function limitBackoffMs(): number {
-  const raw = Number(process.env['FOREMAN_LIMIT_BACKOFF_MS']);
-  return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60_000;
+  return config.limitBackoffMs;
 }
