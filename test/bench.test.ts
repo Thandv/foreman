@@ -58,8 +58,12 @@ test('the pipeline bench lands every ticket with gate batching on and off, and b
     workerSuite: string; workerLeasesPerLanded: number;
   }>;
   assert.deepEqual(runs.map((r) => r.gateBatch), ['on', 'off']);
-  // The default, FOREMAN_WORKER_SUITE=full: each worker runs the suite once through the slot wrapper, which leases a slot.
-  for (const r of runs) assert.deepEqual([r.workerSuite, r.workerLeasesPerLanded], ['full', 1], `${r.gateBatch}: worker leases`);
+  // The default, FOREMAN_WORKER_SUITE=full: each worker runs the suite through the slot wrapper, which leases a slot. At
+  // least once per landed ticket, not exactly: a transient failure retries, and the retried worker leases again.
+  for (const r of runs) {
+    assert.equal(r.workerSuite, 'full');
+    assert.ok(r.workerLeasesPerLanded >= 1, `${r.gateBatch}: ${r.workerLeasesPerLanded} worker leases per landed ticket`);
+  }
   for (const r of runs) {
     assert.equal(r.landed, 3, `${r.gateBatch}: every ticket landed; not landed: ${JSON.stringify(r.unlanded)}`);
     assert.ok(r.ticketsPerHour > 0);
