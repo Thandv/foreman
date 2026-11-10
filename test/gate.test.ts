@@ -1322,6 +1322,27 @@ test('the owner gate, single or batched, never signs off reviewers who disagreed
   }
 });
 
+test('a batch with one S2 ticket holds it before the call and never shows it to the owner (passes before and after)', async () => {
+  const pbDir = withPlaybooks({ 'auto.md': AUTO });
+  const store = new Store(':memory:');
+  const { tasks } = parkedEpic(store, 3, [{}, { sensitivity: 'S2', title: 'secret ticket' }, {}]);
+  const [a, s2, c] = tasks as [Task, Task, Task];
+  const stub = stubClaude([batchReply([
+    { id: a.id, decision: 'approve', rationale: 'A is in scope' },
+    { id: c.id, decision: 'approve', rationale: 'C is in scope' },
+  ])]);
+  try {
+    const decisions = await ownerGateBatch({ items: batchItems(store, tasks), store });
+    assert.equal(stub.count(), 1);
+    assert.equal(decisions.get(s2.id), 'hold');
+    assert.match(gateEvents(store, s2.id).join('\n'), /hard-human: S2 work is never shown to the hosted owner model/);
+    assert.ok(!stub.prompt(0).includes(s2.id) && !stub.prompt(0).includes('secret ticket'), 'the S2 ticket is not in the batch prompt');
+  } finally {
+    store.close();
+    cleanup([pbDir, stub.dir]);
+  }
+});
+
 test('the run\'s own state is the reason given before an unruled split', () => {
   const store = new Store(':memory:');
   try {
