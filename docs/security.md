@@ -28,7 +28,8 @@
   `principal-minted` when it made the principal, else `token-minted`, with the name, principal id,
   kind, token id and `hostAdmin: true`, never the secret. **Known gap:** an unsandboxed worker runs as
   the daemon's user, can read `<FOREMAN_HOME>/secrets/host-admin` and is a loopback peer, so it can
-  mint a principal for itself. Only the macOS worker sandbox prevents it. The event records the mint,
+  mint a principal for itself (pinned, see "Known gap until the worker sandbox" below). Only the macOS
+  worker sandbox prevents it. The event records the mint,
   but it carries no task id, so it is seen only on the raw stream (`GET /api/events`) or in the
   ledger's events table: neither the board (which shows events only in a task's drawer, and whose API
   requests, SSE included, get 401 once auth is on) nor `foreman watch` (which shows the task table) shows it yet.
@@ -90,6 +91,18 @@
   it; the gate's own test run is the one that counts. The git tripwire's baseline (next section) is a file
   the worker can write too, and has the same limit.
 - Admission BLOCK is non-overridable by config, by design.
+
+## Known gap until the worker sandbox
+
+A `claude-code` worker runs unsandboxed as the daemon's user, and its environment names the daemon's home
+(`FOREMAN_HOME`). So it can read `<FOREMAN_HOME>/secrets/host-admin`, open `foreman.db` (the whole ledger,
+principals and token hashes included) and, as a loopback peer, `POST /api/tokens` with the secret to mint
+itself a principal, with auth on and no bearer. `test/identity-gap.test.ts` pins that all three succeed
+today: it starts a child with exactly the environment a `claude-code` worker gets
+(`claudeWorkerEnv` then `workerEnv`) and checks each one. So tokens and four-eyes give **attribution
+and process, not a security boundary** against a worker: a self-minted principal counts as another human,
+and its `principal-minted` event is the only record of it. The macOS worker sandbox, with the secrets and
+the ledger hidden and egress only through the gateway, is what closes it; under it these probes must fail.
 
 ## The git tripwire (`src/gitTripwire.ts`)
 
