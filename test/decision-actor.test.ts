@@ -5,9 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import type { AddressInfo } from 'node:net';
 import ts from 'typescript';
 import { applyApproval, applyRejection } from '../src/gate.ts';
 import { Store } from '../src/queue.ts';
+import { Scheduler } from '../src/scheduler.ts';
+import { createServer } from '../src/server.ts';
+import { traceTask } from '../src/trace.ts';
 import type { Run, Task } from '../src/types.ts';
 import { FILED_PREFIX } from '../src/verify/followUpChain.ts';
 import { hermeticGitEnv } from './helpers/git.ts';
@@ -261,4 +266,141 @@ test('every decision writer in src/ has a pin', () => {
     visit(sf);
   }
   assert.deepEqual([...found].sort(), Object.keys(WRITERS).sort());
+});
+
+// ------------------------------------------------------------ who acted
+
+/** The actor_id of the task's decisions rows, oldest first. */
+function actorIds(store: Store, taskId: string): unknown[] {
+  return (store.db.prepare('SELECT actor_id FROM decisions WHERE task_id = ? ORDER BY at, rowid').all(taskId) as Array<{ actor_id: unknown }>)
+    .map((r) => r.actor_id);
+}
+
+test('a writer that names nobody records its actor\'s reserved id: operator, owner-model, system', async () => {
+  const store = new Store(':memory:');
+  try {
+    const person = parked(store);
+    await applyApproval(store, person.task.id, { note: 'fine' });
+    const owner = parked(store);
+    applyRejection(store, owner.task.id, 'owner-gate: no', 'owner-gate');
+    const epic = store.addTask({ title: 'epic', prompt: 'p', runner: 'echo', isEpic: true });
+    const child = store.addTask({ title: 'a', prompt: 'p', runner: 'echo', parentId: epic.id });
+    store.cancel(epic.id);
+    assert.deepEqual(
+      [actorIds(store, person.task.id), actorIds(store, owner.task.id), actorIds(store, epic.id), actorIds(store, child.id)],
+      [['operator'], ['owner-model'], ['operator'], ['system']],
+    );
+    assert.equal(store.decisionsForTask(person.task.id)[0]!.actorId, 'operator');
+    const traced = traceTask(store, child.id) as { decisions: Array<{ actor: string; actorId: string }> };
+    assert.deepEqual(traced.decisions.map((d) => [d.actor, d.actorId]), [['system', 'system']], 'foreman trace carries who acted');
+  } finally {
+    store.close();
+  }
+});
+
+test('every Store writer records the actor id it is given; the cascade under a cancel stays system', async (t) => {
+  const store = new Store(':memory:');
+  const work = scratchDir('foreman-decision-actor-reopen-');
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  try {
+    const by = 'p_alice';
+    const retried = parked(store);
+    applyRejection(store, retried.task.id, 'no');
+    store.retry(retried.task.id, null, null, by);
+    const reopened = failedReview(store, work);
+    store.reopen(reopened.task.id, null, by);
+    const epic = store.addTask({ title: 'epic', prompt: 'p', runner: 'echo', isEpic: true });
+    const child = store.addTask({ title: 'a', prompt: 'p', runner: 'echo', parentId: epic.id });
+    store.cancel(epic.id, null, { actorId: by });
+    const a = store.addTask({ title: 'a', prompt: 'p', runner: 'echo' });
+    const b = store.addTask({ title: 'b', prompt: 'p', runner: 'echo', deps: [a.id] });
+    store.dropDependency(b.id, a.id, 'human', by);
+    const { f1, f2 } = orderedFollowUps(store);
+    store.deleteTask(f1.id, by);
+    const { repo, sha } = repoWithCommit(t);
+    const landed = store.addTask({ title: 't', prompt: 'p', repo });
+    store.setStatus(landed.id, 'awaiting-approval');
+    await store.markLanded(landed.id, { commit: sha, actor: 'human', actorId: by });
+    assert.deepEqual(
+      [retried, reopened].map((x) => actorIds(store, x.task.id)).concat([epic, child, b, f2, landed].map((x) => actorIds(store, x.id))),
+      [['operator', by], [by], [by], ['system'], [by], [by], [by]],
+    );
+  } finally {
+    store.close();
+  }
+});
+
+interface Rig {
+  store: Store;
+  call: (method: string, urlPath: string, body?: unknown) => Promise<{ status: number; json: Record<string, unknown> }>;
+}
+
+/** A daemon on an ephemeral loopback port; `headers` go on every call. */
+async function rig(t: test.TestContext, headers: () => Record<string, string>): Promise<Rig> {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { maxWorkers: 1, tickMs: 5, verifyEnabled: false });
+  const server = createServer(store, sched);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await sched.stop();
+    store.close();
+  });
+  const call: Rig['call'] = async (method, urlPath, body) => {
+    const res = await fetch(`${base}${urlPath}`, {
+      method,
+      headers: { ...headers(), 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await res.text();
+    return { status: res.status, json: text ? (JSON.parse(text) as Record<string, unknown>) : {} };
+  };
+  return { store, call };
+}
+
+/** Cancel, retry, reopen, deps-drop, delete and landed through their routes: each one's newest actor_id. */
+async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
+  const { store, call } = r;
+  const work = scratchDir('foreman-decision-actor-reopen-');
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  // On a person's desk, so the ticks the routes start dispatch none of them under the test.
+  const canceled = store.addTask({ title: 'c', prompt: 'p', runner: 'echo', assignee: 'human' });
+  const retried = parked(store);
+  applyRejection(store, retried.task.id, 'no');
+  const reopened = failedReview(store, work);
+  const a = store.addTask({ title: 'a', prompt: 'p', runner: 'echo', assignee: 'human' });
+  const b = store.addTask({ title: 'b', prompt: 'p', runner: 'echo', assignee: 'human', deps: [a.id] });
+  const { f1, f2 } = orderedFollowUps(store);
+  const { repo, sha } = repoWithCommit(t);
+  const landed = store.addTask({ title: 't', prompt: 'p', repo, assignee: 'human' });
+  store.setStatus(landed.id, 'awaiting-approval');
+  const calls: Array<[string, string, unknown?]> = [
+    ['POST', `/api/tasks/${canceled.id}/cancel`, {}],
+    ['POST', `/api/tasks/${retried.task.id}/retry`, {}],
+    ['POST', `/api/tasks/${reopened.task.id}/reopen`, {}],
+    ['POST', `/api/tasks/${b.id}/deps-drop`, { dep: a.id }],
+    ['DELETE', `/api/tasks/${f1.id}`],
+    ['POST', `/api/tasks/${landed.id}/landed`, { commit: sha }],
+  ];
+  for (const [method, url, body] of calls) {
+    const res = await call(method, url, body);
+    assert.equal(res.status, 200, `${method} ${url}: ${JSON.stringify(res.json)}`);
+  }
+  return [canceled.id, retried.task.id, reopened.task.id, b.id, f2.id, landed.id].map((id) => actorIds(store, id).at(-1));
+}
+
+test('with auth off, every decision route records the operator', async (t) => {
+  const r = await rig(t, () => ({}));
+  assert.deepEqual(await throughRoutes(t, r), Array(6).fill('operator'));
+});
+
+test('with auth on, every decision route records the request principal', async (t) => {
+  let secret = '';
+  const r = await rig(t, () => ({ authorization: `Bearer ${secret}` }));
+  const alice = r.store.addPrincipal({ kind: 'human', name: 'alice', createdBy: 'operator' });
+  secret = randomBytes(32).toString('base64url');
+  r.store.addToken({ principalId: alice.id, tokenHash: createHash('sha256').update(secret).digest('hex'), expiresAt: null, createdBy: 'operator' });
+  assert.deepEqual(await throughRoutes(t, r), Array(6).fill(alice.id));
 });

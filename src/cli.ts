@@ -303,7 +303,8 @@ const yesNo = (v: boolean | null | undefined, unknown = 'not stated'): string =>
 
 /** One decision as `foreman show` and the confirmation line print it: action, who, corrected, the trees short, the note's head. */
 function decisionLine(d: Decision): string {
-  const parts = [`${d.action} by ${d.actor}`];
+  // Who acted, after the kind of actor; a row from before actor ids were recorded has none.
+  const parts = [`${d.action} by ${d.actor}${d.actorId ? ` (${d.actorId})` : ''}`];
   if (d.action === 'approve') {
     parts.push(`corrected: ${yesNo(d.corrected)}${d.correctedSource ? ` (${d.correctedSource === 'trees' ? 'the trees differ' : 'stated'})` : ''}`);
     parts.push(`merged: ${yesNo(d.merged, 'n/a')}${d.asIs ? ' (--as-is)' : ''}`);

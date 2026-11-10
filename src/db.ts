@@ -423,6 +423,9 @@ export const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   // updated_at, which any later write (a gate change) resets. NULL on a task
   // parked before the column existed: readers fall back to updated_at.
   ['tasks', 'awaiting_since', 'INTEGER'],
+  // Who acted on a decision: the request principal's id, or a reserved actor id ('operator', 'owner-model',
+  // 'system'). NULL on a row from before it; ADD COLUMN fires none of the table's append-only triggers.
+  ['decisions', 'actor_id', 'TEXT'],
 ];
 
 const STATUSES = new Set<string>([
@@ -509,7 +512,7 @@ function migrate(db: DatabaseSync): void {
  * user_version`). Bump it, and add its row to test/schema-version.test.ts,
  * whenever SCHEMA, COLUMNS or MIGRATED_INDEXES change.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** A ledger written by a newer Foreman: this binary must not touch it. */
 export class NewerSchemaError extends Error {
@@ -707,6 +710,7 @@ export function rowToDecision(row: Row): Decision {
     at: num(row['at']),
     action: str(row['action']) as Decision['action'],
     actor: str(row['actor']) as Decision['actor'],
+    actorId: nstr(row['actor_id']),
     note: nstr(row['note']),
     noteCutBytes: num(row['note_cut_bytes']),
     statusAfter: nstr(row['status_after']),

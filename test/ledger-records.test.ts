@@ -1375,7 +1375,7 @@ async function cli(argv: string[], routes: Record<string, unknown>): Promise<{ s
 }
 
 const ROW: Decision = {
-  id: 'd_abc', taskId: 't_x', runId: 'r_1', at: Date.parse('2026-10-12T09:00:00Z'), action: 'approve', actor: 'human',
+  id: 'd_abc', taskId: 't_x', runId: 'r_1', at: Date.parse('2026-10-12T09:00:00Z'), action: 'approve', actor: 'human', actorId: 'operator',
   note: 'landed r2\'s on-top patch by hand', noteCutBytes: 0, statusAfter: 'done', reviewedTree: '1111111111112222222222223333333333334444',
   landedTree: '1111111111112222222222223333333333334444', asIs: false, merged: true, mergeReason: 'merged 1 commit(s) from b',
   corrected: true, correctedSource: 'operator', reviewSource: 'independent reviewer, verify 3040/0/1', extra: null,
@@ -1392,7 +1392,7 @@ test('CLI approve --corrected sends the statement and prints one line confirming
   assert.equal(confirmed.length, 1, r.stdout);
   assert.equal(
     confirmed[0],
-    'recorded d_abc: approve by human; corrected: yes (stated); merged: yes; reviewed 111111111111 → landed 111111111111; ' +
+    'recorded d_abc: approve by human (operator); corrected: yes (stated); merged: yes; reviewed 111111111111 → landed 111111111111; ' +
       'verified by: independent reviewer, verify 3040/0/1; → done; note: landed r2\'s on-top patch by hand',
   );
 });
@@ -1425,7 +1425,8 @@ test('CLI cancel --note sends the note; a daemon that answers without a decision
 });
 
 test('foreman show lists the decisions on a task: action, who, corrected, the trees short, the note\'s head', async () => {
-  const cancelRow: Decision = { ...ROW, id: 'd_c', action: 'cancel', actor: 'system', note: 'parent t_e was canceled', statusAfter: 'canceled', corrected: null, correctedSource: null, asIs: null, merged: null, mergeReason: null, reviewedTree: null, landedTree: null, reviewSource: null };
+  // A row from before actor ids were recorded: no id after the actor.
+  const cancelRow: Decision = { ...ROW, id: 'd_c', action: 'cancel', actor: 'system', actorId: null, note: 'parent t_e was canceled', statusAfter: 'canceled', corrected: null, correctedSource: null, asIs: null, merged: null, mergeReason: null, reviewedTree: null, landedTree: null, reviewSource: null };
   const asIs: Decision = { ...ROW, id: 'd_a', asIs: true, correctedSource: 'trees', landedTree: '9999999999998888888888887777777777776666', reviewSource: null, note: 'n'.repeat(200) };
   const r = await cli(['show', 't_x'], {
     'GET /api/tasks/t_x': {
@@ -1437,7 +1438,7 @@ test('foreman show lists the decisions on a task: action, who, corrected, the tr
   const section = r.stdout.slice(r.stdout.indexOf('decisions:\n'), r.stdout.indexOf('\nrecent activity:'));
   const lines = section.split('\n').slice(1).filter(Boolean);
   assert.equal(lines.length, 3, r.stdout);
-  assert.match(lines[0]!, /approve by human; corrected: yes \(stated\); merged: yes; reviewed 111111111111 → landed 111111111111; verified by: independent reviewer, verify 3040\/0\/1; → done; note: landed r2's on-top patch by hand$/);
+  assert.match(lines[0]!, /approve by human \(operator\); corrected: yes \(stated\); merged: yes; reviewed 111111111111 → landed 111111111111; verified by: independent reviewer, verify 3040\/0\/1; → done; note: landed r2's on-top patch by hand$/);
   assert.match(lines[1]!, /corrected: yes \(the trees differ\); merged: yes \(--as-is\); reviewed 111111111111 → landed 999999999999; → done; note: n{120}…$/);
   assert.match(lines[2]!, /cancel by system; → canceled; note: parent t_e was canceled$/);
   // A daemon from before the table answers without the list: no section, no crash.

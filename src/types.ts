@@ -194,6 +194,9 @@ export const DECISION_ACTORS: readonly DecisionActor[] = ['human', 'owner-model'
 export type ReservedActorId = 'operator' | 'owner-model' | 'system';
 export const RESERVED_ACTOR_IDS: readonly ReservedActorId[] = ['operator', 'owner-model', 'system'];
 
+/** The actor id a decision row gets when its writer names no principal: a person is the operator. */
+export const DEFAULT_ACTOR_ID: Readonly<Record<DecisionActor, ReservedActorId>> = { human: 'operator', 'owner-model': 'owner-model', system: 'system' };
+
 export type PrincipalKind = 'human' | 'service';
 export const PRINCIPAL_KINDS: readonly PrincipalKind[] = ['human', 'service'];
 
@@ -222,6 +225,11 @@ export interface Decision {
   at: number;
   action: DecisionAction;
   actor: DecisionActor;
+  /**
+   * Who acted: the request principal's id, or a reserved actor id ('operator' with auth off, 'owner-model', 'system').
+   * Null on a row written before the column existed.
+   */
+  actorId: string | null;
   /** The whole text given, bounded at 16 KB with a marker; null when none was given. */
   note: string | null;
   /** Bytes of the note that were not stored (0 when it was stored whole). */

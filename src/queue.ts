@@ -24,7 +24,7 @@ import type {
 } from './types.ts';
 import { pinnedGit } from './gitExec.ts';
 import { removeJail } from './isolate.ts';
-import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
+import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, DEFAULT_ACTOR_ID, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
 import { PRINCIPAL_KINDS, RESERVED_ACTOR_IDS } from './types.ts';
 
 /** The most of a decision's note the ledger keeps, in UTF-8 bytes, marker included. */
@@ -422,6 +422,8 @@ export class Store extends EventEmitter {
    * event on the task's timeline with its short form. Append-only: no method
    * here updates or deletes a row, and the table refuses both (db.ts). This
    * only records; it is called once the decision has already taken effect.
+   * `actorId` is who acted; a writer that names nobody gets its actor's
+   * reserved id (DEFAULT_ACTOR_ID: a person is the operator).
    */
   addDecision(d: NewDecision): Decision {
     if (!DECISION_ACTIONS.includes(d.action)) throw new Error(`unknown decision action: ${String(d.action)}`);
@@ -432,12 +434,12 @@ export class Store extends EventEmitter {
     const decisionId = id('d');
     this.db
       .prepare(
-        `INSERT INTO decisions (id, task_id, run_id, at, action, actor, note, note_cut_bytes, status_after, reviewed_tree,
-           landed_tree, as_is, merged, merge_reason, corrected, corrected_source, review_source, extra)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO decisions (id, task_id, run_id, at, action, actor, actor_id, note, note_cut_bytes, status_after,
+           reviewed_tree, landed_tree, as_is, merged, merge_reason, corrected, corrected_source, review_source, extra)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        decisionId, d.taskId, d.runId ?? null, Date.now(), d.action, actor, note, cut, d.statusAfter ?? null,
+        decisionId, d.taskId, d.runId ?? null, Date.now(), d.action, actor, d.actorId ?? DEFAULT_ACTOR_ID[actor], note, cut, d.statusAfter ?? null,
         d.reviewedTree ?? null, d.landedTree ?? null, flag(d.asIs), flag(d.merged), d.mergeReason ?? null,
         flag(d.corrected), d.corrected == null ? null : (d.correctedSource ?? 'operator'),
         d.reviewSource?.trim() ? d.reviewSource.trim().slice(0, REVIEW_SOURCE_MAX) : null,
@@ -736,7 +738,7 @@ export class Store extends EventEmitter {
    * path, and the sibling is queued by the next reconcile. Any real dependent still refuses the delete, as does an
    * order-edge sibling that is running or already terminal (dropDependency would refuse it); nothing is changed then.
    */
-  deleteTask(taskId: string): void {
+  deleteTask(taskId: string, actorId?: string): void {
     const dependents = this.db
       .prepare('SELECT task_id FROM task_deps WHERE depends_on = ?')
       .all(taskId) as Record<string, unknown>[];
@@ -771,7 +773,7 @@ export class Store extends EventEmitter {
     if (children.length) {
       this.db.prepare('UPDATE tasks SET parent_id = NULL, updated_at = ? WHERE parent_id = ?').run(Date.now(), taskId);
     }
-    for (const d of dependents) this.dropDependency(String(d['task_id']), taskId, 'human');
+    for (const d of dependents) this.dropDependency(String(d['task_id']), taskId, 'human', actorId);
     this.db.prepare('DELETE FROM events WHERE task_id = ?').run(taskId);
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
   }
@@ -1479,7 +1481,7 @@ export class Store extends EventEmitter {
    * if anything it waits on has not finished; reconcileBlocked() promotes it
    * when they do.
    */
-  retry(taskId: string, note?: string | null, extra?: Record<string, unknown> | null): Task {
+  retry(taskId: string, note?: string | null, extra?: Record<string, unknown> | null, actorId?: string): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     // The run this retry turns away from, for the decision row written at the end.
@@ -1569,7 +1571,7 @@ export class Store extends EventEmitter {
       .sort((a, b) => b.startedAt - a.startedAt)[0];
     this.db.prepare('UPDATE tasks SET carry_run = ? WHERE id = ?').run(carry?.id ?? null, taskId);
     const retried = this.getTask(taskId)!;
-    this.noteDecision({ taskId, runId: retriedRun, action: 'retry', note, statusAfter: retried.status, extra });
+    this.noteDecision({ taskId, runId: retriedRun, action: 'retry', actorId, note, statusAfter: retried.status, extra });
     return retried;
   }
 
@@ -1581,7 +1583,7 @@ export class Store extends EventEmitter {
    * database. Only an operator command calls this; nothing automatic does.
    * Dependents the failure killed are revived to wait on the decision.
    */
-  reopen(taskId: string, note?: string | null): Task {
+  reopen(taskId: string, note?: string | null, actorId?: string): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     if (task.status !== 'failed') throw new Error(`task ${taskId} is ${task.status}; only a failed task can be reopened`);
@@ -1604,7 +1606,7 @@ export class Store extends EventEmitter {
     this.record({ taskId, type: 'status', message: why.slice(0, 500) });
     this.reviveDependents(taskId);
     const reopened = this.getTask(taskId)!;
-    this.noteDecision({ taskId, runId: run.id, action: 'reopen', note, statusAfter: reopened.status });
+    this.noteDecision({ taskId, runId: run.id, action: 'reopen', actorId, note, statusAfter: reopened.status });
     return reopened;
   }
 
@@ -1664,7 +1666,7 @@ export class Store extends EventEmitter {
    * (error `dependency <dep> ended as failed|rejected|canceled`), which is revived through the reviveDependents
    * path (to `blocked`; reconcileBlocked then queues it). There is deliberately no way to ADD an edge here.
    */
-  dropDependency(taskId: string, dep: string, actor: DecisionActor): Task {
+  dropDependency(taskId: string, dep: string, actor: DecisionActor, actorId?: string): Task {
     if (!DECISION_ACTORS.includes(actor)) throw new Error(`unknown decision actor: ${String(actor)}`);
     const refusal = (why: string): Error => new Error(`cannot drop ${dep} from ${taskId}: ${why}`);
     this.db.exec('BEGIN IMMEDIATE');
@@ -1681,7 +1683,7 @@ export class Store extends EventEmitter {
       }
       this.db.prepare('DELETE FROM task_deps WHERE task_id = ? AND depends_on = ?').run(taskId, dep);
       this.addDecision({
-        taskId, runId: null, action: 'deps-drop', actor,
+        taskId, runId: null, action: 'deps-drop', actor, actorId,
         note: `dropped dependency ${dep}${failedByThisEdge ? '; the ticket had failed by cascade from it and is revived' : ''}`,
         extra: { dep, statusBefore: task.status },
       });
@@ -1809,7 +1811,7 @@ export class Store extends EventEmitter {
    * gets its abort. A plain cancel leaves the ticket's dependents waiting (reconcileBlocked); `cascade` fails them
    * as a cancel always did, and says so in the decision row.
    */
-  cancel(taskId: string, note?: string | null, opts: { cascade?: boolean } = {}): Task {
+  cancel(taskId: string, note?: string | null, opts: { cascade?: boolean; actorId?: string } = {}): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     if (TERMINAL_STATUSES.includes(task.status)) throw new Error(`task ${taskId} already ${task.status}`);
@@ -1817,7 +1819,7 @@ export class Store extends EventEmitter {
     this.emit('cancel', taskId);
     // The reason, when one was given, is in the decision row and its timeline
     // event; the status note stays the fixed sentence other code matches on.
-    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
+    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', actorId: opts.actorId, note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
     // Parent first: the container is already terminal when its children close,
     // so closeEpicIfComplete cannot overwrite the cancel with a 'failed'.
     this.cancelDescendants(taskId, `parent ${taskId} was canceled`, new Set([taskId]));
@@ -1836,7 +1838,10 @@ export class Store extends EventEmitter {
    * One transaction: a 'landed' decision (landed_tree = <commit>^{tree}), status done, dependents revived through
    * reviveDependents. The jail is then removed as the scheduler removes a canceled run's; artifacts stay.
    */
-  async markLanded(taskId: string, opts: { commit: string; by?: string | null; note?: string | null; actor: DecisionActor }): Promise<Task> {
+  async markLanded(
+    taskId: string,
+    opts: { commit: string; by?: string | null; note?: string | null; actor: DecisionActor; actorId?: string },
+  ): Promise<Task> {
     const refusal = (why: string): Error => new Error(`cannot mark ${taskId} landed: ${why}`);
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
@@ -1892,7 +1897,7 @@ export class Store extends EventEmitter {
       const late = eligible();
       if (late) throw refusal(late);
       this.addDecision({
-        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, note, statusAfter: 'done', landedTree: tree,
+        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, actorId: opts.actorId, note, statusAfter: 'done', landedTree: tree,
         extra: { statusBefore: task.status, commit: sha, ...(by ? { by } : {}) },
       });
       this.setStatus(taskId, 'done', null);

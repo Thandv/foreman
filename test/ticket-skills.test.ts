@@ -1280,7 +1280,7 @@ test('POST /api/tasks/:id/retry: a list changes the ticket\'s skills, "default" 
         const viaCli = await cli(port, ['retry', t.id, '--skills', 'debug']);
         assert.equal(viaCli.code, 0, viaCli.stderr);
         // The second line is the ledger's confirmation of the retry (test/ledger-records.test.ts).
-        assert.match(viaCli.stdout, /→ \S+  skills: debug\nrecorded d_\w+: retry by human; → \S+; no note\n$/);
+        assert.match(viaCli.stdout, /→ \S+  skills: debug\nrecorded d_\w+: retry by human \(operator\); → \S+; no note\n$/);
         assert.deepEqual(now().skills, ['debug']);
         end();
         const cliDefault = await cli(port, ['retry', t.id, '--skills', 'default']);

@@ -16,7 +16,12 @@ it says otherwise, and none runs inside a worker session (see [Commands](command
 | `foreman cancel <taskId> [--note <text>] [--cascade]` | Stops a queued or running task. A task that is already closed is refused. The note is recorded and never blocks the cancel. Its dependents wait in `blocked` for you to drop, land or retry it; `--cascade` fails them instead. |
 
 `reject` and `cancel` differ: `reject` answers work that is waiting for you; `cancel` stops a task that is not decided.
-Every approve, reject, cancel, retry and reopen is one row in the ledger's `decisions` table.
+Every approve, reject, cancel, retry and reopen is one row in the ledger's `decisions` table. Its `actor` says what
+kind of actor decided (`human`, `owner-model` or `system`) and its `actor_id` says who: the principal whose bearer token
+the request carried, or a reserved id — `operator` for a person while auth is off, `owner-model` for the owner gate,
+`system` for a ticket an epic's cancel took down. A row from before `actor_id` existed has none. `foreman show` prints
+it after the actor (`cancel by human (operator)`) and `foreman trace` lists the rows under `decisions`. Approve and
+reject do not yet pass the request principal: their rows say `operator` for a person whoever sent them.
 
 **What cancel does to the worktree.** Cancelling a running task ends its run, and a worktree that run created is removed
 with it, unless the run had already reached its review: reviewed work that is cancelled is kept on disk for you to

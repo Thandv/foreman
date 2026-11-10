@@ -52,7 +52,7 @@ import { pinnedGit } from './gitExec.ts';
 import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
 import { hostAdminMintAllowed, mintToken, readMintRequest } from './security/mint.ts';
 import { authenticate, authIsOn, verifySlotAllowed } from './security/tokenAuth.ts';
-import { probeTask, STAGES } from './types.ts';
+import { DEFAULT_ACTOR_ID, probeTask, STAGES } from './types.ts';
 import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
 
 const BOARD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'board');
@@ -586,8 +586,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
 
     // Once a principal exists (tokenAuth.ts), every other /api request needs a live principal's bearer token, GET and
     // SSE included. verify-slot is the one other exception: a worker proves its run with the run token instead (below).
-    if (seg[1] !== 'verify-slot' && authIsOn(store) && !authenticate(store, req.headers)) {
-      return json(res, 401, { error: 'not authenticated: send Authorization: Bearer <token>' });
+    // Who is acting, for the decision rows this request writes: that principal, or the operator while auth is off.
+    let actorId: string = DEFAULT_ACTOR_ID.human;
+    if (seg[1] !== 'verify-slot' && authIsOn(store)) {
+      const principal = authenticate(store, req.headers);
+      if (!principal) return json(res, 401, { error: 'not authenticated: send Authorization: Bearer <token>' });
+      actorId = principal.id;
     }
 
     // --- SSE -------------------------------------------------------------
@@ -888,7 +892,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       }
 
       if (taskId && method === 'DELETE' && !seg[3]) {
-        store.deleteTask(taskId);
+        store.deleteTask(taskId, actorId);
         return json(res, 200, { ok: true });
       }
 
@@ -948,7 +952,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             if (!tripwire.ok) return json(res, 409, { error: `cannot mark ${taskId} landed: ${tripwire.reason}` });
           }
           try {
-            const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human' });
+            const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human', actorId });
             void scheduler.tick().catch(() => {});
             const decision = store.decisionsForTask(taskId).filter((d) => d.action === 'landed').at(-1) ?? null;
             return json(res, 200, { ...landed, decision });
@@ -965,7 +969,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             return json(res, 400, { error: 'dep must be a ticket id (t_ and letters or digits); nothing was done' });
           }
           try {
-            const task = store.dropDependency(taskId, dep, 'human');
+            const task = store.dropDependency(taskId, dep, 'human', actorId);
             void scheduler.tick().catch(() => {});
             const decision = store.decisionsForTask(taskId).filter((d) => d.action === 'deps-drop').at(-1) ?? null;
             return json(res, 200, { ...task, decision });
@@ -1034,7 +1038,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           // Never refused over its note (readCancelNote): whatever came with it, the cancel goes ahead.
           const { note, problem, cascade } = await readCancelNote(req);
           const asked = Date.now();
-          const canceled = store.cancel(taskId, note, { cascade });
+          const canceled = store.cancel(taskId, note, { cascade, actorId });
           return json(res, 200, {
             ...canceled,
             decision: justRecorded(store, taskId, 'cancel', asked),
@@ -1060,7 +1064,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             setTicketSkills(store, taskId, skills);
           }
           const asked = Date.now();
-          const retried = store.retry(taskId, note, 'skills' in body ? { skills: body['skills'] === 'default' ? null : body['skills'] } : null);
+          const retried = store.retry(taskId, note, 'skills' in body ? { skills: body['skills'] === 'default' ? null : body['skills'] } : null, actorId);
           void scheduler.tick().catch(() => {});
           return json(res, 200, { ...retried, decision: justRecorded(store, taskId, 'retry', asked) });
         }
@@ -1069,7 +1073,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           refuseCorrected(body, 'reopen');
           try {
             const asked = Date.now();
-            const reopened = store.reopen(taskId, note);
+            const reopened = store.reopen(taskId, note, actorId);
             return json(res, 200, { ...reopened, decision: justRecorded(store, taskId, 'reopen', asked) });
           } catch (err) {
             return json(res, 409, { error: (err as Error).message });

@@ -56,7 +56,8 @@ not retry; run the command again.
 Records work a person landed on the base branch by hand, so the ticket closes as `done` instead of being cancelled.
 It posts to `POST /api/tasks/:id/landed`; the route sits behind the same Host check (DNS-rebinding defence) and
 cross-origin (Origin) check as every other write under `/api`, which run before routing. There is no separate token:
-the guard is those two checks. The decision is always recorded with actor `human`.
+the guard is those two checks. The decision is always recorded with actor `human`, and with the request's principal as
+its `actor_id` (`operator` while auth is off).
 
 **Accepts** a ticket that is `awaiting-approval`, `failed` or `blocked`, or `canceled` when the ticket's latest
 `cancel` decision is from a person (not `system`).
@@ -86,7 +87,7 @@ done. Afterwards the ticket's jail (worktree and branch) is removed, but only wh
 root; its artifacts stay.
 
 `foreman show <taskId>` prints the row among the ticket's decisions:
-`landed by human; commit <sha>; landed_tree <12 chars>; by ticket <id>; → done; note: landed by hand: ...`. The `by`
+`landed by human (<actor id>); commit <sha>; landed_tree <12 chars>; by ticket <id>; → done; note: landed by hand: ...`. The `by`
 part appears only when `--by` was given. `GET /api/state` carries the same facts on each ticket as
 `landed: { commit, landedTree, by, actor, at }` (null when the ticket was not landed by hand), and
 `GET /api/tasks/:id` lists the full row under `decisions`.
@@ -111,7 +112,7 @@ Dependencies that ended `failed` or `rejected` always fail their dependents.
 
 Drops one dependency edge (`--after`) from a ticket. It posts to `POST /api/tasks/:id/deps-drop` with `{ dep }`, behind
 the same Host and Origin checks as `approve` and `landed`. In one transaction it deletes exactly that `task_deps` row and
-writes one `deps-drop` row in `decisions` (actor `human`) whose note names the dependency.
+writes one `deps-drop` row in `decisions` (actor `human`, `actor_id` the request's principal) whose note names the dependency.
 
 **Refuses**, changing nothing (409 with the reason; the CLI prints it and exits non-zero): a ticket that is `running`; an
 edge that does not exist; and a terminal ticket (`done`, `failed`, `rejected`, `canceled`), with one exception. A

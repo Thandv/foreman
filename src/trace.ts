@@ -198,6 +198,7 @@ export function traceTask(store: Store, taskId: string): unknown {
     task,
     runs: store.runsForTask(taskId),
     verdicts: store.verdictsForTask(taskId),
+    decisions: store.decisionsForTask(taskId),
     artifacts: store.artifactsForTask(taskId),
     receipts: store.receiptsForTask(taskId),
     events: store.eventsForTask(taskId, 5000),

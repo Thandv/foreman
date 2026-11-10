@@ -22,6 +22,7 @@ const FINGERPRINTS: Record<number, string> = {
   1: '846ef77b5af7182a0d1a35aa9a569615f6d574bb67cc6652e8f1110898a17600',
   2: '0dc3ebfa071ec30c65004aabc02dfd510cce85ebe2df68baf567c23d01876465',
   3: '3c25d8a4d005bf77ff7c703fb03f28a5a75d585b906dd45a2788298535829036',
+  4: '72afd472f8f7ea59e87728b300455dd24526ac7b213271a20e0544efca00655a',
 };
 
 /** A scratch folder removed when the test ends, pass or fail. */
@@ -193,7 +194,7 @@ const V1_TABLES = new Set([
   'daemon_starts',
 ]);
 /** Columns a later version added to a version-1 table (a column on a later table goes with its table). */
-const ADDED_SINCE_V1: Array<[table: string, column: string]> = [['tasks', 'awaiting_since']];
+const ADDED_SINCE_V1: Array<[table: string, column: string]> = [['tasks', 'awaiting_since'], ['decisions', 'actor_id']];
 
 function tableNames(db: DatabaseSync): string[] {
   return (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
@@ -253,6 +254,7 @@ test('a version-1 ledger: refused by a non-serve opener, then migrated by serve 
     assert.deepEqual(kept, rows, `rows of ${table} changed`);
   }
   for (const [table, column] of ADDED_SINCE_V1) assert.ok(hasColumn(dbPath, table, column), `${table}.${column} was not added`);
+  assert.equal(after['decisions']![0]!['actor_id'], null, 'a decision from before actor ids reads null');
   const fresh = path.join(home, 'fresh.db');
   new Store(fresh).close();
   const freshDb = new DatabaseSync(fresh, { readOnly: true });
