@@ -85,6 +85,8 @@ export interface NewTask {
   maxRepairs?: number;
   scheduleId?: string | null;
   parentId?: string | null;
+  /** Who asked for the task (a principal id, or 'operator' with auth off). Absent: the parent's creator; null: none. */
+  createdBy?: string | null;
   allowCore?: boolean;
   /** Branch or commit the jail is cut from; null/undefined means HEAD. */
   baseRef?: string | null;
@@ -522,6 +524,10 @@ export class Store extends EventEmitter {
     for (const dep of deps) {
       if (!this.getTaskRow(dep)) throw new Error(`dependency not found: ${dep}`);
     }
+    // A child a run or a plan files is asked for by whoever asked for its parent; a task with neither has no creator.
+    const createdBy = input.createdBy !== undefined
+      ? input.createdBy
+      : input.parentId ? this.getTask(input.parentId)?.createdBy ?? null : null;
 
     const now = Date.now();
     const taskId = id('t');
@@ -552,8 +558,8 @@ export class Store extends EventEmitter {
     try {
       this.db
         .prepare(
-          `INSERT INTO tasks (id,title,prompt,kind,repo,agent,runner,sensitivity,budget_usd,priority,status,attempts,max_attempts,created_at,updated_at,test_cmd,merge_on_approve,max_repairs,schedule_id,parent_id,allow_core,role,playbook,points,acceptance,is_epic,gate,base_ref,assignee,forbidden_paths,skills)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO tasks (id,title,prompt,kind,repo,agent,runner,sensitivity,budget_usd,priority,status,attempts,max_attempts,created_at,updated_at,test_cmd,merge_on_approve,max_repairs,schedule_id,parent_id,created_by,allow_core,role,playbook,points,acceptance,is_epic,gate,base_ref,assignee,forbidden_paths,skills)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           taskId, title, prompt, kind,
@@ -564,6 +570,7 @@ export class Store extends EventEmitter {
           input.maxRepairs ?? 1,
           input.scheduleId ?? null,
           input.parentId ?? null,
+          createdBy,
           input.allowCore ? 1 : 0,
           input.role ?? null,
           input.playbook ?? null,
@@ -3053,6 +3060,8 @@ export class Store extends EventEmitter {
           title: template.title || String(row['title']),
           deps: [],
           scheduleId,
+          // No person asked for this run of it: the template, which the client wrote, never names nor inherits one.
+          createdBy: null,
         }));
       } catch (err) {
         this.record({ type: 'error', message: `schedule ${scheduleId} failed: ${(err as Error).message}` });

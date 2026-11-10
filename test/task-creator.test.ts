@@ -52,7 +52,8 @@ async function rig(t: test.TestContext, headers: () => Record<string, string>): 
  * submitted task files: each one's stored creator. Every task goes to a person's desk, so no tick dispatches it.
  */
 async function creators(r: Rig): Promise<Record<string, unknown>> {
-  const submitted = await r.post('/api/tasks', { title: 'submit', prompt: 'p', runner: 'echo', assignee: 'human' });
+  // A creator in the body is not the requester's to choose: it is never read.
+  const submitted = await r.post('/api/tasks', { title: 'submit', prompt: 'p', runner: 'echo', assignee: 'human', createdBy: 'p_forged' });
   assert.equal(submitted.status, 201, JSON.stringify(submitted.json));
   const plan = {
     ask: 'two steps',
@@ -102,10 +103,13 @@ test('with auth on, every task an HTTP route creates, and a follow-up of one, re
   });
 });
 
-test('a task with no creator and no parent, as a schedule fires one, records none; a child of one records none', () => {
+test('a schedule-fired task records no creator, whatever its template names, and a child of one records none', () => {
   const store = new Store(':memory:');
   try {
-    store.addSchedule({ title: 'nightly', spec: 'every 1h', template: { title: 'nightly', prompt: 'p', runner: 'echo' } });
+    const owned = store.addTask({ title: 'owned', prompt: 'p', runner: 'echo', assignee: 'human', createdBy: 'p_alice' });
+    // A template is the client's JSON: neither a creator in it nor a parent with one may become this task's creator.
+    const template = { title: 'nightly', prompt: 'p', runner: 'echo' as const, createdBy: 'p_forged', parentId: owned.id };
+    store.addSchedule({ title: 'nightly', spec: 'every 1h', template });
     const [fired] = store.runDueSchedules(Date.now() + 7_200_000);
     assert.ok(fired, 'the schedule fired');
     assert.equal(creatorOf(store.getTask(fired.id)), null);

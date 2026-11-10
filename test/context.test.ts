@@ -108,7 +108,7 @@ const councilTask = (): Task => ({
   sensitivity: 'S1', budgetUsd: null, priority: 0, status: 'verifying', attempts: 1, maxAttempts: 2,
   error: null, testCmd: null, mergeOnApprove: false, repairNotes: null, repairs: 0, maxRepairs: 1,
   scheduleId: null, parentId: null, allowCore: false, baseRef: null, role: null, playbook: null, points: null,
-  acceptance: null, isEpic: false, gate: null, gateDecision: null, assignee: null, archivedAt: null, awaitingSince: null, createdAt: 0, updatedAt: 0, deps: [],
+  acceptance: null, isEpic: false, gate: null, gateDecision: null, assignee: null, archivedAt: null, awaitingSince: null, createdBy: null, createdAt: 0, updatedAt: 0, deps: [],
 });
 
 test('an identical re-review hits the council cache and records $0 receipts', async () => {

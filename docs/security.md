@@ -59,6 +59,12 @@
   path (`applyApproval`, `applyRejection`) takes that principal as a required argument, and only a principal other
   than `owner-model` may land a run with no reviewed tree or name a tree with `--as-is`. The column is attribution,
   not a boundary: see "Known gap until the worker sandbox" below for what an unsandboxed worker can do.
+- Every task records who asked for it in `tasks.created_by`. `POST /api/tasks`, `/api/ask` (each plan node) and
+  `/api/build` (the epic) set it to the principal that authenticated the request (`operator` while auth is off); a
+  creator in the request body is never read. A task with a parent and no creator of its own (an epic's ticket, a
+  follow-up a run files) takes its parent's. A task a schedule fires, and a standing ask's, a scheduled improvement's or
+  `POST /api/improve`'s, records none (NULL) yet, whatever the schedule's template names. Every task from before the
+  column reads `operator`: the migration fills it once, when the column is added.
 - `allowCore` (a ticket that may edit Foreman's own core) is honoured only from a request that
   carries the host-admin secret in `x-foreman-host-secret`. The secret is 32 random bytes in
   `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`,

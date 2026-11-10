@@ -846,6 +846,8 @@ export interface QueueCrewOptions {
    * every ticket, not on the container: the container never parks at a gate.
    */
   gate?: Task['gate'];
+  /** Who asked for the epic; its tickets inherit it as the epic's children (Store.addTask). */
+  createdBy?: string | null;
 }
 
 /**
@@ -884,6 +886,7 @@ export function queueCrewPlan(store: Store, plan: CrewPlan, extra: QueueCrewOpti
     isEpic: true,
     mergeOnApprove: false,
     parentId: extra.parentId ?? null,
+    createdBy: extra.createdBy,
     sensitivity: extra.sensitivity ?? 'S1',
     budgetUsd: extra.budgetUsd ?? null,
     priority: extra.priority ?? 0,

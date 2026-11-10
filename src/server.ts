@@ -586,7 +586,8 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
 
     // Once a principal exists (tokenAuth.ts), every other /api request needs a live principal's bearer token, GET and
     // SSE included. verify-slot is the one other exception: a worker proves its run with the run token instead (below).
-    // Who is acting, for the decision rows this request writes: that principal, or the operator while auth is off.
+    // Who is acting, for the decision rows this request writes and the tasks it creates: that principal, or the operator
+    // while auth is off.
     let actorId: string = DEFAULT_ACTOR_ID.human;
     if (seg[1] !== 'verify-slot' && authIsOn(store)) {
       const principal = authenticate(store, req.headers);
@@ -868,6 +869,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           deps: Array.isArray(body['deps']) ? (body['deps'] as string[]) : [],
           assignee: (body['assignee'] as never) || null,
           skills: skills as string[] | null,
+          createdBy: actorId,
         });
         noteAllowCoreDropped(store, task.id, core);
         void scheduler.tick().catch(() => {});
@@ -1386,6 +1388,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         sensitivity: (body['sensitivity'] as never) ?? 'S1',
         budgetUsd: body['budgetUsd'] == null ? null : Number(body['budgetUsd']),
         priority: body['priority'] === undefined ? 0 : Number(body['priority']),
+        createdBy: actorId,
       });
       void scheduler.tick().catch(() => {});
       return json(res, 201, { plan: queued.plan, queued: queued.tasks });
@@ -1525,6 +1528,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           runner: body['runner'] as never,
           parentId: (body['parentId'] as string) || null,
           gate,
+          createdBy: actorId,
         });
       } catch (err) {
         return json(res, 400, { error: (err as Error).message });

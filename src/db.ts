@@ -426,6 +426,9 @@ export const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   // Who acted on a decision: the request principal's id, or a reserved actor id ('operator', 'owner-model',
   // 'system'). NULL on a row from before it; ADD COLUMN fires none of the table's append-only triggers.
   ['decisions', 'actor_id', 'TEXT'],
+  // Who created the task: the request principal's id ('operator' with auth off), or its parent's creator. NULL on a
+  // task no person asked for (a schedule fires it). Every task from before the column is the operator's (migrate).
+  ['tasks', 'created_by', 'TEXT'],
 ];
 
 const STATUSES = new Set<string>([
@@ -503,6 +506,8 @@ function migrate(db: DatabaseSync): void {
       // Once, when the column arrives: the history it is derived from is pruned
       // as runs accumulate, so later is less than now.
       if (table === 'runs' && column === 'decision') backfillRunDecisions(db);
+      // Before created_by, every task was the one operator's: the only person there was.
+      if (table === 'tasks' && column === 'created_by') db.exec("UPDATE tasks SET created_by = 'operator'");
     }
   }
 }
@@ -512,7 +517,7 @@ function migrate(db: DatabaseSync): void {
  * user_version`). Bump it, and add its row to test/schema-version.test.ts,
  * whenever SCHEMA, COLUMNS or MIGRATED_INDEXES change.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** A ledger written by a newer Foreman: this binary must not touch it. */
 export class NewerSchemaError extends Error {
@@ -650,6 +655,7 @@ export function rowToTask(row: Row, deps: string[] = []): Task {
     assignee: nstr(row['assignee']) as Task['assignee'],
     archivedAt: nnum(row['archived_at']),
     awaitingSince: nnum(row['awaiting_since']),
+    createdBy: nstr(row['created_by']),
     createdAt: num(row['created_at']),
     updatedAt: num(row['updated_at']),
     deps,
