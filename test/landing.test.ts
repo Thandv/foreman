@@ -11,7 +11,7 @@ import { acceptingGitChanges } from './helpers/tripwire.ts';
 const applyApproval = acceptingGitChanges(approveChecked); // one test plants config in the real repo on purpose
 /** An approval and its post-merge check: applyApproval returns once the merge settles, and the check runs on. */
 const approveAndCheck = async (store: Store, taskId: string): Promise<ApprovalResult> => {
-  const out = await applyApproval(store, taskId, {});
+  const out = await applyApproval(store, taskId, { principal: 'operator' });
   return { ...out, merge: (await out.postMerge) ?? out.merge };
 };
 import { Scheduler } from '../src/scheduler.ts';
@@ -55,7 +55,7 @@ test('an approval whose merge conflicts goes back to the gate, and its dependent
     const child = store.addTask({ title: 'next', prompt: 'p', runner: 'echo', deps: [t.id] });
     fs.writeFileSync(path.join(dir, 'a.txt'), 'MAIN\n'); git(dir, 'commit', '-qam', 'main moved');
 
-    const out = await applyApproval(store, t.id, {});
+    const out = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(out.merge.merged, false);
     assert.equal(store.getTask(t.id)!.status, 'awaiting-approval', 'not done: its work is not on main');
     assert.match(store.getTask(t.id)!.error ?? '', /not landed: merge conflict/);
@@ -64,7 +64,7 @@ test('an approval whose merge conflicts goes back to the gate, and its dependent
 
     // The operator lands it by hand, then approves again: nothing left to merge, so it is done.
     git(dir, 'merge', '-q', '-X', 'theirs', '--no-edit', 'ticket');
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(store.getTask(t.id)!.status, 'done');
     store.reconcileBlocked();
     assert.equal(store.getTask(child.id)!.status, 'queued');
@@ -269,7 +269,7 @@ test('a file written to the worktree after the diff was collected blocks the lan
     const child = f.store.addTask({ title: 'next', prompt: 'p', runner: 'echo', deps: [f.task.id] });
     fs.writeFileSync(path.join(f.jail, 'late.txt'), 'nobody reviewed this\n');
 
-    const out = await applyApproval(f.store, f.task.id, {});
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assertStillParked(f, out, /work changed after review: late\.txt \(added since review\)/);
     assert.match(out.merge.reason, /add it to \.gitignore and retry; otherwise reject and retry so it is reviewed again/);
     assert.equal(fs.existsSync(path.join(f.dir, 'late.txt')), false);
@@ -279,7 +279,7 @@ test('a file written to the worktree after the diff was collected blocks the lan
 
     // Taking the file away again makes it the reviewed tree, and it lands.
     fs.rmSync(path.join(f.jail, 'late.txt'));
-    const again = await applyApproval(f.store, f.task.id, {});
+    const again = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assert.equal(again.merge.merged, true, again.merge.reason);
   } finally {
     await f.done();
@@ -290,7 +290,7 @@ test('a reviewed file modified after review blocks the landing', async () => {
   const f = await reviewed();
   try {
     fs.writeFileSync(path.join(f.jail, 'a.txt'), 'TICKET\nand a line nobody read\n');
-    assertStillParked(f, await applyApproval(f.store, f.task.id, {}), /work changed after review: a\.txt \(changed since review\)/);
+    assertStillParked(f, await applyApproval(f.store, f.task.id, { principal: 'operator' }), /work changed after review: a\.txt \(changed since review\)/);
     assert.equal(git(f.dir, 'show', 'HEAD:a.txt'), 'one');
   } finally {
     await f.done();
@@ -301,7 +301,7 @@ test('a reviewed file deleted after review blocks the landing', async () => {
   const f = await reviewed();
   try {
     fs.rmSync(path.join(f.jail, 'new.txt'));
-    assertStillParked(f, await applyApproval(f.store, f.task.id, {}), /work changed after review: new\.txt \(deleted since review\)/);
+    assertStillParked(f, await applyApproval(f.store, f.task.id, { principal: 'operator' }), /work changed after review: new\.txt \(deleted since review\)/);
   } finally {
     await f.done();
   }
@@ -310,7 +310,7 @@ test('a reviewed file deleted after review blocks the landing', async () => {
 test('an approved run nobody touched lands the reviewed tree, with nothing said about it', async () => {
   const f = await reviewed();
   try {
-    const out = await applyApproval(f.store, f.task.id, {});
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.match(out.merge.reason, /^merged 1 commit\(s\) from foreman\//);
     assert.equal(out.merge.note, undefined);
@@ -328,7 +328,7 @@ test('a file git ignores is in neither tree: written after review, it does not b
   try {
     fs.mkdirSync(path.join(f.jail, 'build'));
     fs.writeFileSync(path.join(f.jail, 'build', 'out.bin'), 'generated\n');
-    const out = await applyApproval(f.store, f.task.id, {});
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(fs.existsSync(path.join(f.dir, 'build')), false);
   } finally {
@@ -340,7 +340,7 @@ test('a file the test run writes that git does not ignore blocks the landing, an
   const f = await reviewed({ testCmd: "test -f a.txt && printf 'report\\n' > test-report.txt" });
   try {
     assert.equal(f.task.status, 'awaiting-approval', f.task.error ?? '');
-    const out = await applyApproval(f.store, f.task.id, {});
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assertStillParked(f, out, /work changed after review: test-report\.txt \(added since review\)/);
     assert.match(out.merge.reason, /If the test run writes the file, add it to \.gitignore and retry/);
   } finally {
@@ -354,7 +354,7 @@ test('a run with no reviewed tree lands on a person\'s approval, with a note in 
     // A ticket parked before trees were recorded: the column is NULL.
     f.store.setRunMeta(f.run.id, { reviewedTree: null });
     fs.writeFileSync(path.join(f.jail, 'late.txt'), 'there is no tree to compare this with\n');
-    const out = await applyApproval(f.store, f.task.id, {});
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(f.store.getTask(f.task.id)!.status, 'done');
     assert.ok(
@@ -370,16 +370,16 @@ test('the owner gate never lands a run with no reviewed tree, and never lands as
   const f = await reviewed();
   try {
     f.store.setRunMeta(f.run.id, { reviewedTree: null });
-    const none = await applyApproval(f.store, f.task.id, { source: 'owner-gate' });
+    const none = await applyApproval(f.store, f.task.id, { principal: 'owner-model' });
     assertStillParked(f, none, /no reviewed tree was recorded for this run \(parked before this check existed\), so the owner gate does not land it: a person approves it/);
 
     // With a tree on record and a late file, naming the tree is a person's escape only.
     f.store.setRunMeta(f.run.id, { reviewedTree: f.run.reviewedTree });
     fs.writeFileSync(path.join(f.jail, 'late.txt'), 'late\n');
-    const refused = await applyApproval(f.store, f.task.id, {});
+    const refused = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     const now = /--as-is ([0-9a-f]{40})$/.exec(refused.merge.reason)?.[1] ?? '';
     assert.match(now, /^[0-9a-f]{40}$/, refused.merge.reason);
-    const owner = await applyApproval(f.store, f.task.id, { source: 'owner-gate', acceptTree: now });
+    const owner = await applyApproval(f.store, f.task.id, { principal: 'owner-model', acceptTree: now });
     assertStillParked(f, owner, /work changed after review: late\.txt/);
   } finally {
     await f.done();
@@ -390,17 +390,17 @@ test('--as-is lands changed work only when a person names the exact tree, and re
   const f = await reviewed();
   try {
     fs.writeFileSync(path.join(f.jail, 'late.txt'), 'the operator wrote this by hand\n');
-    const refused = await applyApproval(f.store, f.task.id, {});
+    const refused = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     const now = /--as-is ([0-9a-f]{40})$/.exec(refused.merge.reason)?.[1] ?? '';
     assert.match(now, /^[0-9a-f]{40}$/, `the refusal prints the tree to name: ${refused.merge.reason}`);
     assert.match(refused.merge.reason, new RegExp(`foreman approve ${f.task.id} --as-is ${now}$`));
 
     // The reviewed tree, a prefix of the right one, and nonsense are all the wrong sha.
     for (const wrong of [f.run.reviewedTree!, now.slice(0, 12), 'HEAD', '']) {
-      assertStillParked(f, await applyApproval(f.store, f.task.id, { acceptTree: wrong }), /--as-is names tree .*, but the tree that would land is [0-9a-f]{40}; nothing was landed/);
+      assertStillParked(f, await applyApproval(f.store, f.task.id, { principal: 'operator', acceptTree: wrong }), /--as-is names tree .*, but the tree that would land is [0-9a-f]{40}; nothing was landed/);
     }
 
-    const out = await applyApproval(f.store, f.task.id, { acceptTree: now });
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator', acceptTree: now });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(git(f.dir, 'rev-parse', 'HEAD^2^{tree}'), now, 'the tree that landed is the one that was named');
     assert.equal(git(f.dir, 'show', 'HEAD:late.txt'), 'the operator wrote this by hand');
@@ -419,6 +419,7 @@ test('a file written between the check and the commit is caught on the commit it
     // mergeApproved is handed an approved task, as approve() hands it one.
     const task = { ...f.task, status: 'done' as const };
     const out = await mergeApproved(task, f.run, {
+      source: 'human',
       beforeCommit: () => fs.writeFileSync(path.join(f.jail, 'racing.txt'), 'written after the check passed\n'),
     });
     assert.equal(out.merged, false);
@@ -465,7 +466,7 @@ test('config the jail can write neither changes the tree nor runs anything while
     assert.deepEqual(fs.readdirSync(markers).filter((n) => n.endsWith('-ran')), []);
     git(f.jail, 'config', '--unset', 'core.fsmonitor');
     git(f.jail, 'config', '--unset', 'core.hooksPath');
-    const out = await applyApproval(f.store, f.task.id, {});
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     assertStillParked(f, out, /work changed after review: caf\u00e9 late\.txt \(added since review\)/);
   } finally {
     await f.done();

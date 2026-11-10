@@ -127,7 +127,7 @@ test('a normal approval leaves no landing row', async () => {
     store.addVerdict({ runId: run.id, taskId: task.id, verdict: 'pass', disagreement: false, council: [] });
     store.endRun(run.id, 'succeeded', { exitCode: 0, summary: 'ok' });
     store.setStatus(task.id, 'awaiting-approval');
-    const out = await applyApproval(store, task.id, { tracker: new ApprovalTracker() });
+    const out = await applyApproval(store, task.id, { principal: 'operator', tracker: new ApprovalTracker() });
     assert.equal(out.merge.code, 'merged', out.merge.reason);
     assert.equal(landingRows(store), 0);
   } finally {

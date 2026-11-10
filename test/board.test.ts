@@ -695,7 +695,7 @@ test('an approval whose merge was aborted reports the abort, not "Approved"', as
     store.setRunMeta(run.id, { branch: 'foreman/x', worktreePath: null });
     store.setStatus(task.id, 'awaiting-approval');
 
-    const { merge, registration } = await applyApproval(store, task.id, {});
+    const { merge, registration } = await applyApproval(store, task.id, { principal: 'operator' });
     assert.equal(merge.merged, false, 'a conflicting merge must not land');
     assert.match(merge.reason, /aborted/);
 

@@ -9,7 +9,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import ts from 'typescript';
 import { applyApproval, applyRejection } from '../src/gate.ts';
-import { Store } from '../src/queue.ts';
+import type { Approver } from '../src/merge.ts';
+import { Store, type NewDecision } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { traceTask } from '../src/trace.ts';
@@ -87,7 +88,7 @@ test('pin: a human approval of a parked ticket with no repo writes this row', as
   const store = new Store(':memory:');
   try {
     const { task, run } = parked(store);
-    await applyApproval(store, task.id, { note: 'looks right' });
+    await applyApproval(store, task.id, { principal: 'operator', note: 'looks right' });
     assert.deepEqual(pinned(store, task.id), [row({
       task_id: task.id, run_id: run.id, action: 'approve', actor: 'human', note: 'looks right', status_after: 'done',
       as_is: 0, merged: 0, merge_reason: 'nothing to merge',
@@ -101,7 +102,7 @@ test('pin: an owner-gate approval writes this row', async () => {
   const store = new Store(':memory:');
   try {
     const { task, run } = parked(store);
-    await applyApproval(store, task.id, { source: 'owner-gate', note: 'owner-gate: fine' });
+    await applyApproval(store, task.id, { principal: 'owner-model', note: 'owner-gate: fine' });
     assert.deepEqual(pinned(store, task.id), [row({
       task_id: task.id, run_id: run.id, action: 'approve', actor: 'owner-model', note: 'owner-gate: fine', status_after: 'done',
       as_is: 0, merged: 0, merge_reason: 'nothing to merge',
@@ -115,12 +116,12 @@ test('pin: a human rejection and an owner-gate rejection write these rows', () =
   const store = new Store(':memory:');
   try {
     const human = parked(store);
-    applyRejection(store, human.task.id, 'too long');
+    applyRejection(store, human.task.id, 'too long', 'operator');
     assert.deepEqual(pinned(store, human.task.id), [row({
       task_id: human.task.id, run_id: human.run.id, action: 'reject', actor: 'human', note: 'too long', status_after: 'rejected',
     })]);
     const owner = parked(store);
-    applyRejection(store, owner.task.id, 'owner-gate: off ticket', 'owner-gate');
+    applyRejection(store, owner.task.id, 'owner-gate: off ticket', 'owner-model');
     assert.deepEqual(pinned(store, owner.task.id), [row({
       task_id: owner.task.id, run_id: owner.run.id, action: 'reject', actor: 'owner-model', note: 'owner-gate: off ticket',
       status_after: 'rejected',
@@ -134,7 +135,7 @@ test('pin: a retry writes this row', () => {
   const store = new Store(':memory:');
   try {
     const { task, run } = parked(store);
-    applyRejection(store, task.id, 'no');
+    applyRejection(store, task.id, 'no', 'operator');
     store.retry(task.id, 'checked it myself', { skills: ['test-first'] });
     assert.deepEqual(pinned(store, task.id).filter((r) => r.action === 'retry'), [row({
       task_id: task.id, run_id: run.id, action: 'retry', actor: 'human', note: 'checked it myself', status_after: 'queued',
@@ -228,13 +229,13 @@ test('pin: the preference fact and run label a human and an owner-gate approval 
   const store = new Store(':memory:');
   try {
     const approved = parked(store);
-    await applyApproval(store, approved.task.id, { note: 'looks right' });
+    await applyApproval(store, approved.task.id, { principal: 'operator', note: 'looks right' });
     const ownerApproved = parked(store);
-    await applyApproval(store, ownerApproved.task.id, { source: 'owner-gate', note: 'owner-gate: fine' });
+    await applyApproval(store, ownerApproved.task.id, { principal: 'owner-model', note: 'owner-gate: fine' });
     const rejected = parked(store);
-    applyRejection(store, rejected.task.id, 'too long');
+    applyRejection(store, rejected.task.id, 'too long', 'operator');
     const ownerRejected = parked(store);
-    applyRejection(store, ownerRejected.task.id, 'owner-gate: off ticket', 'owner-gate');
+    applyRejection(store, ownerRejected.task.id, 'owner-gate: off ticket', 'owner-model');
     assert.deepEqual([approved, ownerApproved, rejected, ownerRejected].map((x) => remembered(store, x.task.id, x.run.id)), [
       { value: 'approved "Add token auth" — looks right', confidence: 0.6, source: approved.task.id, label: 'approved' },
       {
@@ -311,13 +312,13 @@ function actorIds(store: Store, taskId: string): unknown[] {
     .map((r) => r.actor_id);
 }
 
-test('a writer that names nobody records its actor\'s reserved id: operator, owner-model, system', async () => {
+test('the reserved actor ids: the operator approving, the owner gate rejecting, a Store writer naming nobody, the cascade', async () => {
   const store = new Store(':memory:');
   try {
     const person = parked(store);
-    await applyApproval(store, person.task.id, { note: 'fine' });
+    await applyApproval(store, person.task.id, { principal: 'operator', note: 'fine' });
     const owner = parked(store);
-    applyRejection(store, owner.task.id, 'owner-gate: no', 'owner-gate');
+    applyRejection(store, owner.task.id, 'owner-gate: no', 'owner-model');
     const epic = store.addTask({ title: 'epic', prompt: 'p', runner: 'echo', isEpic: true });
     const child = store.addTask({ title: 'a', prompt: 'p', runner: 'echo', parentId: epic.id });
     store.cancel(epic.id);
@@ -340,7 +341,7 @@ test('every Store writer records the actor id it is given; the cascade under a c
   try {
     const by = 'p_alice';
     const retried = parked(store);
-    applyRejection(store, retried.task.id, 'no');
+    applyRejection(store, retried.task.id, 'no', 'operator');
     store.retry(retried.task.id, null, null, by);
     const reopened = failedReview(store, work);
     store.reopen(reopened.task.id, null, by);
@@ -403,7 +404,7 @@ async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
   // On a person's desk, so the ticks the routes start dispatch none of them under the test.
   const canceled = store.addTask({ title: 'c', prompt: 'p', runner: 'echo', assignee: 'human' });
   const retried = parked(store);
-  applyRejection(store, retried.task.id, 'no');
+  applyRejection(store, retried.task.id, 'no', 'operator');
   const reopened = failedReview(store, work);
   const a = store.addTask({ title: 'a', prompt: 'p', runner: 'echo', assignee: 'human' });
   const b = store.addTask({ title: 'b', prompt: 'p', runner: 'echo', assignee: 'human', deps: [a.id] });
@@ -465,4 +466,15 @@ test('the approve and reject path takes a principal, never a source', () => {
     assert.doesNotMatch(params, /\bsource\??:/, `${name} has a source parameter`);
     assert.match(params, /\bprincipal\b/, `${name} takes no principal`);
   }
+});
+
+/** true when `K` must be given on `T`. */
+type Named<T, K extends keyof T> = undefined extends T[K] ? false : true;
+
+test('the type checker refuses a decision row, an approval or a landing that names nobody', () => {
+  // Checked by the typecheck in npm run verify: each `true` stops compiling when its field becomes optional again.
+  const required: [Named<NewDecision, 'actorId'>, Named<Parameters<typeof applyApproval>[2], 'principal'>, Named<Approver, 'source'>] =
+    [true, true, true];
+  const rejectArity: Parameters<typeof applyRejection>['length'] = 4;
+  assert.deepEqual([...required, rejectArity], [true, true, true, 4]);
 });

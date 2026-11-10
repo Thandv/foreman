@@ -26,7 +26,7 @@ export interface MergeResult {
 
 /** Who is approving: only a person may land a run with no reviewed tree, or name a tree with `acceptTree`. */
 export interface Approver {
-  source?: 'human' | 'owner-gate';
+  source: 'human' | 'owner-gate';
   /** `foreman approve --as-is <sha>`: the full sha of the tree to land in place of the reviewed one. A person's only. */
   acceptTree?: string | null;
 }
@@ -82,7 +82,7 @@ async function reviewedTreeCheck(
   who: Approver,
 ): Promise<{ refusal: string } | { note: string | null }> {
   const reviewed = run.reviewedTree ?? null;
-  const person = (who.source ?? 'human') === 'human';
+  const person = who.source === 'human';
   const named = person ? (who.acceptTree ?? null) : null;
   if (named !== null) {
     if (named !== landing) return { refusal: `--as-is names tree ${named.slice(0, 80)}, but the tree that would land is ${landing}; nothing was landed` };
@@ -118,7 +118,7 @@ async function landingTree(repo: string, run: Run & { branch: string }): Promise
  * Null too for a change to Foreman whose worktree now holds its core: that is
  * the core guard's refusal, and `mergeApproved` gives it as it always has.
  */
-export async function landingRefusal(task: Task, run: Run | null, who: Approver & { selfRoot?: string } = {}): Promise<string | null> {
+export async function landingRefusal(task: Task, run: Run | null, who: Approver & { selfRoot?: string }): Promise<string | null> {
   if (!task.repo || !run?.branch || !task.mergeOnApprove) return null;
   const branch = run.branch;
   const repo = (await git(task.repo, ['rev-parse', '--show-toplevel']).catch(() => '')).trim() || task.repo;
@@ -258,7 +258,7 @@ export async function mergeApproved(
     beforeMerge?: () => Promise<void> | void;
     /** Called after the reviewed-tree check has passed on the worktree, just before it is committed. A test writes a file here. */
     beforeCommit?: () => Promise<void> | void;
-  } & Approver = {},
+  } & Approver,
 ): Promise<MergeResult> {
   // The gate is the whole point: only an approved task may land.
   if (task.status !== 'done') {

@@ -214,7 +214,7 @@ function rowsOf(db: DatabaseSync): Record<string, Array<Record<string, unknown>>
 function v1Ledger(dbPath: string): void {
   const store = new Store(dbPath);
   const task = store.addTask({ title: 'from v1', prompt: 'x' });
-  store.addDecision({ taskId: task.id, action: 'approve', note: 'kept as it was' });
+  store.addDecision({ taskId: task.id, action: 'approve', actorId: 'operator', note: 'kept as it was' });
   store.addReceipt({ taskId: task.id, kind: 'chat', provider: 'test', model: 'm', local: true, tokensIn: 3, costUsd: 0.25 });
   store.close();
   const db = new DatabaseSync(dbPath);

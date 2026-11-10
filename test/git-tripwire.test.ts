@@ -101,7 +101,7 @@ test('a change made after collection: approve refuses before mergeApproved and h
     assert.doesNotMatch(parked.error ?? '', /git tripwire/);
     const head = git(dir, 'rev-parse', 'HEAD');
     fs.writeFileSync(path.join(dir, '.git', 'hooks', 'pre-push'), '#!/bin/sh\n');
-    const out = await applyApproval(store, parked.id, {});
+    const out = await applyApproval(store, parked.id, { principal: 'operator' });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /\.git\/hooks\/pre-push was added/);
     const now = store.getTask(parked.id)!;

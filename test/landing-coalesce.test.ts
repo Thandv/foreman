@@ -87,9 +87,9 @@ test('coalesced: three same-command merges landing during one check cause one mo
   const tickets = ['t0', 't1', 't2', 't3'].map((n) => parked(store, dir, n, 'npm test'));
   const tracker = new ApprovalTracker();
   const { calls, mainCheck, called } = heldChecks();
-  const outs: ApprovalResult[] = [await applyApproval(store, tickets[0]!.task.id, { tracker, mainCheck })];
+  const outs: ApprovalResult[] = [await applyApproval(store, tickets[0]!.task.id, { principal: 'operator', tracker, mainCheck })];
   const first = await called(1);
-  for (const t of tickets.slice(1)) outs.push(await applyApproval(store, t.task.id, { tracker, mainCheck }));
+  for (const t of tickets.slice(1)) outs.push(await applyApproval(store, t.task.id, { principal: 'operator', tracker, mainCheck }));
   assert.equal(calls.length, 1, 'no check starts while one runs in the repo');
   first.finish(true);
   const second = await called(2);
@@ -111,7 +111,7 @@ test('per-merge: the same burst runs one suite per merge, each at its own merge 
   const tracker = new ApprovalTracker();
   const { calls, mainCheck, called } = heldChecks();
   const outs: ApprovalResult[] = [];
-  for (const t of tickets) outs.push(await applyApproval(store, t.task.id, { tracker, mainCheck, postMergeMode: 'per-merge' }));
+  for (const t of tickets) outs.push(await applyApproval(store, t.task.id, { principal: 'operator', tracker, mainCheck, postMergeMode: 'per-merge' }));
   await called(4);
   assert.deepEqual(calls.map((c) => c.head), tickets.map((t) => mergeOf(dir, t.task.id)));
   for (const c of calls) c.finish(true);
@@ -125,10 +125,10 @@ test('merges with different test commands each get their own run, in landing ord
   const t2 = parked(store, dir, 't2', 'cmd-a');
   const tracker = new ApprovalTracker();
   const { calls, mainCheck, called } = heldChecks();
-  const outs = [await applyApproval(store, t0.task.id, { tracker, mainCheck })];
+  const outs = [await applyApproval(store, t0.task.id, { principal: 'operator', tracker, mainCheck })];
   const first = await called(1);
-  outs.push(await applyApproval(store, t1.task.id, { tracker, mainCheck }));
-  outs.push(await applyApproval(store, t2.task.id, { tracker, mainCheck }));
+  outs.push(await applyApproval(store, t1.task.id, { principal: 'operator', tracker, mainCheck }));
+  outs.push(await applyApproval(store, t2.task.id, { principal: 'operator', tracker, mainCheck }));
   first.finish(true);
   const second = await called(2);
   assert.deepEqual([second.cmd, second.head], ['cmd-b', mergeOf(dir, t1.task.id)]);
@@ -149,9 +149,9 @@ test('a red covering two merges names both in one event, ends both holds, and a 
   const b = parked(store, dir, 'b', 'npm test');
   const tracker = new ApprovalTracker();
   const { mainCheck, called } = heldChecks();
-  await applyApproval(store, first.task.id, { tracker, mainCheck });
+  await applyApproval(store, first.task.id, { principal: 'operator', tracker, mainCheck });
   const c1 = await called(1);
-  const outs = [await applyApproval(store, a.task.id, { tracker, mainCheck }), await applyApproval(store, b.task.id, { tracker, mainCheck })];
+  const outs = [await applyApproval(store, a.task.id, { principal: 'operator', tracker, mainCheck }), await applyApproval(store, b.task.id, { principal: 'operator', tracker, mainCheck })];
   c1.finish(true);
   (await called(2)).finish(false);
   for (const out of outs) assert.match((await checked(out)).reason, /; MAIN IS RED after the merge — dependents held$/);
@@ -193,9 +193,9 @@ test('shutdown during a coalesced check: the interrupted marker names every cove
   const b = parked(store, dir, 'b', 'npm test');
   const tracker = new ApprovalTracker();
   const { mainCheck, called } = heldChecks();
-  await applyApproval(store, first.task.id, { tracker, mainCheck });
+  await applyApproval(store, first.task.id, { principal: 'operator', tracker, mainCheck });
   const c1 = await called(1);
-  const outs = [await applyApproval(store, a.task.id, { tracker, mainCheck }), await applyApproval(store, b.task.id, { tracker, mainCheck })];
+  const outs = [await applyApproval(store, a.task.id, { principal: 'operator', tracker, mainCheck }), await applyApproval(store, b.task.id, { principal: 'operator', tracker, mainCheck })];
   c1.finish(true);
   await called(2); // never finished: only the shutdown ends it
   assert.equal(await tracker.shutdown(5_000), 0);
@@ -215,9 +215,9 @@ test('shutdown with a landing still queued: its check never starts, its reason s
   const queued = parked(store, dir, 'queued', 'cmd-b');
   const tracker = new ApprovalTracker();
   const { calls, mainCheck, called } = heldChecks();
-  await applyApproval(store, first.task.id, { tracker, mainCheck });
+  await applyApproval(store, first.task.id, { principal: 'operator', tracker, mainCheck });
   await called(1); // never finished: only the shutdown ends it
-  const out = await applyApproval(store, queued.task.id, { tracker, mainCheck });
+  const out = await applyApproval(store, queued.task.id, { principal: 'operator', tracker, mainCheck });
   assert.equal(await tracker.shutdown(5_000), 0);
   assert.match((await checked(out)).reason, /; main check interrupted by shutdown — untested, dependents held$/);
   assert.equal(calls.length, 1, 'no check starts once a shutdown has begun');

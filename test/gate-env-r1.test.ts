@@ -411,7 +411,7 @@ test('"closed: nothing to change" is said only of a run with no diff whose branc
     const t = a.store.addTask({ title: 'no landing', prompt: 'true', kind: 'code', runner: 'shell', repo: a.repo, mergeOnApprove: false });
     await a.sched.drain(60_000);
     assert.match(a.store.getTask(t.id)!.error ?? '', /^no change produced/);
-    const out = await applyApproval(a.store, t.id, {});
+    const out = await applyApproval(a.store, t.id, { principal: 'operator' });
     assert.match(out.merge.reason, /^merge-on-approve disabled/);
     assert.equal(out.task.status, 'done');
   } finally {
@@ -428,7 +428,7 @@ test('"closed: nothing to change" is said only of a run with no diff whose branc
     git(run.worktreePath!, ['add', '-A']);
     git(run.worktreePath!, ['-c', 'user.email=p@example.com', '-c', 'user.name=Person', 'commit', '-qm', 'by hand']);
     git(b.repo, ['merge', '-q', '--ff-only', run.branch!]);
-    const out = await applyApproval(b.store, t.id, {});
+    const out = await applyApproval(b.store, t.id, { principal: 'operator' });
     assert.equal(out.merge.merged, false);
     assert.equal(out.merge.reason, 'branch has no commits ahead of HEAD');
   } finally {

@@ -74,6 +74,7 @@ test('a dependent stays blocked while its parent\'s main check runs, and is rele
     const inCheck = deferred();
     const pass = deferred();
     const landing = applyApproval(store, a.id, {
+      principal: 'operator',
       tracker: new ApprovalTracker(),
       mainCheck: async (repoDir) => { inCheck.resolve(); await pass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
@@ -98,6 +99,7 @@ test('a red main check holds the dependent and names the parent\'s merge', async
     const a = parkedOnBranch(store, dir, 'parent');
     const child = store.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: dir, deps: [a.id] });
     const merge = await checked(applyApproval(store, a.id, {
+      principal: 'operator',
       tracker: new ApprovalTracker(),
       mainCheck: async (repoDir) => result(false, git(repoDir, 'rev-parse', 'HEAD')),
     }));
@@ -122,6 +124,7 @@ test('with the post-merge check off, the dependent is released at once and no ch
     const child = store.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: dir, deps: [a.id] });
     let checks = 0;
     const out = await applyApproval(store, a.id, {
+      principal: 'operator',
       tracker: new ApprovalTracker(),
       mainCheck: async (repoDir) => { checks += 1; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
@@ -144,6 +147,7 @@ test('an approval that merged nothing releases the dependent at once and runs no
     const child = store.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: dir, deps: [a.id] });
     let checks = 0;
     const out = await applyApproval(store, a.id, {
+      principal: 'operator',
       tracker: new ApprovalTracker(),
       mainCheck: async (repoDir) => { checks += 1; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
@@ -174,10 +178,12 @@ test('a second approval in the repo merges while the first one\'s main check run
     const bIn = deferred();
     const bPass = deferred();
     const first = applyApproval(store, a.id, {
+      principal: 'operator',
       tracker, postMergeMode: 'per-merge', mainCheck: async (repoDir) => { aIn.resolve(); await aPass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
     await aIn.promise;
     const second = applyApproval(store, b.id, {
+      principal: 'operator',
       tracker, postMergeMode: 'per-merge', mainCheck: async (repoDir) => { bIn.resolve(); await bPass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
     const mergedAlongside = await within(5_000, () => fs.existsSync(path.join(dir, 'second.txt')));
@@ -215,6 +221,7 @@ test('a red from the first landing\'s check names its own merge, though a second
     const tested = new Map<string, string | undefined>();
     // Each fake check reports the HEAD it was asked to test, as checkMain does.
     const first = applyApproval(store, a.id, {
+      principal: 'operator',
       tracker, postMergeMode: 'per-merge',
       mainCheck: async (_repoDir: string, _cmd: string | null, _signal: AbortSignal, head?: string) => {
         tested.set('a', head);
@@ -225,6 +232,7 @@ test('a red from the first landing\'s check names its own merge, though a second
     });
     await aIn.promise;
     const second = applyApproval(store, b.id, {
+      principal: 'operator',
       tracker, postMergeMode: 'per-merge', mainCheck: async (_repoDir: string, _cmd: string | null, _signal: AbortSignal, head?: string) => { tested.set('b', head); return result(true, head ?? ''); },
     });
     assert.equal((await second).merge.code, 'merged');
@@ -254,6 +262,7 @@ test('a first landing\'s check interrupted after a second merge passed is held a
     const aIn = deferred();
     // A's check never finishes on its own: only the shutdown ends it.
     const first = applyApproval(store, a.id, {
+      principal: 'operator',
       tracker, postMergeMode: 'per-merge',
       mainCheck: (_repoDir, _cmd, signal) => {
         aIn.resolve();
@@ -262,6 +271,7 @@ test('a first landing\'s check interrupted after a second merge passed is held a
     });
     await aIn.promise;
     const second = applyApproval(store, b.id, {
+      principal: 'operator',
       tracker, postMergeMode: 'per-merge', mainCheck: async (repoDir) => result(true, git(repoDir, 'rev-parse', 'HEAD')),
     });
     assert.equal((await second).merge.code, 'merged');

@@ -21,7 +21,7 @@ kind of actor decided (`human`, `owner-model` or `system`) and its `actor_id` sa
 the request carried, or a reserved id — `operator` for a person while auth is off, `owner-model` for the owner gate,
 `system` for a ticket an epic's cancel took down. A row from before `actor_id` existed has none. `foreman show` prints
 it after the actor (`cancel by human (operator)`) and `foreman trace` lists the rows under `decisions`. Approve and
-reject do not yet pass the request principal: their rows say `operator` for a person whoever sent them.
+reject run through one path that takes the principal who decided: the request's, or `owner-model` for the owner gate.
 
 **What cancel does to the worktree.** Cancelling a running task ends its run, and a worktree that run created is removed
 with it, unless the run had already reached its review: reviewed work that is cancelled is kept on disk for you to

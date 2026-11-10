@@ -910,9 +910,10 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
               corrected,
               reviewSource,
               selfRoot: scheduler.selfRoot,
+              // Who approves: the principal that authenticated the request, or the operator while auth is off.
+              principal: actorId,
               // `foreman approve --as-is <sha>`: a person lands a tree that is
               // not the reviewed one by naming it (merge.ts).
-              source: 'human',
               acceptTree: typeof body['acceptTree'] === 'string' ? body['acceptTree'] : null,
             });
           } catch (err) {
@@ -983,7 +984,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           refuseCorrected(body, 'reject');
           const note = String(body['note'] ?? 'rejected by operator');
           const asked = Date.now();
-          const rejected = applyRejection(store, taskId, note);
+          const rejected = applyRejection(store, taskId, note, actorId);
           return json(res, 200, { ...rejected, decision: justRecorded(store, taskId, 'reject', asked) });
         }
         if (action === 'reverify') {

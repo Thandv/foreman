@@ -72,7 +72,7 @@ interface Row {
   name: string;
   code: MergeCode;
   setup: () => Fixture | Promise<Fixture>;
-  approve?: Parameters<typeof applyApproval>[2];
+  approve?: Partial<Parameters<typeof applyApproval>[2]>;
   reason: RegExp;
   status: Task['status'];
   /** The ticket's note afterwards; null: none written. */
@@ -151,7 +151,7 @@ const ROWS: Row[] = [
     name: 'no reviewed tree under the owner gate: not landed, parked for a person before anything is decided',
     code: 'not-reviewed',
     setup: () => parked({ 'a.txt': 'TICKET\n' }),
-    approve: { source: 'owner-gate' },
+    approve: { principal: 'owner-model' },
     reason: /^no reviewed tree was recorded for this run/, status: 'awaiting-approval',
     note: /^not landed: no reviewed tree was recorded for this run/,
   },
@@ -194,7 +194,7 @@ for (const row of ROWS) {
     const f = await row.setup();
     try {
       const opts = row.approve?.selfRoot === '<dir>' ? { ...row.approve, selfRoot: f.dir } : row.approve ?? {};
-      const out: ApprovalResult = await applyApproval(f.store, f.task.id, opts);
+      const out: ApprovalResult = await applyApproval(f.store, f.task.id, { principal: 'operator', ...opts });
       assert.equal(out.merge.code, row.code, out.merge.reason);
       assert.equal(out.merge.merged, row.code === 'merged', out.merge.reason);
       assert.match(out.merge.reason, row.reason);
@@ -213,9 +213,9 @@ test('landing outcome: what mergeApproved answers before it looks at the repo, a
   const f = parked({ 'a.txt': 'TICKET\n' });
   try {
     const run = f.store.getRun(f.runId)!;
-    const parkedAnswer = await mergeApproved(f.task, run);
+    const parkedAnswer = await mergeApproved(f.task, run, { source: 'human' });
     assert.deepEqual(parkedAnswer, { merged: false, code: 'not-approved', reason: 'task is awaiting-approval, not approved', branch: 'ticket' });
-    const noBranch = await mergeApproved({ ...f.task, status: 'done' }, { ...run, branch: null });
+    const noBranch = await mergeApproved({ ...f.task, status: 'done' }, { ...run, branch: null }, { source: 'human' });
     assert.deepEqual(noBranch, { merged: false, code: 'nothing-to-merge', reason: 'nothing to merge', branch: null });
     // Past the gate's own check: the owner gate never lands a run with no reviewed tree.
     const unreviewed = await mergeApproved({ ...f.task, status: 'done' }, run, { source: 'owner-gate' });

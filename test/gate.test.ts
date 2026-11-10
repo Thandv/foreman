@@ -607,7 +607,7 @@ test('an approval note is remembered, but never written to tasks.error', async (
   const store = new Store(':memory:');
   try {
     const yes = parked(store);
-    await applyApproval(store, yes.task.id, { note: 'ship it, the auth path is right' });
+    await applyApproval(store, yes.task.id, { principal: 'operator', note: 'ship it, the auth path is right' });
     const approved = store.getTask(yes.task.id)!;
     assert.equal(approved.status, 'done');
     assert.equal(approved.error, null, 'error is the rejection-reason column, not a notes field');
@@ -619,7 +619,7 @@ test('an approval note is remembered, but never written to tasks.error', async (
 
     // A rejection still puts its reason where every reader looks for it.
     const no = parked(store);
-    applyRejection(store, no.task.id, 'it edits files the ticket never mentioned');
+    applyRejection(store, no.task.id, 'it edits files the ticket never mentioned', 'operator');
     assert.equal(store.getTask(no.task.id)!.error, 'it edits files the ticket never mentioned');
   } finally {
     store.close();
@@ -638,7 +638,7 @@ test('dpoFromGate excludes owner-gate decisions by the column, not by the note t
     assert.equal(store.getTask(auto.task.id)!.error, null, 'the marker is no longer the note');
 
     const bad = parked(store);
-    applyRejection(store, bad.task.id, 'wrong scope');
+    applyRejection(store, bad.task.id, 'wrong scope', 'operator');
 
     // Neither decision produces a pair, and for two different reasons: the
     // owner-gate approval is a model agreeing with a model, so it is not
@@ -648,7 +648,7 @@ test('dpoFromGate excludes owner-gate decisions by the column, not by the note t
 
     // The control: the same approval made by a person IS the preferred answer.
     const human = parked(store);
-    await applyApproval(store, human.task.id, { note: 'exactly right' });
+    await applyApproval(store, human.task.id, { principal: 'operator', note: 'exactly right' });
     assert.match(dpoFromGate(store)[0]!.chosen, /added the middleware/);
   } finally {
     store.close();
@@ -1060,7 +1060,7 @@ test("an owner approval labels its run as the owner's, so no retry can make it t
   const store = new Store(':memory:');
   try {
     const { task, run } = parked(store);
-    await applyApproval(store, task.id, { note: 'owner-gate: fine', source: 'owner-gate' });
+    await applyApproval(store, task.id, { note: 'owner-gate: fine', principal: 'owner-model' });
     const label = (store.db.prepare('SELECT decision FROM runs WHERE id = ?').get(run.id) as Record<string, unknown>)['decision'];
     assert.equal(label, 'owner-approved');
   } finally {
@@ -1110,10 +1110,10 @@ test('an approval decided on the operator\'s own desk lands nothing: no run was 
     const tree = scratchDir('foreman-rejected-');
     store.db.prepare("UPDATE runs SET branch = 'foreman/t-rejected', worktree_path = ? WHERE id = ?").run(tree, run.id);
     // Rejected at the gate, retried, given to the operator, marked done by hand.
-    applyRejection(store, task.id, 'not this');
+    applyRejection(store, task.id, 'not this', 'operator');
     store.retry(task.id);
     store.reassign(task.id, 'human');
-    const result = await applyApproval(store, task.id, { note: 'completed by the operator' });
+    const result = await applyApproval(store, task.id, { principal: 'operator', note: 'completed by the operator' });
     assert.equal(result.task.status, 'done');
     assert.equal(result.merge.merged, false);
     assert.match(result.merge.reason, /nothing to land/);
@@ -1128,7 +1128,7 @@ test('a desk close of an ordinary ticket is not an error: nothing to register, n
   try {
     const task = store.addTask({ title: 'write the note', prompt: 'x', kind: 'general', runner: 'echo' });
     store.reassign(task.id, 'human');
-    const result = await applyApproval(store, task.id, { note: 'completed by the operator' });
+    const result = await applyApproval(store, task.id, { principal: 'operator', note: 'completed by the operator' });
     assert.equal(result.registration.reason, 'not a tool task');
     const { approvalOutcome } = (await import(new URL('../board/lib/store.js', import.meta.url).href)) as {
       approvalOutcome: (r: unknown, label?: string) => { ok: boolean; message: string };
@@ -1148,7 +1148,7 @@ test("a desk close points at an interrupted run's work still on disk — and onl
     const left = parked(store, { mergeOnApprove: true });
     store.db.prepare("UPDATE runs SET branch = 'foreman/t-left', worktree_path = ?, status = 'canceled' WHERE id = ?").run(tree, left.run.id);
     store.setStatus(left.task.id, 'awaiting-human', 'interrupted by 4 daemon stops');
-    const result = await applyApproval(store, left.task.id, { note: 'finished it by hand' });
+    const result = await applyApproval(store, left.task.id, { principal: 'operator', note: 'finished it by hand' });
     assert.equal(result.merge.merged, false);
     assert.equal(result.merge.branch, 'foreman/t-left');
     assert.ok(result.merge.reason.includes(tree), result.merge.reason);
@@ -1159,7 +1159,7 @@ test("a desk close points at an interrupted run's work still on disk — and onl
     const gone = parked(store, { mergeOnApprove: true });
     store.db.prepare("UPDATE runs SET branch = 'foreman/t-gone', worktree_path = '/nonexistent/foreman-jail', status = 'canceled' WHERE id = ?").run(gone.run.id);
     store.setStatus(gone.task.id, 'awaiting-human', 'interrupted by 4 daemon stops');
-    assert.match((await applyApproval(store, gone.task.id)).merge.reason, /^nothing to land/);
+    assert.match((await applyApproval(store, gone.task.id, { principal: 'operator' })).merge.reason, /^nothing to land/);
   } finally {
     store.close();
     fs.rmSync(tree, { recursive: true, force: true });
@@ -1171,7 +1171,7 @@ test('a tool ticket closed on the desk registers nothing', async () => {
   try {
     const task = store.addTask({ title: 'build a tool', prompt: 'x', kind: 'tool', runner: 'echo' });
     store.reassign(task.id, 'human');
-    const result = await applyApproval(store, task.id);
+    const result = await applyApproval(store, task.id, { principal: 'operator' });
     assert.equal(result.registration.registered, false);
     assert.match(result.registration.reason, /nothing to register/);
   } finally {
@@ -1183,7 +1183,7 @@ test('an approval of a run that was cut short lands nothing', async () => {
   const store = new Store(':memory:');
   try {
     const { task } = parked(store, { mergeOnApprove: true }, { status: 'canceled' });
-    const result = await applyApproval(store, task.id);
+    const result = await applyApproval(store, task.id, { principal: 'operator' });
     assert.equal(result.merge.merged, false);
     assert.match(result.merge.reason, /nothing to land/);
   } finally {
@@ -1260,7 +1260,7 @@ test('a hold answered after the work moved on leaves no marker for the newer run
     const pending = ownerGate({ ...judged, store });
     await new Promise((r) => setTimeout(r, 150));
     // Rejected, retried, and a new run parked while the owner was reading the old one.
-    applyRejection(store, judged.task.id, 'no');
+    applyRejection(store, judged.task.id, 'no', 'operator');
     store.retry(judged.task.id);
     const runB = store.startRun(judged.task.id);
     store.endRun(runB.id, 'succeeded', { exitCode: 0, summary: 'a second try' });
@@ -1361,7 +1361,7 @@ test('an owner hold that arrives after a person already decided stamps nothing',
     const judged = parked(store);
     const pending = ownerGate({ ...judged, store });
     await new Promise((r) => setTimeout(r, 150));
-    await applyApproval(store, judged.task.id, { note: 'looks right' });
+    await applyApproval(store, judged.task.id, { principal: 'operator', note: 'looks right' });
     assert.equal(await pending, 'hold');
     assert.equal(stub.count(), 1);
     assert.equal(store.gateDecision(judged.task.id), null);
@@ -1411,7 +1411,7 @@ test('a run that parks while the owner is still reading an older one is gated in
     });
     await settle(sched, () => stub.count() >= 1); // the owner is reading run A
     const runA = store.latestRun(t.id)!.id;
-    applyRejection(store, t.id, 'not this one');
+    applyRejection(store, t.id, 'not this one', 'operator');
     store.retry(t.id);
     await settle(sched, () => store.latestRun(t.id)!.id !== runA && store.getTask(t.id)!.status === 'awaiting-approval');
     // The answer about A is held as stale; then run B gets its own owner call.
@@ -1475,7 +1475,7 @@ test('approval holds dependents until the merge has settled, even against a tick
       duringMerge = store.getTask(child.id)!.status;
       return out;
     }) as Store['decide'];
-    await applyApproval(store, dep.task.id, {});
+    await applyApproval(store, dep.task.id, { principal: 'operator' });
     assert.equal(duringMerge, 'blocked', 'released before its dependency landed, it is cut from a stale HEAD');
     store.reconcileBlocked();
     assert.equal(store.getTask(child.id)!.status, 'queued', 'and released once the merge settled');
@@ -2079,12 +2079,12 @@ test('the owner gate holds a run with no reviewed tree for a person, whose appro
     assert.equal(stub.count(), 0);
     assert.equal(headOf(repo), head);
     // Not through the approve path either, whoever calls it in the owner's name.
-    const forced = await applyApproval(store, task.id, { source: 'owner-gate' });
+    const forced = await applyApproval(store, task.id, { principal: 'owner-model' });
     assert.equal(forced.merge.merged, false);
     assert.equal(store.getTask(task.id)!.status, 'awaiting-approval');
     assert.equal(headOf(repo), head);
 
-    const person = await applyApproval(store, task.id, {});
+    const person = await applyApproval(store, task.id, { principal: 'operator' });
     assert.equal(person.merge.merged, true, person.merge.reason);
     assert.equal(store.getTask(task.id)!.status, 'done');
     assert.ok(events(store, task.id).includes("no reviewed tree recorded for this run (parked before this check existed); landed on a person's approval"));

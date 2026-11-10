@@ -443,7 +443,7 @@ test('a crew split is held for a person by what is recorded: a council re-review
     await settle(r.sched, () => ownerEvents(r, control.id).length > 0);
     assert.equal(r.store.latestRun(control.id)!.verdict, 'pass');
     assert.equal(r.calls().length, 2, 'control: one review, then the owner model was asked');
-    await applyApproval(r.store, control.id, { source: 'human' });
+    await applyApproval(r.store, control.id, { principal: 'operator' });
 
     r.reviewer({ verdict: 'pass', critique: 'fine as far as shown', issues: [], acceptance: UNVERIFIED });
     r.worker("printf 'y\\n' >> README.md", MAP);
@@ -516,7 +516,7 @@ test('a person approves a crew split, and it lands', async () => {
     await settle(r.sched, parked(r, t.id));
     assert.equal(r.store.latestRun(t.id)!.verdict, 'split');
     assert.equal(r.store.getTask(t.id)!.error, 'the reviewer gave no status for acceptance items 1, 2 — a person decides');
-    const res = await applyApproval(r.store, t.id, { source: 'human', note: 'read by hand' });
+    const res = await applyApproval(r.store, t.id, { principal: 'operator', note: 'read by hand' });
     assert.equal(r.store.getTask(t.id)!.status, 'done');
     assert.equal(res.merge.merged, true, res.merge.reason);
   } finally {

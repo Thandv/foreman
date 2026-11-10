@@ -53,11 +53,12 @@
   revocation time; `Store.principalByTokenHash` returns a principal only for an unrevoked, unexpired token of
   an enabled principal. `Store.hasAnyPrincipal` stays true once the first principal exists, whatever is
   later revoked, expired or disabled.
-- Every decision row records who acted in `decisions.actor_id`: the cancel, retry, reopen, deps-drop, delete and
-  landed routes pass the id of the principal that authenticated the request (`operator` while auth is off); the
-  owner gate writes `owner-model` and an epic's cascade cancel `system`. Approve and reject still write `operator`
-  for a person until they take the request principal. The column is attribution, not a boundary: see
-  "Known gap until the worker sandbox" below for what an unsandboxed worker can do.
+- Every decision row records who acted in `decisions.actor_id`: the approve, reject, cancel, retry, reopen,
+  deps-drop, delete and landed routes pass the id of the principal that authenticated the request (`operator` while
+  auth is off); the owner gate writes `owner-model` and an epic's cascade cancel `system`. The one approve and reject
+  path (`applyApproval`, `applyRejection`) takes that principal as a required argument, and only a principal other
+  than `owner-model` may land a run with no reviewed tree or name a tree with `--as-is`. The column is attribution,
+  not a boundary: see "Known gap until the worker sandbox" below for what an unsandboxed worker can do.
 - `allowCore` (a ticket that may edit Foreman's own core) is honoured only from a request that
   carries the host-admin secret in `x-foreman-host-secret`. The secret is 32 random bytes in
   `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`,

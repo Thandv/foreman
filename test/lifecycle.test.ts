@@ -221,7 +221,7 @@ test('a shutdown during a post-merge check interrupts it, records that, and remo
       entered();
       return new Promise<MainCheck>(() => {});
     };
-    const approval = applyApproval(store, t.id, { tracker, mainCheck: blocking });
+    const approval = applyApproval(store, t.id, { principal: 'operator', tracker, mainCheck: blocking });
     await inCheck;
     assert.ok(worktrees(dir).includes(mainWt), 'precondition: the check worktree is registered');
 
@@ -243,7 +243,7 @@ test('a shutdown during a post-merge check interrupts it, records that, and remo
 
     // Once shutting down, a new approval is refused before it changes anything.
     const next = parkedOnBranch(store, dir, 'second');
-    await assert.rejects(applyApproval(store, next.id, { tracker, mainCheck: blocking }), ShuttingDownError);
+    await assert.rejects(applyApproval(store, next.id, { principal: 'operator', tracker, mainCheck: blocking }), ShuttingDownError);
     assert.equal(store.getTask(next.id)!.status, 'awaiting-approval');
   } finally {
     store.close();
@@ -263,6 +263,7 @@ test('an approval queued behind a landing when shutdown begins does not merge: i
     const first = withRepoMergeSection(dir, () => settled);
     let bChecked = false;
     const second = applyApproval(store, b.id, {
+      principal: 'operator',
       tracker, mainCheck: () => { bChecked = true; return new Promise<MainCheck>(() => {}); },
     });
     const refused = assert.rejects(second, (err: Error) => err instanceof ShuttingDownError && /approve again after restart/.test(err.message));

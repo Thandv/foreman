@@ -66,6 +66,7 @@ function withStore(fn: (store: Store, dir: string) => Promise<void>): () => Prom
 test('green: the landing hold ends and the dependent is released', withStore(async (store, dir) => {
   const { parent, child } = parentAndChild(store, dir);
   const merge = await checked(applyApproval(store, parent.id, {
+    principal: 'operator',
     tracker: new ApprovalTracker(),
     mainCheck: async (_r, _c, _s, head) => ({ ok: true, head, cmd: 'npm test', tail: 'ok', firstTail: '' }),
   }));
@@ -79,6 +80,7 @@ test('green: the landing hold ends and the dependent is released', withStore(asy
 test('red: the repo is marked red naming the task, with the MAIN IS RED event', withStore(async (store, dir) => {
   const { parent, child } = parentAndChild(store, dir);
   const merge = await checked(applyApproval(store, parent.id, {
+    principal: 'operator',
     tracker: new ApprovalTracker(),
     mainCheck: async (_r, _c, _s, head) => ({ ok: false, head, cmd: 'npm test', tail: 'boom', firstTail: '' }),
   }));
@@ -99,6 +101,7 @@ test('red: the repo is marked red naming the task, with the MAIN IS RED event', 
 test('flaky: a first failure then a pass records a status event and no red', withStore(async (store, dir) => {
   const { parent, child } = parentAndChild(store, dir);
   const merge = await checked(applyApproval(store, parent.id, {
+    principal: 'operator',
     tracker: new ApprovalTracker(),
     mainCheck: async (_r, _c, _s, head) => ({ ok: true, head, cmd: 'npm test', tail: 'second ok', firstTail: 'first boom' }),
   }));
@@ -119,6 +122,7 @@ test('FOREMAN_POSTMERGE_CHECK=off: no check runs and the dependent is released a
   const { parent, child } = parentAndChild(store, dir);
   let checks = 0;
   const out = await applyApproval(store, parent.id, {
+    principal: 'operator',
     tracker: new ApprovalTracker(),
     mainCheck: async (_r, _c, _s, head) => { checks += 1; return { ok: true, head, cmd: null, tail: '', firstTail: '' }; },
   });
@@ -136,6 +140,7 @@ test('shutdown during the check: the interrupted marker is due at once and the s
   let entered!: () => void;
   const inCheck = new Promise<void>((r) => { entered = r; });
   const landing = applyApproval(store, parent.id, {
+    principal: 'operator',
     tracker,
     // Registers a scratch checkout as checkMain does, then never finishes on its own.
     mainCheck: (repoDir, _c, _s, head) => {

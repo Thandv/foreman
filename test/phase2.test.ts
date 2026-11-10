@@ -416,7 +416,7 @@ test('approving a code task merges its branch, and the repo ends clean', async (
 
   const run = store.latestRun(t.id)!;
   const approved = store.decide(t.id, true);
-  const merge = await mergeApproved(approved, run);
+  const merge = await mergeApproved(approved, run, { source: 'human' });
   assert.equal(merge.merged, true, merge.reason);
   assert.equal(fs.readFileSync(path.join(dir, 'added.txt'), 'utf8'), 'hello\n');
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' }).trim(), '');
@@ -535,7 +535,7 @@ test('a rejected task never merges', async () => {
   await sched.drain(40_000);
   const run = store.latestRun(t.id)!;
   const rejected = store.decide(t.id, false, 'no thanks');
-  const merge = await mergeApproved(rejected, run);
+  const merge = await mergeApproved(rejected, run, { source: 'human' });
   assert.equal(merge.merged, false, merge.reason);
   assert.match(merge.reason, /not approved/);
   assert.equal(fs.existsSync(path.join(dir, 'added.txt')), false);
@@ -554,7 +554,7 @@ test('merge refuses when the operator has uncommitted work', async () => {
   const t = store.addTask({ title: 'x', prompt: "printf 'x\\n' > added.txt", kind: 'code', runner: 'shell', repo: dir });
   await sched.drain(40_000);
   fs.writeFileSync(path.join(dir, 'README.md'), 'operator was mid-edit\n');
-  const merge = await mergeApproved(store.decide(t.id, true), store.latestRun(t.id)!);
+  const merge = await mergeApproved(store.decide(t.id, true), store.latestRun(t.id)!, { source: 'human' });
   assert.equal(merge.merged, false);
   assert.match(merge.reason, /uncommitted/);
   assert.equal(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), 'operator was mid-edit\n');

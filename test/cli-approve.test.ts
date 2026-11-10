@@ -214,7 +214,7 @@ test('CLI approve: the NOT MERGED line fires on what mergeApproved itself answer
   execFileSync('git', ['init', '-q', repo]);
   try {
     const task = { id: 't_x', status: 'done', kind: 'writing', repo, mergeOnApprove: false, allowCore: false };
-    const merge = await mergeApproved(task as never, { id: 'r_new', branch: 'foreman/t_x-r_new' } as never);
+    const merge = await mergeApproved(task as never, { id: 'r_new', branch: 'foreman/t_x-r_new' } as never, { source: 'human' });
     assert.equal(merge.merged, false);
     assert.deepEqual(merge, UNMERGED, 'the literal the tests above use is what merge.ts answers');
     const r = await cliAgainstRoutes(['approve', 't_x'], {

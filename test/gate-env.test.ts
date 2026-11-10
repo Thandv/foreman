@@ -534,7 +534,7 @@ test('F42: approving it closes the ticket as "nothing to change" and merges noth
     const t = r.store.addTask({ title: 'already done', prompt: 'true', kind: 'code', runner: 'shell', repo: r.repo });
     await r.sched.drain(60_000);
     assert.equal(r.store.getTask(t.id)!.status, 'awaiting-approval');
-    const out = await applyApproval(r.store, t.id, {});
+    const out = await applyApproval(r.store, t.id, { principal: 'operator' });
     assert.equal(out.task.status, 'done');
     assert.deepEqual({ merged: out.merge.merged, reason: out.merge.reason }, { merged: false, reason: 'closed: nothing to change' });
     assert.equal(git(r.repo, 'rev-parse', 'HEAD'), head, 'main did not move');
@@ -552,7 +552,7 @@ test('F42: a worktree that gained a change after the park is not closed as "noth
     await r.sched.drain(60_000);
     assert.equal(r.store.getTask(t.id)!.status, 'awaiting-approval');
     fs.writeFileSync(path.join(r.store.latestRun(t.id)!.worktreePath!, 'late.txt'), 'written after the park\n');
-    const out = await applyApproval(r.store, t.id, {});
+    const out = await applyApproval(r.store, t.id, { principal: 'operator' });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^work changed after review/);
     assert.equal(out.task.status, 'awaiting-approval', 'not marked done');

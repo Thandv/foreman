@@ -21,7 +21,7 @@ import type { Store } from './queue.ts';
 import { registerApprovedTool, type RegisterResult } from './tools/forge.ts';
 import { postMergeCheckEnabled, repoHead } from './postMerge.ts';
 import { checkLanding, checkMergedHead, pruneMainWorktrees, type MainChecker } from './landing/verify.ts';
-import type { Decision, GateMode, Run, Sensitivity, Task } from './types.ts';
+import { DEFAULT_ACTOR_ID, type Decision, type DecisionActor, type GateMode, type Run, type Sensitivity, type Task } from './types.ts';
 import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
 import { checkRepo } from './gitTripwire.ts';
@@ -227,7 +227,7 @@ export interface ApprovalResult {
   postMerge?: Promise<MergeResult>;
 }
 
-/** What only the person approving can state, for the decision row. Read only when `source` is 'human'. */
+/** What only the person approving can state, for the decision row. Read only when a person approves. */
 export interface ApprovalStatement {
   /** true: the work needed a fix beyond the reviewed diff (`--corrected`); false: it did not (`--clean`); absent: not stated. */
   corrected?: boolean | null;
@@ -236,9 +236,23 @@ export interface ApprovalStatement {
 }
 
 /**
+ * Who stands at the approve and reject path, as the principal it is given:
+ * the owner gate's reserved id is the owner model, and any other id (a
+ * request principal's, or 'operator' while auth is off) is a person.
+ */
+function actorOf(principal: string): DecisionActor {
+  return principal === DEFAULT_ACTOR_ID['owner-model'] ? 'owner-model' : 'human';
+}
+
+/** The approver as decide(), the memory fact and merge.ts name it. */
+function sourceOf(principal: string): 'human' | 'owner-gate' {
+  return actorOf(principal) === 'human' ? 'human' : 'owner-gate';
+}
+
+/**
  * The one approve path. A human approving over HTTP and the owner gate
  * approving off-tick run exactly this: decide → remember → land the branch →
- * register a built tool. `source` only marks the decision; it never branches
+ * register a built tool. `principal` only marks the decision; it never branches
  * the effects, so autonomy cannot quietly do something approval does not.
  * It returns once the merge has settled; the post-merge check runs on as
  * the result's `postMerge`.
@@ -247,19 +261,21 @@ export async function applyApproval(
   store: Store,
   taskId: string,
   opts: {
-    note?: string | null; source?: 'human' | 'owner-gate'; tracker?: ApprovalTracker; mainCheck?: MainChecker;
+    /** Who approves: a person's principal id ('operator' while auth is off), or 'owner-model' for the owner gate. */
+    principal: string;
+    note?: string | null; tracker?: ApprovalTracker; mainCheck?: MainChecker;
     /** Stands in for FOREMAN_POSTMERGE_MODE in tests (src/landing/verify.ts checkLanding). */
     postMergeMode?: PostMergeMode;
     /** Stands in for Foreman's own checkout in tests (merge.ts). */
     selfRoot?: string;
     /**
      * `foreman approve --as-is <sha>`: land this tree although it is not the
-     * reviewed one (merge.ts). Read only when `source` is 'human'.
+     * reviewed one (merge.ts). Read only when a person approves.
      */
     acceptTree?: string | null;
     /** Why the approval no longer applies, or null; asked again when its turn in the merge section comes (approve). */
     stale?: () => string | null;
-  } & ApprovalStatement = {},
+  } & ApprovalStatement,
 ): Promise<ApprovalResult> {
   const tracker = opts.tracker ?? approvals;
   tracker.admit(taskId);
@@ -270,7 +286,7 @@ export async function applyApproval(
 const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused']);
 
 type ApproveOpts = {
-  note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; postMergeMode?: PostMergeMode;
+  principal: string; note?: string | null; mainCheck?: MainChecker; postMergeMode?: PostMergeMode;
   selfRoot?: string; acceptTree?: string | null; stale?: () => string | null;
 } & ApprovalStatement;
 
@@ -360,7 +376,7 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
  * anything is decided comes back as its final `result`.
  */
 async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): Promise<Settled | { result: ApprovalResult }> {
-  const source = opts.source ?? 'human';
+  const source = sourceOf(opts.principal);
   const before = store.getTask(taskId);
   const run = before ? store.latestRun(taskId) : null;
   const recorded = async (result: ApprovalResult): Promise<{ result: ApprovalResult }> =>
@@ -530,13 +546,14 @@ export async function landedTreeOf(repo: string | null, taskId: string): Promise
  */
 async function recordApproval(
   store: Store,
-  opts: { note?: string | null; source?: 'human' | 'owner-gate'; acceptTree?: string | null } & ApprovalStatement,
+  opts: { principal: string; note?: string | null; acceptTree?: string | null } & ApprovalStatement,
   before: Task | null,
   run: Run | null,
   result: ApprovalResult,
 ): Promise<ApprovalResult> {
   if (!before) return result;
-  const person = (opts.source ?? 'human') === 'human';
+  const actor = actorOf(opts.principal);
+  const person = actor === 'human';
   // The run under review; a ticket finished on the operator's own desk approved none.
   const ruled = before.status === 'awaiting-approval' ? run : null;
   const asIs = person && typeof opts.acceptTree === 'string' && opts.acceptTree !== '';
@@ -550,7 +567,8 @@ async function recordApproval(
     taskId: before.id,
     runId: ruled?.id ?? null,
     action: 'approve',
-    actor: person ? 'human' : 'owner-model',
+    actor,
+    actorId: opts.principal,
     note: opts.note ?? null,
     statusAfter: store.getTask(before.id)?.status ?? null,
     reviewedTree,
@@ -613,19 +631,15 @@ function requeueConflict(store: Store, task: Task, run: Run): number | null {
   return store.scheduleConflictRepair(task.id, run.id, task.testCmd ?? null) ? task.repairs + 1 : null;
 }
 
-/** The one reject path; the note is the reason, whoever wrote it. */
-export function applyRejection(
-  store: Store,
-  taskId: string,
-  note: string,
-  source: 'human' | 'owner-gate' = 'human',
-): Task {
+/** The one reject path; the note is the reason, whoever wrote it. `principal` is who rejects, as for applyApproval. */
+export function applyRejection(store: Store, taskId: string, note: string, principal: string): Task {
+  const source = sourceOf(principal);
   // Read before decide(): the run under review, when the ticket is at the approval gate.
   const ruled = store.getTask(taskId)?.status === 'awaiting-approval' ? store.latestRun(taskId) : null;
   const task = store.decide(taskId, false, note, source);
   recordDecision(store, task, false, note, source);
   store.noteDecision({
-    taskId, runId: ruled?.id ?? null, action: 'reject', actor: source === 'human' ? 'human' : 'owner-model', note,
+    taskId, runId: ruled?.id ?? null, action: 'reject', actor: actorOf(principal), actorId: principal, note,
     statusAfter: task.status, reviewedTree: ruled?.reviewedTree ?? null,
   });
   return task;
@@ -1249,7 +1263,7 @@ async function applyGateReply(
     if (approvals.shuttingDown) return log('hold', stopping, false);
     // While the approval waits for its repo's merge section a shutdown can begin, or the work, review or gate
     // can change: refused, nothing decided.
-    const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot, stale: changed })
+    const result = await applyApproval(store, task.id, { principal: DEFAULT_ACTOR_ID['owner-model'], note, selfRoot, stale: changed })
       .catch((err: unknown) => {
         if (err instanceof ShuttingDownError) return stopping;
         if (err instanceof StaleApprovalError) return err.message;
@@ -1263,7 +1277,7 @@ async function applyGateReply(
     const merge = (await result.postMerge) ?? result.merge;
     return log('approved', `${rationale}${merge.branch ? ` [merge: ${merge.reason}]` : ''}`);
   }
-  applyRejection(store, task.id, note, 'owner-gate');
+  applyRejection(store, task.id, note, DEFAULT_ACTOR_ID['owner-model']);
   return log('rejected', rationale);
 }
 

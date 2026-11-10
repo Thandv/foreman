@@ -107,7 +107,7 @@ test('landing: a protected edit the worker COMMITTED inside its jail is refused,
     assert.equal(git(jail.dir, 'diff', 'HEAD'), '', 'precondition: the old check saw nothing');
 
     for (const attempt of ['first', 'second']) {
-      const out = await applyApproval(store, task.id, { selfRoot: dir });
+      const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
       assert.equal(out.merge.merged, false, attempt);
       assert.match(out.merge.reason, /^core change refused: /, attempt);
       assert.match(out.merge.reason, /src\/lock\.ts/, attempt);
@@ -129,7 +129,7 @@ test('landing: a protected file written in the worktree AFTER the run (a test co
     const { task, jail } = await parked(store, dir);
     // The run's check has been and gone; mergeApproved commits whatever is there now.
     write(jail.dir, { 'src/security/late.ts': 'export const late = 1;\n', 'docs.md': 'ordinary\n' });
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^core change refused: .*src\/security\/late\.ts/);
     assert.equal(store.getTask(task.id)!.status, 'awaiting-approval');
@@ -145,7 +145,7 @@ test('landing: the same core change lands with allowCore, and on a repo that is 
   await withStore(async (store) => {
     const allowed = await parked(store, dir, { allowCore: true });
     write(allowed.jail.dir, { 'src/lock.ts': 'export const lock = 3;\n' });
-    const first = await applyApproval(store, allowed.task.id, { selfRoot: dir });
+    const first = await applyApproval(store, allowed.task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(first.merge.merged, true, first.merge.reason);
     assert.equal(fs.readFileSync(path.join(dir, 'src/lock.ts'), 'utf8'), 'export const lock = 3;\n');
     assert.equal(store.getTask(allowed.task.id)!.status, 'done');
@@ -153,7 +153,7 @@ test('landing: the same core change lands with allowCore, and on a repo that is 
     // `other` has the same file names but is somebody else's repo.
     const foreign = await parked(store, other);
     write(foreign.jail.dir, { 'src/lock.ts': 'export const lock = 4;\n' });
-    const second = await applyApproval(store, foreign.task.id, { selfRoot: dir });
+    const second = await applyApproval(store, foreign.task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(second.merge.merged, true, second.merge.reason);
     assert.equal(fs.readFileSync(path.join(other, 'src/lock.ts'), 'utf8'), 'export const lock = 4;\n');
   });
@@ -165,7 +165,7 @@ test('landing: an ordinary change to Foreman still lands', async () => {
   await withStore(async (store) => {
     const { task, jail } = await parked(store, dir);
     write(jail.dir, { 'src/app.ts': 'export const app = 5;\n' });
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(store.getTask(task.id)!.status, 'done');
   });
@@ -177,14 +177,14 @@ test('landing: renaming a protected file out of its path, or an ordinary file in
   await withStore(async (store) => {
     const out = await parked(store, dir);
     git(out.jail.dir, 'mv', 'src/lock.ts', 'src/moved.ts');
-    const movedOut = await applyApproval(store, out.task.id, { selfRoot: dir });
+    const movedOut = await applyApproval(store, out.task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(movedOut.merge.merged, false);
     assert.match(movedOut.merge.reason, /^core change refused: .*\(src\/lock\.ts\)/, 'the path that went is the one named');
 
     const into = await parked(store, dir);
     git(into.jail.dir, 'mv', 'src/app.ts', 'src/security/app.ts');
     git(into.jail.dir, 'commit', '-qm', 'moved in');
-    const movedIn = await applyApproval(store, into.task.id, { selfRoot: dir });
+    const movedIn = await applyApproval(store, into.task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(movedIn.merge.merged, false);
     assert.match(movedIn.merge.reason, /^core change refused: .*\(src\/security\/app\.ts\)/);
 
@@ -204,7 +204,7 @@ test('landing: a path with a space and a non-ASCII letter is listed as it is, an
       (await changedPaths(dir, git(dir, 'rev-parse', 'HEAD'), run.branch!)).sort(),
       ['notes/añ o.md', odd].sort(),
     );
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.ok(out.merge.reason.includes(`(${odd})`), out.merge.reason);
   });
@@ -219,7 +219,7 @@ for (const key of ['diff.noprefix', 'diff.mnemonicPrefix']) {
       const { task, jail } = await parked(store, dir);
       write(jail.dir, { 'src/lock.ts': 'export const lock = 6;\n' });
       assert.doesNotMatch(git(jail.dir, 'diff', 'HEAD'), /^\+\+\+ b\//m, 'precondition: plain patch headers carry no b/ prefix');
-      const out = await applyApproval(store, task.id, { selfRoot: dir });
+      const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
       assert.equal(out.merge.merged, false);
       assert.match(out.merge.reason, /^core change refused: .*src\/lock\.ts/);
     });
@@ -232,7 +232,7 @@ test('landing fails closed: a branch that is ahead with no path listed, or that 
   await withStore(async (store) => {
     const empty = await parked(store, dir);
     git(empty.jail.dir, 'commit', '-q', '--allow-empty', '-m', 'nothing listed');
-    const first = await mergeApproved(store.decide(empty.task.id, true), empty.run, { selfRoot: dir });
+    const first = await mergeApproved(store.decide(empty.task.id, true), empty.run, { source: 'human', selfRoot: dir });
     assert.equal(first.merged, false);
     assert.match(first.reason, /^core change refused: .*listed no path/);
 
@@ -241,7 +241,7 @@ test('landing fails closed: a branch that is ahead with no path listed, or that 
     git(orphan.jail.dir, 'checkout', '-q', '--orphan', 'elsewhere');
     git(orphan.jail.dir, 'commit', '-qm', 'no shared history');
     git(orphan.jail.dir, 'branch', '-f', orphan.run.branch!, 'elsewhere');
-    const second = await mergeApproved(store.decide(orphan.task.id, true), orphan.run, { selfRoot: dir });
+    const second = await mergeApproved(store.decide(orphan.task.id, true), orphan.run, { source: 'human', selfRoot: dir });
     assert.equal(second.merged, false);
     assert.match(second.reason, /^core change refused: .*could not be listed/);
   });
@@ -718,7 +718,7 @@ for (const where of ['a tracked directory', 'an absolute path']) {
       // The jail shares the repo's config: this is the worker's own `git config`.
       git(jail.dir, 'config', 'core.hooksPath', where === 'a tracked directory' ? 'tools/hooks' : outside);
 
-      const out = await applyApproval(store, task.id, { selfRoot: dir });
+      const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
       assert.equal(out.merge.merged, true, out.merge.reason);
       assert.equal(fs.readFileSync(path.join(dir, 'src/app.ts'), 'utf8'), 'export const app = 2;\n');
       assert.equal(fs.readFileSync(path.join(dir, 'src/lock.ts'), 'utf8'), BASE['src/lock.ts'], 'no hook ran in the checkout');
@@ -748,7 +748,7 @@ test('landing: a branch built on two merge bases that puts a protected file back
     git(jail.dir, 'reset', '-q', '--hard', x);
     assert.equal(git(dir, 'merge-base', '--all', 'HEAD', x).split('\n').length, 2, 'precondition: two merge bases');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^core change refused: .*could not be listed \(it has 2 merge bases/);
     assert.equal(store.getTask(task.id)!.status, 'awaiting-approval');
@@ -767,7 +767,7 @@ test('landing: an edit that follows a file HEAD has since renamed into a protect
     // On main, after the jail was cut:
     git(dir, 'mv', 'src/old.ts', 'src/security/new.ts'); git(dir, 'commit', '-qm', 'moved into the core');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^core change refused: .*\(src\/security\/new\.ts\)/, 'named where it would land, not where it was edited');
     assert.doesNotMatch(out.merge.reason, /undone/, 'refused before any merge was made in the checkout');
@@ -784,7 +784,7 @@ test('landing: an ordinary change still lands after HEAD moved on with a protect
     write(dir, { 'src/lock.ts': 'export const lock = "a person changed this";\n' });
     git(dir, 'commit', '-qam', 'by hand');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(fs.readFileSync(path.join(dir, 'src/lock.ts'), 'utf8'), 'export const lock = "a person changed this";\n');
     assert.equal(fs.readFileSync(path.join(dir, 'src/app.ts'), 'utf8'), 'export const app = 2;\n');
@@ -803,7 +803,7 @@ test('landing: a self-task spelled as a sub-directory, in a repo with diff.relat
       'precondition: from docs/ a plain listing shows only the file in docs/');
     assert.deepEqual(await changedPaths(path.join(jail.dir, 'docs'), 'HEAD~1', 'HEAD'), ['docs/x.md', 'src/lock.ts'], 'the guard\'s listing is of the whole tree');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^core change refused: .*\(src\/lock\.ts\)/);
     assert.equal(fs.readFileSync(path.join(dir, 'src/lock.ts'), 'utf8'), BASE['src/lock.ts']);
@@ -817,6 +817,7 @@ test('landing: a commit added to the branch between the check and the merge does
     const { task, run, jail } = await parked(store, dir);
     write(jail.dir, { 'src/app.ts': 'export const app = 2;\n' });
     const out = await mergeApproved(store.decide(task.id, true), run, {
+      source: 'human',
       selfRoot: dir,
       beforeMerge: () => {
         write(jail.dir, { 'src/lock.ts': 'export const lock = "EVIL";\n' });
@@ -855,7 +856,7 @@ for (const [what, driver] of [
       git(dir, 'commit', '-qam', 'main side');
       const head = git(dir, 'rev-parse', 'HEAD');
 
-      const out = await applyApproval(store, task.id, { selfRoot: dir });
+      const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
       assert.equal(fs.existsSync(ran), false, 'the planted driver did not run, in the prediction or the merge');
       assert.equal(fs.readFileSync(path.join(dir, 'src/lock.ts'), 'utf8'), BASE['src/lock.ts']);
       assert.equal(git(dir, 'status', '--porcelain'), '');
@@ -882,7 +883,7 @@ test('landing: with a merge driver planted, a branch that changes a protected fi
     git(dir, 'commit', '-qam', 'main side');
     const head = git(dir, 'rev-parse', 'HEAD');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^core change refused: this change touches Foreman's core \(src\/lock\.ts\)/);
     assert.equal(fs.existsSync(ran), false, 'the planted driver did not run');
@@ -1239,7 +1240,7 @@ test('the core-guard lead survives a re-check, a pruned timeline, a budget stop,
 
     // An approval that does not land (the checkout is dirty) goes back to the gate.
     write(dir, { 'scratch.txt': 'the operator is mid-edit\n' });
-    const out = await applyApproval(store, t.id, { selfRoot: dir });
+    const out = await applyApproval(store, t.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.ok(note(t.id).startsWith(`${lead} | approved, but not landed: repo has uncommitted changes`), note(t.id));
     rm(path.join(dir, 'scratch.txt'));
@@ -1359,7 +1360,7 @@ test('landing: a merge driver that would answer the real merge differently from 
     git(dir, 'commit', '-qam', 'main side');
     const head = git(dir, 'rev-parse', 'HEAD');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     // git's own line merge predicts what the merge would make, and that touches src/lock.ts: refused before any merge.
     assert.match(out.merge.reason, /^core change refused: this change touches Foreman's core \(src\/lock\.ts\)/);
@@ -1388,6 +1389,7 @@ for (const [what, mainSide, expected] of [
       if (mainSide) { write(dir, { 'src/app.ts': mainSide }); git(dir, 'commit', '-qam', 'main side'); }
       const head = git(dir, 'rev-parse', 'HEAD');
       const out = await mergeApproved(store.decide(task.id, true), run, {
+        source: 'human',
         selfRoot: dir,
         beforeMerge: () => write(dir, { 'src/lock.ts': 'export const lock = "EVIL";\n' }),
       });
@@ -1407,6 +1409,7 @@ test('landing: a merge made on a HEAD that moved after the check is undone, and 
     const { task, run, jail } = await parked(store, dir);
     write(jail.dir, { 'src/app.ts': 'export const app = 2;\n' });
     const out = await mergeApproved(store.decide(task.id, true), run, {
+      source: 'human',
       selfRoot: dir,
       beforeMerge: () => {
         write(dir, { 'meanwhile.txt': 'another session\n' });
@@ -1427,7 +1430,7 @@ test('landing: a branch that removes the sub-directory the ticket names as its r
   await withStore(async (store) => {
     const { task, jail } = await parked(store, dir, { repo: path.join(dir, 'docs') });
     git(jail.dir, 'rm', '-qr', 'docs');
-    const out = await applyApproval(store, task.id, { selfRoot: fs.realpathSync(os.tmpdir()) });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: fs.realpathSync(os.tmpdir()) });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(fs.existsSync(path.join(dir, 'docs')), false);
   });
@@ -1441,7 +1444,7 @@ test('approval of a self-task that does not merge on approval is refused while i
   await withStore(async (store) => {
     const refused = async (id: string, named: RegExp): Promise<void> => {
       for (const attempt of ['first', 'second']) {
-        const out = await applyApproval(store, id, { selfRoot: dir });
+        const out = await applyApproval(store, id, { principal: 'operator', selfRoot: dir });
         assert.equal(out.merge.merged, false);
         assert.match(out.merge.reason, /^core change refused: /, attempt);
         assert.match(out.merge.reason, named, attempt);
@@ -1478,7 +1481,7 @@ test('approval of a task that does not merge on approval is unchanged for an ord
   const other = repo();
   await withStore(async (store) => {
     const done = async (p: { task: Task }): Promise<void> => {
-      const out = await applyApproval(store, p.task.id, { selfRoot: dir });
+      const out = await applyApproval(store, p.task.id, { principal: 'operator', selfRoot: dir });
       assert.deepEqual([out.merge.merged, out.merge.reason], [false, 'merge-on-approve disabled for this task']);
       assert.equal(store.getTask(p.task.id)!.status, 'done');
     };
@@ -1712,7 +1715,7 @@ test('the landing check decides on a fresh lookup: a cached "not self" does not 
     fs.unlinkSync(link); fs.symlinkSync(dir, link);
     assert.equal(isSelfTask(task, dir), false, 'precondition: the cached answer is the stale one');
 
-    const out = await applyApproval(store, task.id, { selfRoot: dir });
+    const out = await applyApproval(store, task.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.match(out.merge.reason, /^core change refused: .*src\/lock\.ts/);
     assert.equal(git(dir, 'show', 'HEAD:src/lock.ts'), 'export const lock = 1;');

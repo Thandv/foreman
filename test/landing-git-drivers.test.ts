@@ -91,7 +91,7 @@ test('a ticket whose worker planted a filter and gpg.program is parked, landed a
     assert.equal(p.task.status, 'awaiting-approval', p.task.error ?? '');
     assert.match(g(f.repo, 'config', 'gpg.program'), /evil\.sh$/, 'the worker did plant them');
     assert.deepEqual(fired(f), [], 'the run, its diff, its tree and the core guard ran none of them');
-    const out = await applyApproval(p.store, p.task.id, {});
+    const out = await applyApproval(p.store, p.task.id, { principal: 'operator' });
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.doesNotMatch(out.merge.reason, /MAIN IS RED|could not/);
     assert.deepEqual(fired(f), [], 'the landing (status, add, commit, merge) and the post-merge check ran none of them');
@@ -122,7 +122,7 @@ test('a merge driver the worker planted is not run when the landing merges a fil
     g(f.repo, 'commit', '-qam', 'main moved');
     const head = g(f.repo, 'rev-parse', 'HEAD');
     plant(f, 'c.txt merge=evm\n');
-    const out = await applyApproval(store, task.id, {});
+    const out = await applyApproval(store, task.id, { principal: 'operator' });
     assert.deepEqual(fired(f), []);
     assert.equal(out.merge.merged, true, out.merge.reason);
     assert.equal(g(f.repo, 'rev-parse', 'HEAD^1'), head);
@@ -261,7 +261,7 @@ test('no lazy fetch in the core guard\'s listing or the landing: a planted promi
       ['remote.origin.promisor', 'true'], ['remote.origin.uploadpack', `${f.prog} uploadpack`]] as const) g(jail.dir, 'config', k, v);
     const oid = g(jail.dir, 'rev-parse', 'HEAD:new.txt');
     fs.rmSync(path.join(f.repo, '.git', 'objects', oid.slice(0, 2), oid.slice(2)));
-    const out = await applyApproval(store, task.id, {});
+    const out = await applyApproval(store, task.id, { principal: 'operator' });
     assert.equal(out.merge.merged, false, 'the object is gone: the merge cannot be made');
     // The core guard compares trees only; drop the tree it reads.
     const tree = g(jail.dir, 'rev-parse', 'HEAD^{tree}');

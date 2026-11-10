@@ -34,8 +34,9 @@ export const REVIEW_SOURCE_MAX = 200;
 /** How much of the note the timeline's `decision` event carries; the whole note is in the row. */
 export const DECISION_EVENT_NOTE = 300;
 
-/** What a path hands Store.addDecision: the row less its id and time, every approve-only field optional. */
-export type NewDecision = Pick<Decision, 'taskId' | 'action'> & Partial<Omit<Decision, 'id' | 'at' | 'taskId' | 'action' | 'noteCutBytes'>>;
+/** What a path hands Store.addDecision: the row less its id and time, who acted, every approve-only field optional. */
+export type NewDecision = Pick<Decision, 'taskId' | 'action'> & { actorId: string }
+  & Partial<Omit<Decision, 'id' | 'at' | 'taskId' | 'action' | 'actorId' | 'noteCutBytes'>>;
 
 /** A principal's name: lowercase, at most 64 characters, safe in a commit trailer. */
 export const PRINCIPAL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -422,8 +423,9 @@ export class Store extends EventEmitter {
    * event on the task's timeline with its short form. Append-only: no method
    * here updates or deletes a row, and the table refuses both (db.ts). This
    * only records; it is called once the decision has already taken effect.
-   * `actorId` is who acted; a writer that names nobody gets its actor's
-   * reserved id (DEFAULT_ACTOR_ID: a person is the operator).
+   * `actorId` is who acted, always named: the principal's id, or a reserved
+   * actor id. A Store method below whose caller names nobody passes its
+   * actor's reserved id (DEFAULT_ACTOR_ID: a person is the operator).
    */
   addDecision(d: NewDecision): Decision {
     if (!DECISION_ACTIONS.includes(d.action)) throw new Error(`unknown decision action: ${String(d.action)}`);
@@ -439,7 +441,7 @@ export class Store extends EventEmitter {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        decisionId, d.taskId, d.runId ?? null, Date.now(), d.action, actor, d.actorId ?? DEFAULT_ACTOR_ID[actor], note, cut, d.statusAfter ?? null,
+        decisionId, d.taskId, d.runId ?? null, Date.now(), d.action, actor, d.actorId, note, cut, d.statusAfter ?? null,
         d.reviewedTree ?? null, d.landedTree ?? null, flag(d.asIs), flag(d.merged), d.mergeReason ?? null,
         flag(d.corrected), d.corrected == null ? null : (d.correctedSource ?? 'operator'),
         d.reviewSource?.trim() ? d.reviewSource.trim().slice(0, REVIEW_SOURCE_MAX) : null,
@@ -1571,7 +1573,7 @@ export class Store extends EventEmitter {
       .sort((a, b) => b.startedAt - a.startedAt)[0];
     this.db.prepare('UPDATE tasks SET carry_run = ? WHERE id = ?').run(carry?.id ?? null, taskId);
     const retried = this.getTask(taskId)!;
-    this.noteDecision({ taskId, runId: retriedRun, action: 'retry', actorId, note, statusAfter: retried.status, extra });
+    this.noteDecision({ taskId, runId: retriedRun, action: 'retry', actorId: actorId ?? DEFAULT_ACTOR_ID.human, note, statusAfter: retried.status, extra });
     return retried;
   }
 
@@ -1606,7 +1608,7 @@ export class Store extends EventEmitter {
     this.record({ taskId, type: 'status', message: why.slice(0, 500) });
     this.reviveDependents(taskId);
     const reopened = this.getTask(taskId)!;
-    this.noteDecision({ taskId, runId: run.id, action: 'reopen', actorId, note, statusAfter: reopened.status });
+    this.noteDecision({ taskId, runId: run.id, action: 'reopen', actorId: actorId ?? DEFAULT_ACTOR_ID.human, note, statusAfter: reopened.status });
     return reopened;
   }
 
@@ -1683,7 +1685,7 @@ export class Store extends EventEmitter {
       }
       this.db.prepare('DELETE FROM task_deps WHERE task_id = ? AND depends_on = ?').run(taskId, dep);
       this.addDecision({
-        taskId, runId: null, action: 'deps-drop', actor, actorId,
+        taskId, runId: null, action: 'deps-drop', actor, actorId: actorId ?? DEFAULT_ACTOR_ID[actor],
         note: `dropped dependency ${dep}${failedByThisEdge ? '; the ticket had failed by cascade from it and is revived' : ''}`,
         extra: { dep, statusBefore: task.status },
       });
@@ -1819,7 +1821,7 @@ export class Store extends EventEmitter {
     this.emit('cancel', taskId);
     // The reason, when one was given, is in the decision row and its timeline
     // event; the status note stays the fixed sentence other code matches on.
-    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', actorId: opts.actorId, note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
+    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', actorId: opts.actorId ?? DEFAULT_ACTOR_ID.human, note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
     // Parent first: the container is already terminal when its children close,
     // so closeEpicIfComplete cannot overwrite the cancel with a 'failed'.
     this.cancelDescendants(taskId, `parent ${taskId} was canceled`, new Set([taskId]));
@@ -1897,7 +1899,7 @@ export class Store extends EventEmitter {
       const late = eligible();
       if (late) throw refusal(late);
       this.addDecision({
-        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, actorId: opts.actorId, note, statusAfter: 'done', landedTree: tree,
+        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, actorId: opts.actorId ?? DEFAULT_ACTOR_ID[opts.actor], note, statusAfter: 'done', landedTree: tree,
         extra: { statusBefore: task.status, commit: sha, ...(by ? { by } : {}) },
       });
       this.setStatus(taskId, 'done', null);
@@ -2342,7 +2344,7 @@ export class Store extends EventEmitter {
         this.setStatus(child.id, 'canceled', reason);
         this.emit('cancel', child.id);
         // Foreman's own doing, not a person's word about this ticket: recorded as the system's.
-        this.noteDecision({ taskId: child.id, runId: this.latestRun(child.id)?.id ?? null, action: 'cancel', actor: 'system', note: reason, statusAfter: 'canceled', extra: { statusBefore: child.status } });
+        this.noteDecision({ taskId: child.id, runId: this.latestRun(child.id)?.id ?? null, action: 'cancel', actor: 'system', actorId: DEFAULT_ACTOR_ID.system, note: reason, statusAfter: 'canceled', extra: { statusBefore: child.status } });
       }
       // Still recurse through an already-terminal child: a failed nested epic
       // can have live tickets of its own.

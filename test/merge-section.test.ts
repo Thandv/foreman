@@ -57,7 +57,7 @@ test('an approval queued behind a merge in its repo waits, still parked and unme
     // An earlier landing holds the repo's merge section until released.
     const held = deferred();
     const first = withRepoMergeSection(dir, () => held.promise);
-    const second = applyApproval(store, b.id, { tracker, mainCheck: async (repoDir) => green(repoDir) });
+    const second = applyApproval(store, b.id, { principal: 'operator', tracker, mainCheck: async (repoDir) => green(repoDir) });
     await until(() => mergeSectionsPending(dir) === 2);
     assert.equal(store.getTask(b.id)!.status, 'awaiting-approval', 'nothing decided while queued');
     assert.equal(fs.existsSync(path.join(dir, 'second.txt')), false, 'nothing merged while queued');
@@ -79,8 +79,8 @@ test('a second approval of the same ticket waits its turn and is then refused: t
     const a = parkedOnBranch(store, dir, 'once');
     let checks = 0;
     const mainCheck = async (repoDir: string): Promise<MainCheck> => { checks += 1; return green(repoDir); };
-    const first = applyApproval(store, a.id, { tracker, mainCheck });
-    const again = applyApproval(store, a.id, { tracker, mainCheck });
+    const first = applyApproval(store, a.id, { principal: 'operator', tracker, mainCheck });
+    const again = applyApproval(store, a.id, { principal: 'operator', tracker, mainCheck });
     assert.equal(mergeSectionsPending(dir), 2, 'both approvals are in the repo\'s queue');
     const refused = assert.rejects(again, /is done, not awaiting-approval/);
     assert.equal((await first).merge.code, 'merged');
@@ -110,8 +110,8 @@ test('approvals in two repos still land side by side', async () => {
       return green(repoDir);
     };
     const [x, y] = await Promise.all([
-      applyApproval(store, a.id, { tracker, mainCheck: waitFor(aIn.resolve, bIn.promise) }),
-      applyApproval(store, b.id, { tracker, mainCheck: waitFor(bIn.resolve, aIn.promise) }),
+      applyApproval(store, a.id, { principal: 'operator', tracker, mainCheck: waitFor(aIn.resolve, bIn.promise) }),
+      applyApproval(store, b.id, { principal: 'operator', tracker, mainCheck: waitFor(bIn.resolve, aIn.promise) }),
     ]);
     assert.equal(x.merge.code, 'merged');
     assert.equal(y.merge.code, 'merged');
@@ -156,7 +156,7 @@ test('an approval queued behind a landing lands nothing if its ticket is re-park
     // An earlier landing holds the repo's merge section until released.
     const aOut = deferred();
     const first = withRepoMergeSection(dir, () => aOut.promise);
-    const second = applyApproval(store, b.id, { tracker, mainCheck: async (repoDir) => green(repoDir) });
+    const second = applyApproval(store, b.id, { principal: 'operator', tracker, mainCheck: async (repoDir) => green(repoDir) });
     await until(() => mergeSectionsPending(dir) === 2);
     // While B's approval waits, B is rejected, retried and parked again on a run the approver never saw.
     git(dir, 'checkout', '-q', '-b', 'unseen');

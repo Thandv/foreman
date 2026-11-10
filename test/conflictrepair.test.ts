@@ -81,7 +81,7 @@ test('a conflicting approval becomes a repair round cut from main with the 3-way
     const tip = moveMain(dir);
     const approved = store.latestRun(t.id)!;
 
-    const out = await applyApproval(store, t.id, {});
+    const out = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(out.merge.merged, false);
     const queued = store.getTask(t.id)!;
     assert.equal(queued.status, 'queued', 'requeued, not back at the gate and not done');
@@ -123,7 +123,7 @@ test('the repair jail is cut from main even for a task that began on a base ref'
     assert.equal(store.getTask(t.id)!.baseRef, 'side');
     const tip = moveMain(dir);
 
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     assert.ok(!store.getTask(t.id)!.baseRef, 'base_ref cleared');
     await sched.drain(30_000);
     assert.equal(fs.readFileSync(path.join(seen, 'head'), 'utf8').trim(), tip, 'cut from main\'s tip, not from the side branch');
@@ -141,14 +141,14 @@ test('approve A, then B that conflicts with A: B is requeued with markers, and s
     const b = await mk('beta');
     const spent = await mk('gamma', 0);
 
-    assert.equal((await applyApproval(store, a.id, {})).merge.merged, true);
+    assert.equal((await applyApproval(store, a.id, { principal: 'operator' })).merge.merged, true);
 
-    const outB = await applyApproval(store, b.id, {});
+    const outB = await applyApproval(store, b.id, { principal: 'operator' });
     assert.equal(outB.merge.merged, false);
     assert.equal(store.getTask(b.id)!.status, 'queued');
     assert.equal(store.getTask(b.id)!.repairs, 1);
 
-    const outC = await applyApproval(store, spent.id, {});
+    const outC = await applyApproval(store, spent.id, { principal: 'operator' });
     assert.equal(outC.merge.merged, false);
     const stuck = store.getTask(spent.id)!;
     assert.equal(stuck.status, 'awaiting-approval', 'not requeued');
@@ -161,7 +161,7 @@ test('approve A, then B that conflicts with A: B is requeued with markers, and s
     assert.equal(store.getTask(b.id)!.status, 'awaiting-approval');
     // A second conflict on the same task: the one repair round is used, so the hand-merge text is back.
     moveMain(dir, 'l1\nlater\nl3\n');
-    const again = await applyApproval(store, b.id, {});
+    const again = await applyApproval(store, b.id, { principal: 'operator' });
     assert.equal(again.merge.merged, false);
     assert.equal(store.getTask(b.id)!.status, 'awaiting-approval');
     assert.equal(store.getTask(b.id)!.repairs, 1, 'no second round');
@@ -177,7 +177,7 @@ test('an approval whose run left no diff artifact is not requeued', async () => 
     const t = await toGate(store, sched, dir, script(seen, 'ticket'));
     moveMain(dir);
     store.db.prepare("DELETE FROM artifacts WHERE task_id = ? AND type = 'diff'").run(t.id);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     const now = store.getTask(t.id)!;
     assert.equal(now.status, 'awaiting-approval');
     assert.equal(now.repairs, 0);
@@ -206,7 +206,7 @@ test('a refused core change is not a conflict and is never requeued', async () =
     store.endRun(run.id, 'succeeded', { exitCode: 0, summary: 'ok' });
     store.setStatus(t.id, 'awaiting-approval');
 
-    const out = await applyApproval(store, t.id, { selfRoot: dir });
+    const out = await applyApproval(store, t.id, { principal: 'operator', selfRoot: dir });
     assert.match(out.merge.reason, /^core change refused: /);
     const now = store.getTask(t.id)!;
     assert.equal(now.status, 'awaiting-approval');
@@ -227,7 +227,7 @@ test('a merge driver named in the repo config cannot dirty the checkout after a 
     git(dir, 'config', 'merge.evil.driver', 'printf pwned >> src/merge.ts; false');
     fs.writeFileSync(path.join(dir, '.git', 'info', 'attributes'), 'a.txt merge=evil\n');
 
-    const out = await applyApproval(store, t.id, { selfRoot: dir });
+    const out = await applyApproval(store, t.id, { principal: 'operator', selfRoot: dir });
     assert.equal(out.merge.merged, false);
     assert.equal(store.getTask(t.id)!.status, 'queued', 'still a repair round');
     assert.equal(git(dir, 'status', '--porcelain'), '', 'no git merge machinery ran in the checkout after the core was put back');
@@ -251,7 +251,7 @@ for (const [kind, files, edit] of [
       git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'main moved');
       const tip = git(dir, 'rev-parse', 'HEAD');
 
-      assert.equal((await applyApproval(store, t.id, {})).merge.merged, false);
+      assert.equal((await applyApproval(store, t.id, { principal: 'operator' })).merge.merged, false);
       assert.equal(store.getTask(t.id)!.status, 'queued');
       await sched.drain(30_000);
 
@@ -264,7 +264,7 @@ for (const [kind, files, edit] of [
       assert.equal(git(dir, 'rev-parse', 'HEAD'), tip);
 
       // Approving again must not turn into "no commits ahead" and a done task with the work gone.
-      const again = await applyApproval(store, t.id, {});
+      const again = await applyApproval(store, t.id, { principal: 'operator' });
       assert.equal(again.merge.merged, false);
       assert.match(again.merge.reason, /^merge conflict/);
       assert.equal(store.getTask(t.id)!.status, 'awaiting-approval');
@@ -280,7 +280,7 @@ test('a round that leaves conflict markers in a file is dropped back to the gate
     const t = await toGate(store, sched, dir, script(seen, 'ticket', 'true'));
     const approved = store.latestRun(t.id)!;
     const tip = moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     await sched.drain(30_000);
 
     assert.match(fs.readFileSync(path.join(seen, 'a.txt'), 'utf8'), /<<<<<<</, 'the worker was handed markers and left them');
@@ -301,7 +301,7 @@ test('an empty conflict round (the resolution equals main) is dropped back to th
     const t = await toGate(store, sched, dir, script(seen, 'ticket', `printf 'l1\\nMAIN\\nl3\\n' > a.txt; rm -f ticket.txt`));
     const approved = store.latestRun(t.id)!;
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     await sched.drain(30_000);
 
     const now = store.getTask(t.id)!;
@@ -343,7 +343,7 @@ test('a daemon stop mid-round and a limit requeue both keep the approved work to
     const t = await toGate(store, sched, dir, script(seen, 'ticket', `if [ ! -f ${once} ]; then touch ${once}; sleep 60; fi; printf 'l1\\nRESOLVED\\nl3\\n' > a.txt`));
     const approved = store.latestRun(t.id)!;
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
 
     // Round one: stopped while the worker sleeps on the markers.
     sched.start();
@@ -396,7 +396,7 @@ async function assertBackAtGate(store: Store, dir: string, id: string, approved:
   assert.equal(store.latestRunByTask().get(id)!.id, approved.id, 'latestRunByTask skips abandoned runs');
   for (const r of store.runsForTask(id)) if (r.id !== approved.id) assert.equal(decisionOf(store, r.id), 'abandoned');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), tip);
-  const again = await applyApproval(store, id, {});
+  const again = await applyApproval(store, id, { principal: 'operator' });
   assert.equal(again.merge.merged, false);
   assert.match(again.merge.reason, /^merge conflict/);
   assert.equal(store.getTask(id)!.status, 'awaiting-approval');
@@ -414,7 +414,7 @@ for (const reason of ['markers', 'empty', 'cannot-apply'] as const) {
       const t = await toGate(store, sched, dir, script(seen, 'ticket', `if [ ! -f ${once} ]; then touch ${once}; sleep 60; fi; ${second}`));
       const approved = store.latestRun(t.id)!;
       moveMain(dir);
-      await applyApproval(store, t.id, {});
+      await applyApproval(store, t.id, { principal: 'operator' });
       sched.start();
       for (let i = 0; i < 400 && !fs.existsSync(once); i++) await sleep(25);
       await sched.stop();
@@ -447,7 +447,7 @@ for (const reason of ['markers', 'empty', 'cannot-apply'] as const) {
       await settle(sched, () => store.getTask(t.id)!.status === 'awaiting-approval');
       const approved = store.latestRun(t.id)!;
       moveMain(dir);
-      await applyApproval(store, t.id, {});
+      await applyApproval(store, t.id, { principal: 'operator' });
       await settle(sched, () => fs.existsSync(path.join(seen, 'limited')) && store.getTask(t.id)!.status === 'queued' && sched.limitHoldUntil > 0);
       assert.equal(store.runsForTask(t.id).length, 2, 'the limited attempt is its own run');
       if (reason === 'cannot-apply') { git(dir, 'rm', '-q', 'a.txt'); git(dir, 'commit', '-qm', 'main drops a.txt'); }
@@ -475,13 +475,13 @@ test('an approval never lands or completes a conflict round that was interrupted
       const t = await toGate(store, sched, dir, script(seen, 'ticket', `touch ${once}; sleep 60`));
       const approved = store.latestRun(t.id)!;
       moveMain(dir);
-      await applyApproval(store, t.id, {});
+      await applyApproval(store, t.id, { principal: 'operator' });
       sched.start();
       for (let i = 0; i < 400 && !fs.existsSync(once); i++) await sleep(25);
       await sched.stop();
       store.setStatus(t.id, 'awaiting-approval', null);
       const tip = git(dir, 'rev-parse', 'HEAD');
-      const r = await applyApproval(store, t.id, {});
+      const r = await applyApproval(store, t.id, { principal: 'operator' });
       assert.equal(r.merge.merged, false);
       assert.notEqual(store.getTask(t.id)!.status, 'done');
       assert.equal(store.getTask(t.id)!.status, 'awaiting-approval');
@@ -498,7 +498,7 @@ test('an approval never lands or completes a conflict round that was interrupted
       const t = await toGate(store, sched, dir, script(seen, 'ticket'));
       const approved = store.latestRun(t.id)!;
       moveMain(dir);
-      await applyApproval(store, t.id, {});
+      await applyApproval(store, t.id, { principal: 'operator' });
       await sched.drain(30_000);
       const round = store.latestRun(t.id)!;
       assert.notEqual(round.id, approved.id);
@@ -511,7 +511,7 @@ test('an approval never lands or completes a conflict round that was interrupted
         execFileSync('git', ['update-index', '--index-info'], { cwd: wt, input: `100644 ${sha} 1\ta.txt\n100644 ${sha} 2\ta.txt\n` });
       }
       const tip = git(dir, 'rev-parse', 'HEAD');
-      const r = await applyApproval(store, t.id, {});
+      const r = await applyApproval(store, t.id, { principal: 'operator' });
       assert.equal(r.merge.merged, false, spoil);
       assert.equal(store.getTask(t.id)!.status, 'awaiting-approval', spoil);
       assert.equal(store.latestRun(t.id)!.id, approved.id, spoil);
@@ -528,7 +528,7 @@ test('a marker in a file the ticket itself added is reported as such', async () 
     const t = await toGate(store, sched, dir,
       `if grep -q '<<<<<<<' a.txt; then printf 'l1\\nRESOLVED\\nl3\\n' > a.txt; else printf 'l1\\nticket\\nl3\\n' > a.txt; printf 'x\\n=======\\ny\\n' > doc.txt; fi`);
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     await sched.drain(30_000);
     const now = store.getTask(t.id)!;
     assert.equal(now.status, 'awaiting-approval');
@@ -568,14 +568,14 @@ test('approving a conflict round that was stopped mid-way (task still queued) la
     const t = await toGate(store, sched, dir, script(seen, 'ticket', `touch ${once}; sleep 60`));
     const approved = store.latestRun(t.id)!;
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     sched.start();
     for (let i = 0; i < 400 && !fs.existsSync(once); i++) await sleep(25);
     await sched.stop();
     assert.equal(store.getTask(t.id)!.status, 'queued');
     assert.notEqual(store.latestRun(t.id)!.id, approved.id, 'the interrupted attempt is the latest run');
     const tip = git(dir, 'rev-parse', 'HEAD');
-    const r = await applyApproval(store, t.id, {});
+    const r = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(r.merge.merged, false);
     assert.notEqual(store.getTask(t.id)!.status, 'done');
     await assertBackAtGate(store, dir, t.id, approved, tip);
@@ -590,10 +590,10 @@ test('approving a queued conflict round before it has started a run keeps the ap
     const t = await toGate(store, sched, dir, script(seen, 'ticket'));
     const approved = store.latestRun(t.id)!;
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(store.getTask(t.id)!.status, 'queued');
     const tip = git(dir, 'rev-parse', 'HEAD');
-    const r = await applyApproval(store, t.id, {});
+    const r = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(r.merge.merged, false);
     assert.notEqual(decisionOf(store, approved.id), 'abandoned');
     await assertBackAtGate(store, dir, t.id, approved, tip);
@@ -607,16 +607,16 @@ test('a resolved conflict round that landed is done for good: a second approval 
   try {
     const t = await toGate(store, sched, dir, script(seen, 'ticket'));
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     await sched.drain(30_000);
     const round = store.latestRun(t.id)!;
     assert.equal(store.getTask(t.id)!.status, 'awaiting-approval');
-    const first = await applyApproval(store, t.id, {});
+    const first = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(first.merge.merged, true);
     assert.equal(store.getTask(t.id)!.status, 'done');
     assert.match(git(dir, 'show', 'HEAD:a.txt'), /RESOLVED/);
     const tip = git(dir, 'rev-parse', 'HEAD');
-    await assert.rejects(applyApproval(store, t.id, {}), /is done/);
+    await assert.rejects(applyApproval(store, t.id, { principal: 'operator' }), /is done/);
     assert.equal(store.getTask(t.id)!.status, 'done');
     assert.equal(git(dir, 'rev-parse', 'HEAD'), tip);
     assert.notEqual(decisionOf(store, round.id), 'abandoned');
@@ -632,13 +632,13 @@ test('a marker check that cannot run at the gate drops the parked round back to 
     const t = await toGate(store, sched, dir, script(seen, 'ticket'));
     const approved = store.latestRun(t.id)!;
     moveMain(dir);
-    await applyApproval(store, t.id, {});
+    await applyApproval(store, t.id, { principal: 'operator' });
     await sched.drain(30_000);
     assert.notEqual(store.latestRun(t.id)!.id, approved.id);
     assert.equal(store.getTask(t.id)!.status, 'awaiting-approval');
     const tip = git(dir, 'rev-parse', 'HEAD');
     git(dir, 'config', 'diff.algorithm', 'bogus');
-    const r = await applyApproval(store, t.id, {});
+    const r = await applyApproval(store, t.id, { principal: 'operator' });
     git(dir, 'config', '--unset', 'diff.algorithm');
     assert.equal(r.merge.merged, false);
     assert.equal(r.merge.code, 'conflict-round-abandoned');
@@ -656,7 +656,7 @@ test('a conflict round lands the tree ITS review recorded, not the approved run\
     const approved = store.latestRun(t.id)!;
     assert.match(approved.reviewedTree ?? '', /^[0-9a-f]{40}$/);
     moveMain(dir);
-    const first = await applyApproval(store, t.id, {});
+    const first = await applyApproval(store, t.id, { principal: 'operator' });
     assert.match(first.merge.reason, /^merge conflict/, 'the approved tree was the reviewed one: the conflict is what stopped it');
     await sched.drain(30_000);
     const round = store.latestRun(t.id)!;
@@ -668,14 +668,14 @@ test('a conflict round lands the tree ITS review recorded, not the approved run\
     // The round's worktree is held to the round's tree like any other run's.
     const head = git(dir, 'rev-parse', 'HEAD');
     fs.writeFileSync(path.join(round.worktreePath!, 'late.txt'), 'after the round was reviewed\n');
-    const refused = await applyApproval(store, t.id, {});
+    const refused = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(refused.merge.merged, false);
     assert.match(refused.merge.reason, /^work changed after review: late\.txt \(added since review\)/);
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
     assert.equal(store.latestRun(t.id)!.id, round.id, 'the round is still the run at the gate');
     fs.rmSync(path.join(round.worktreePath!, 'late.txt'));
 
-    const landed = await applyApproval(store, t.id, {});
+    const landed = await applyApproval(store, t.id, { principal: 'operator' });
     assert.equal(landed.merge.merged, true, landed.merge.reason);
     assert.equal(landed.merge.note, undefined);
     assert.equal(git(dir, 'rev-parse', 'HEAD^2^{tree}'), round.reviewedTree);

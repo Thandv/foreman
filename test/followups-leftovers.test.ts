@@ -518,7 +518,7 @@ test('corrected (--corrected / --clean) is refused on the reject, retry and reop
       assert.equal(h.store.getTask(atGate.id)!.status, 'awaiting-approval');
 
       const ended = parked(h.store);
-      applyRejection(h.store, ended.id, 'no');
+      applyRejection(h.store, ended.id, 'no', 'operator');
       res = await postRaw(`${h.base}/api/tasks/${ended.id}/retry`, JSON.stringify({ note: 'again', corrected }));
       assert.equal(res.status, 400);
       assert.match((await res.json() as { error: string }).error, /only means something on approve.*retry/);
@@ -1121,7 +1121,7 @@ test('debrief: a person approving a ticket whose latest verdict is split is appr
   const store = new Store(':memory:');
   try {
     const t = parkedOnSplit(store, 'Approved on a split');
-    await applyApproval(store, t.id, { source: 'human', note: 'looked at it myself' });
+    await applyApproval(store, t.id, { principal: 'operator', note: 'looked at it myself' });
     assert.equal(store.getTask(t.id)!.status, 'done');
     const doc = collectDebrief(store, t.id, { home: testHome });
     const g = doc.tickets[0]!.gateDisagreement;
@@ -1167,7 +1167,7 @@ test('debrief: a ticket parked on a split with no decision yet is listed as wait
     assert.equal(waitingOnSplit({ verdict: 'pass', council: [] }), null);
     assert.equal(waitingOnSplit(null), null);
     // Once a person has decided, it is no longer waiting.
-    applyRejection(store, t.id, 'no');
+    applyRejection(store, t.id, 'no', 'operator');
     assert.equal(collectDebrief(store, t.id, { home: testHome }).tickets[0]!.gateDisagreement.class, 'rejected-at-gate');
   } finally {
     store.close();
