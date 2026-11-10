@@ -94,6 +94,8 @@ test('coalesced: three same-command merges landing during one check cause one mo
   first.finish(true);
   const second = await called(2);
   assert.equal(second.head, mergeOf(dir, tickets[3]!.task.id), 'the next check runs at the newest merged HEAD');
+  assert.equal(store.isLanding(tickets[0]!.task.id), false, 't0 is released by the check that covered it');
+  for (const t of tickets.slice(1)) assert.equal(store.isLanding(t.task.id), true, `${t.task.title} waits for its own covering check`);
   second.finish(true);
   for (const out of outs) assert.equal((await checked(out)).code, 'merged');
   assert.equal(calls.length, 2, 'two suites in total');
@@ -206,6 +208,20 @@ test('shutdown during a coalesced check: the interrupted marker names every cove
   assert.ok(store.eventsForTask(b.task.id).some((e) => e.type === 'warning' &&
     e.message === `main check after merging ${a.task.id}, ${b.task.id} was interrupted by a daemon shutdown and did not run: ` +
       'the merged HEAD is untested; new work for this repo is held until a re-check passes'));
+}));
+
+test('shutdown with a landing still queued: its check never starts, its reason says interrupted and its hold ends', { timeout: 60_000 }, withStore(async (store, dir) => {
+  const first = parked(store, dir, 'first', 'cmd-a');
+  const queued = parked(store, dir, 'queued', 'cmd-b');
+  const tracker = new ApprovalTracker();
+  const { calls, mainCheck, called } = heldChecks();
+  await applyApproval(store, first.task.id, { tracker, mainCheck });
+  await called(1); // never finished: only the shutdown ends it
+  const out = await applyApproval(store, queued.task.id, { tracker, mainCheck });
+  assert.equal(await tracker.shutdown(5_000), 0);
+  assert.match((await checked(out)).reason, /; main check interrupted by shutdown — untested, dependents held$/);
+  assert.equal(calls.length, 1, 'no check starts once a shutdown has begun');
+  assert.equal(store.isLanding(queued.task.id), false);
 }));
 
 test('a bad FOREMAN_POSTMERGE_MODE fails start with a named error', { timeout: 60_000 }, () => {
