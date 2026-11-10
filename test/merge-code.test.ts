@@ -10,8 +10,9 @@ import { applyApproval, type ApprovalResult } from '../src/gate.ts';
 import { recordBaseline } from '../src/gitTripwire.ts';
 import { pinnedGit } from '../src/gitExec.ts';
 import { mergeApproved, type MergeCode } from '../src/merge.ts';
+import { jailTree } from '../src/isolate.ts';
 import { NOTHING_TO_CHANGE_CLOSED } from '../src/verify/gateOutcome.ts';
-import type { Task } from '../src/types.ts';
+import type { Run, Task } from '../src/types.ts';
 
 // Every outcome of a landing, and what the approve path does with it: the
 // ticket's status afterwards and the note it is parked with. One row per
@@ -271,3 +272,185 @@ test("no code outside src/merge.ts decides on a MergeResult's reason text", () =
   assert.ok(files.length - srcCount > 10, 'the board tree was walked');
   assert.deepEqual(hits, []);
 });
+
+// What mergeApproved itself answers on each path, reason text included, called
+// directly on fixture repos: the pins the split into prepareLandingCommit and
+// the merge must leave unchanged.
+
+interface Direct {
+  dir: string;
+  task: Task;
+  run: Run;
+  /** The run's worktree (a `git worktree add` of the branch), when the case gives it one. */
+  wt: string | null;
+  close: () => void;
+}
+
+/** A landing of branch `ticket` (carrying `change`, none: HEAD), approved; `pending` is left uncommitted in a worktree of it. */
+function direct(change: Record<string, string> | null, opts: { pending?: Record<string, string>; over?: Partial<Parameters<Store['addTask']>[0]> } = {}): Direct {
+  const f = parked(change, opts.over ?? {});
+  let wt: string | null = null;
+  if (opts.pending) {
+    wt = path.join(fs.realpathSync(scratchDir('foreman-mergecode-wt-')), 'wt');
+    git(f.dir, 'worktree', 'add', '-q', wt, 'ticket');
+    for (const [file, body] of Object.entries(opts.pending)) fs.writeFileSync(path.join(wt, file), body);
+  }
+  const run = { ...f.store.getRun(f.runId)!, worktreePath: wt };
+  return { dir: f.dir, task: { ...f.task, status: 'done' }, run, wt, close: () => f.store.close() };
+}
+
+const treeOf = (dir: string, rev: string): string => git(dir, 'rev-parse', `${rev}^{tree}`);
+
+interface DirectRow {
+  name: string;
+  code: MergeCode;
+  setup: () => Direct | Promise<Direct>;
+  /** Approver and test hooks; `self: true` stands the fixture in for Foreman's own checkout. */
+  call?: (d: Direct) => Partial<Parameters<typeof mergeApproved>[2]>;
+  self?: boolean;
+  /** `call` commits to the checkout during the landing. */
+  mainMoves?: boolean;
+  reason: RegExp;
+  note?: RegExp;
+  /** The ticket branch afterwards: 'same' (no commit was added) or 'committed' (the worktree was committed onto it). */
+  branch?: 'same' | 'committed';
+}
+
+const DIRECT: DirectRow[] = [
+  {
+    name: 'merge-on-approve off',
+    code: 'merge-disabled',
+    setup: () => direct({ 'a.txt': 'TICKET\n' }, { over: { mergeOnApprove: false } }),
+    reason: /^merge-on-approve disabled for this task$/,
+  },
+  {
+    name: 'core change on a branch Foreman does not merge',
+    code: 'core-refused',
+    setup: () => direct({ 'src/security/admit.ts': 'export const admit = 2;\n' }, { over: { mergeOnApprove: false } }),
+    self: true,
+    reason: /^core change refused: .*src\/security\/admit\.ts/s,
+  },
+  {
+    name: 'core change predicted by the merge',
+    code: 'core-refused',
+    setup: () => direct({ 'src/security/admit.ts': 'export const admit = 2;\n' }),
+    self: true,
+    reason: /^core change refused: .*src\/security\/admit\.ts/s,
+  },
+  {
+    name: 'the merge as made does not join the commits that were checked',
+    code: 'core-refused',
+    setup: () => direct({ 'a.txt': 'TICKET\n' }),
+    self: true,
+    mainMoves: true,
+    call: (d) => ({
+      beforeMerge: () => { fs.writeFileSync(path.join(d.dir, 'b.txt'), 'main\n'); git(d.dir, 'add', 'b.txt'); git(d.dir, 'commit', '-qm', 'main moved'); },
+    }),
+    reason: /^core change refused: the merge could not be checked \(the merge commit does not join the two commits that were checked\) — the merge was undone$/,
+  },
+  {
+    name: 'branch gone',
+    code: 'branch-gone',
+    setup: () => { const d = direct({ 'a.txt': 'TICKET\n' }); git(d.dir, 'branch', '-qD', 'ticket'); return d; },
+    reason: /^branch ticket no longer exists$/,
+  },
+  {
+    name: 'dirty checkout',
+    code: 'uncommitted',
+    setup: () => { const d = direct({ 'a.txt': 'TICKET\n' }); fs.writeFileSync(path.join(d.dir, 'stray.txt'), 'x\n'); return d; },
+    reason: /^repo has uncommitted changes; merge skipped$/,
+  },
+  {
+    name: 'branch is HEAD',
+    code: 'nothing-ahead',
+    setup: () => direct(null),
+    reason: /^branch has no commits ahead of HEAD$/,
+  },
+  {
+    name: 'the worktree changed after review, refused before it is committed',
+    code: 'not-reviewed',
+    setup: () => { const d = direct({ 'a.txt': 'TICKET\n' }, { pending: { 'late.txt': 'x\n' } }); d.run.reviewedTree = treeOf(d.dir, 'ticket'); return d; },
+    reason: /^work changed after review: late\.txt \(added since review\) — the worktree is not the tree that was reviewed/,
+    branch: 'same',
+  },
+  {
+    name: "the branch's tree is not the reviewed one",
+    code: 'not-reviewed',
+    setup: () => { const d = direct({ 'a.txt': 'TICKET\n' }); d.run.reviewedTree = treeOf(d.dir, 'HEAD'); return d; },
+    reason: /^work changed after review: a\.txt \(changed since review\) — the worktree is not the tree that was reviewed/,
+  },
+  {
+    name: 'no reviewed tree under the owner gate',
+    code: 'not-reviewed',
+    setup: () => direct({ 'a.txt': 'TICKET\n' }),
+    call: () => ({ source: 'owner-gate' }),
+    reason: /^no reviewed tree was recorded for this run \(parked before this check existed\), so the owner gate does not land it: a person approves it$/,
+  },
+  {
+    name: 'conflict',
+    code: 'conflict',
+    setup: () => { const d = direct({ 'a.txt': 'TICKET\n' }); fs.writeFileSync(path.join(d.dir, 'a.txt'), 'MAIN\n'); git(d.dir, 'commit', '-qam', 'main'); return d; },
+    reason: /^merge conflict, aborted — resolve ticket by hand: /,
+  },
+  {
+    name: 'merged, the reviewed tree, no note',
+    code: 'merged',
+    setup: () => { const d = direct({ 'a.txt': 'TICKET\n' }); d.run.reviewedTree = treeOf(d.dir, 'ticket'); return d; },
+    reason: /^merged 1 commit\(s\) from ticket$/,
+  },
+  {
+    name: 'merged, the worktree committed first, no note',
+    code: 'merged',
+    setup: async () => {
+      const d = direct({ 'a.txt': 'TICKET\n' }, { pending: { 'new.txt': 'new\n' } });
+      d.run.reviewedTree = await jailTree(d.wt!);
+      return d;
+    },
+    reason: /^merged 2 commit\(s\) from ticket$/,
+    branch: 'committed',
+  },
+  {
+    name: "merged on a person's word with no reviewed tree, with a note",
+    code: 'merged',
+    setup: () => direct({ 'a.txt': 'TICKET\n' }),
+    reason: /^merged 1 commit\(s\) from ticket$/,
+    note: /^no reviewed tree recorded for this run \(parked before this check existed\); landed on a person's approval$/,
+  },
+  {
+    // The order: the checkout's dirty check comes before the worktree is committed.
+    name: 'dirty checkout and an uncommitted worktree: refused, and nothing committed to the branch',
+    code: 'uncommitted',
+    setup: async () => {
+      const d = direct({ 'a.txt': 'TICKET\n' }, { pending: { 'new.txt': 'new\n' } });
+      d.run.reviewedTree = await jailTree(d.wt!);
+      fs.writeFileSync(path.join(d.dir, 'stray.txt'), 'x\n');
+      return d;
+    },
+    reason: /^repo has uncommitted changes; merge skipped$/,
+    branch: 'same',
+  },
+];
+
+for (const row of DIRECT) {
+  test(`mergeApproved answers: ${row.name}`, async () => {
+    const d = await row.setup();
+    try {
+      const before = row.code === 'branch-gone' ? null : git(d.dir, 'rev-parse', 'ticket');
+      const head = git(d.dir, 'rev-parse', 'HEAD');
+      const out = await mergeApproved(d.task, d.run, { source: 'human', ...(row.self ? { selfRoot: d.dir } : {}), ...row.call?.(d) });
+      assert.equal(out.code, row.code, out.reason);
+      assert.equal(out.merged, row.code === 'merged', out.reason);
+      assert.equal(out.branch, 'ticket');
+      assert.match(out.reason, row.reason);
+      if (row.note) assert.match(out.note ?? '', row.note);
+      else assert.equal(out.note, undefined);
+      if (row.code === 'merged') assert.equal(git(d.dir, 'rev-parse', 'HEAD^2'), git(d.dir, 'rev-parse', 'ticket'));
+      // Not landed: the checkout is where it was, or, when main moved during the landing, on that commit, the merge undone.
+      else assert.equal(git(d.dir, 'rev-parse', row.mainMoves ? 'HEAD^' : 'HEAD'), head);
+      if (row.branch === 'same') assert.equal(git(d.dir, 'rev-parse', 'ticket'), before, 'nothing was committed to the branch');
+      if (row.branch === 'committed') assert.equal(git(d.dir, 'rev-parse', 'ticket^'), before, 'the worktree was committed onto the branch');
+    } finally {
+      d.close();
+    }
+  });
+}
