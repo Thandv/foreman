@@ -59,6 +59,14 @@ test('config --effective lists the moved knobs with their value and source', () 
     { name: 'FOREMAN_ECHO_STEP_MS', value: '40', source: 'env' });
   assert.deepEqual(withVar('FOREMAN_MIN_FREE_MB', '512', () => knob('FOREMAN_MIN_FREE_MB')),
     { name: 'FOREMAN_MIN_FREE_MB', value: '512', source: 'env' });
+  // An empty value these readers use as it is (0 or '') is not the default, so it shows as env.
+  const emptyIsSet: Array<[string, string]> = [['FOREMAN_LEFTOVER_SAMPLE_MS', '0'], ['FOREMAN_SLOT_WAIT_CREDIT_MS', '0'],
+    ['FOREMAN_AGENTS_DIR', ''], ['FOREMAN_PLAYBOOKS_DIR', ''], ['FOREMAN_ECHO_STEP_MS', '0']];
+  for (const [name, value] of emptyIsSet) {
+    assert.deepEqual(withVar(name, '', () => knob(name)), { name, value, source: 'env' }, `${name}=""`);
+  }
+  assert.deepEqual(withVar('FOREMAN_MIN_FREE_MB', '', () => knob('FOREMAN_MIN_FREE_MB')),
+    { name: 'FOREMAN_MIN_FREE_MB', value: '2048', source: 'default' }, 'an empty value that keeps the default shows as default');
   const others = withVar('FOREMAN_ASSIGNEE', 'human', () => effectiveConfig().others);
   assert.ok(!others.includes('FOREMAN_ASSIGNEE'), 'a knob config.ts resolves is not among the names read in place');
 });
