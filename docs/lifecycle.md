@@ -70,7 +70,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    it was given: if the ticket has been rejected, retried and parked on another run by its turn,
    the approval is refused with nothing decided. An owner-gate approval is also refused, as a hold
    that leaves no durable marker, if by its turn the review changed, the ticket was handed to a
-   person, or it became a hard-human case. Approvals in different repos land side by side. The queue is keyed by
+   person, or it became a hard-human case. Once a principal exists, an approval or a `landed` is
+   also refused, with nothing decided, when four-eyes (`docs/security.md`) does not allow its
+   approver: asked first, and again when its turn comes. Approvals in different repos land side by side. The queue is keyed by
    the ticket's repo path, so two tickets naming different directories of one checkout are not
    queued together.
 

@@ -25,7 +25,7 @@ import { computeLatencyReport } from './latency.ts';
 import { collectMetrics, toProm } from './metrics.ts';
 import { gatherEvidence, proposeImprovement, queueImprovement } from './improve.ts';
 import { consolidate } from './assistant/memory.ts';
-import { applyApproval, applyRejection, envGate, ShuttingDownError } from './gate.ts';
+import { applyApproval, applyRejection, envGate, FourEyesRefused, fourEyesRefusal, ShuttingDownError } from './gate.ts';
 import { crewAdvisories } from './verify/crewReview.ts';
 import { planAsk, queuePlan, type Plan } from './assistant/plan.ts';
 import {
@@ -920,6 +920,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             });
           } catch (err) {
             if (err instanceof ShuttingDownError) return json(res, 503, { error: err.message });
+            if (err instanceof FourEyesRefused) return json(res, 403, { error: err.message });
             throw err;
           }
           const { task, merge, registration, decision, postMerge } = approved;
@@ -954,6 +955,9 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             const tripwire = await checkRepo(asked.repo, asRun.id, { requireBaseline: false, git: pinnedGit });
             if (!tripwire.ok) return json(res, 409, { error: `cannot mark ${taskId} landed: ${tripwire.reason}` });
           }
+          // Four-eyes, as for approve: the change is the named commit against its first parent.
+          const refused = await fourEyesRefusal(store, taskId, actorId, { from: `${commit}^1`, to: commit }, scheduler.selfRoot);
+          if (refused) return json(res, 403, { error: refused.message });
           try {
             const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human', actorId });
             void scheduler.tick().catch(() => {});

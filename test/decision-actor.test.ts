@@ -69,7 +69,7 @@ function orderedFollowUps(store: Store): { f1: Task; f2: Task } {
   return { f1, f2 };
 }
 
-/** A git repo with one commit on main: its sha and tree. */
+/** A git repo whose HEAD on main is a commit on top of a first one: HEAD's sha and tree. */
 function repoWithCommit(t: test.TestContext): { repo: string; sha: string; tree: string } {
   const env = hermeticGitEnv(t);
   const repo = scratchDir('foreman-decision-actor-');
@@ -78,6 +78,7 @@ function repoWithCommit(t: test.TestContext): { repo: string; sha: string; tree:
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@e.st');
   git('config', 'user.name', 'T');
+  git('commit', '-q', '--allow-empty', '-m', 'first');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'by hand');

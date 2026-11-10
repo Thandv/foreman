@@ -2094,6 +2094,12 @@ export class Store extends EventEmitter {
     return row ? rowToPrincipal(row) : null;
   }
 
+  /** The principal with this id while it is enabled, or null (unknown, disabled, or a reserved actor id). */
+  livePrincipal(principalId: string): Principal | null {
+    const row = this.db.prepare('SELECT * FROM principals WHERE id = ? AND disabled_at IS NULL').get(principalId) as Record<string, unknown> | undefined;
+    return row ? rowToPrincipal(row) : null;
+  }
+
   /** Enabled human principals. */
   humanPrincipalCount(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM principals WHERE kind = 'human' AND disabled_at IS NULL").get() as { n: number }).n);

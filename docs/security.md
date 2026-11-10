@@ -59,6 +59,21 @@
   path (`applyApproval`, `applyRejection`) takes that principal as a required argument, and only a principal other
   than `owner-model` may land a run with no reviewed tree or name a tree with `--as-is`. The column is attribution,
   not a boundary: see "Known gap until the worker sandbox" below for what an unsandboxed worker can do.
+- Four-eyes (`src/security/fourEyes.ts`). With auth off nothing changes. With auth on, the approve route (and
+  `--as-is`), `POST /api/tasks/:id/landed` and the owner gate's approval are allowed only for an enabled `human`
+  principal: `owner-model` and a `service` principal never satisfy it. Once more than one enabled human exists, the
+  approver must not be the ticket's creator (`tasks.created_by`), and a ticket with no recorded creator is refused.
+  A change to protected paths always needs that second person, even while only one human exists: Foreman's
+  `PROTECTED_PATHS` in Foreman's own repo, and in any repo the human-only paths and the repo's `gate.humanPaths`.
+  The change is the run's work from its base commit to the reviewed tree (the `--as-is` tree when one is named),
+  and for `landed` the named commit against its first parent; a change git cannot list counts as protected. The
+  rule runs before anything else in `applyApproval` and again when an approval's turn in its repo's merge section
+  comes, so an approver disabled while it waited is refused. A refusal is 403 naming the rule, writes no decision,
+  leaves the ticket where it was and puts the reason on its timeline. Known limits: the live-human count is whatever
+  the host-admin secret has minted, so its holder can mint a second name for themselves (mints are
+  `principal-minted` events); with auth on and one human, a protected change cannot land until a second person is
+  minted, and tasks with no recorded creator (from schedules, standing asks, improvements) cannot be approved once
+  there are two.
 - Every task records who asked for it in `tasks.created_by`. `POST /api/tasks`, `/api/ask` (each plan node) and
   `/api/build` (the epic) set it to the principal that authenticated the request (`operator` while auth is off); a
   creator in the request body is never read. A task with a parent and no creator of its own (an epic's ticket, a

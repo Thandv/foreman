@@ -12,7 +12,9 @@ import { NOTHING_TO_CHANGE_CLOSED, personPark } from './verify/gateOutcome.ts';
 import { extractJson } from './models.ts';
 import { cloudFallback, localOnly } from './localOnly.ts';
 import { getPlaybook } from './playbooks.ts';
-import { isSelfTask } from './security/coreGuard.ts';
+import { changedPaths as gitChangedPaths, isProtectedPath, isSelfTask, isSelfTaskFresh } from './security/coreGuard.ts';
+import { recheck } from './security/fourEyes.ts';
+import { authIsOn } from './security/tokenAuth.ts';
 import { pinnedGit } from './gitExec.ts';
 import { leftoverMarkers, unmergedPaths } from './isolate.ts';
 // Type-only, like ownerCall.ts: the Store is always the caller's, so gate.ts
@@ -132,6 +134,13 @@ export class ShuttingDownError extends Error {}
  * was decided; the ticket stays where it is.
  */
 export class StaleApprovalError extends Error {}
+
+/**
+ * Four-eyes (security/fourEyes.ts) refused the person approving or landing:
+ * nothing was decided, and the ticket stays where it is. A StaleApprovalError
+ * too, since the merge section asks it again when an approval's turn comes.
+ */
+export class FourEyesRefused extends StaleApprovalError {}
 
 /**
  * The approvals in flight in this process, so a shutdown can wait for them.
@@ -277,6 +286,12 @@ export async function applyApproval(
     stale?: () => string | null;
   } & ApprovalStatement,
 ): Promise<ApprovalResult> {
+  // Before anything else, so a refusal writes no decision and changes nothing. Only with auth on: with it off the
+  // approval still enters its repo's merge section in the same tick it was given, as before.
+  if (authIsOn(store)) {
+    const refused = await fourEyesRefusal(store, taskId, opts.principal, approvalChange(store, taskId, opts), opts.selfRoot);
+    if (refused) throw refused;
+  }
   const tracker = opts.tracker ?? approvals;
   tracker.admit(taskId);
   return tracker.track(approve(store, taskId, opts, tracker));
@@ -310,7 +325,7 @@ async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker:
   const parked = store.getTask(taskId);
   if (!parked?.repo || parked.status !== 'awaiting-approval') return approveNow(store, taskId, opts, tracker, (fn) => fn());
   const runId = store.latestRun(taskId)?.id ?? null;
-  return approveNow(store, taskId, opts, tracker, (fn) => withRepoMergeSection(parked.repo!, () => {
+  return approveNow(store, taskId, opts, tracker, (fn) => withRepoMergeSection(parked.repo!, async () => {
     tracker.admit(taskId);
     const now = store.getTask(taskId);
     const why = now?.status !== 'awaiting-approval'
@@ -319,8 +334,65 @@ async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker:
         ? `the work changed while the approval waited for its turn to land: run ${runId} was approved, another is parked`
         : opts.stale?.() ?? null;
     if (why) throw new StaleApprovalError(`approval of ${taskId} not applied, nothing decided: ${why}`);
+    // Asked again: the approver may have been disabled, or a second person minted, while the approval waited.
+    const refused = await fourEyesRefusal(store, taskId, opts.principal, approvalChange(store, taskId, opts), opts.selfRoot);
+    if (refused) throw refused;
     return fn();
   }));
+}
+
+/** The change a landing would make, as git names it: from the commit `from` to the tree or commit `to`. */
+interface LandingChange {
+  from: string;
+  to: string;
+}
+
+/**
+ * What approving the task would land: its latest run's work from the commit its jail was cut from, to the reviewed
+ * tree or the `--as-is` one. Null when either is missing, or the `--as-is` tree (the caller's text) is not a hex id,
+ * so it never reaches git as an option.
+ */
+function approvalChange(store: Store, taskId: string, opts: { acceptTree?: string | null }): LandingChange | null {
+  const run = store.latestRun(taskId);
+  const to = opts.acceptTree || run?.reviewedTree;
+  return run?.baseCommit && to && /^[0-9a-f]{40,64}$/.test(to) ? { from: run.baseCommit, to } : null;
+}
+
+/**
+ * The first protected path `change` touches in the task's repo, or null when it touches none or the task has no
+ * repo: Foreman's PROTECTED_PATHS in Foreman's own repo, and in any repo the human-only paths (humanOnlyPath) and the
+ * repo's `gate.humanPaths`. A change that cannot be listed is described in their place, so it counts as protected.
+ */
+async function protectedHit(store: Store, task: Task, change: LandingChange | null, selfRoot?: string): Promise<string | null> {
+  if (!task.repo) return null;
+  if (!change) return 'work whose changed paths are not recorded';
+  let paths: string[];
+  try {
+    paths = await gitChangedPaths(task.repo, change.from, change.to);
+  } catch (err) {
+    // git's own last line ('fatal: ...'), not the command it ran.
+    const said = (err as Error).message.trim().split('\n').at(-1) ?? '';
+    return `work whose changed paths could not be listed (${said.slice(0, 200)})`;
+  }
+  const core = (await isSelfTaskFresh(task, selfRoot)) ? paths.find(isProtectedPath) : undefined;
+  return core ?? humanOnlyPath(paths, repoHumanPaths(store, task.repo));
+}
+
+/**
+ * Four-eyes (security/fourEyes.ts) for `principal` approving or landing the task, with `change` what would land:
+ * null, or the refusal, with its reason written on the task's timeline. Null for an unknown task, which the path
+ * asking answers in its own words.
+ */
+export async function fourEyesRefusal(
+  store: Store, taskId: string, principal: string, change: LandingChange | null, selfRoot?: string,
+): Promise<FourEyesRefused | null> {
+  const task = store.getTask(taskId);
+  if (!task) return null;
+  const reason = await recheck(store, task, principal, () => protectedHit(store, task, change, selfRoot));
+  if (!reason) return null;
+  const message = `four-eyes: ${reason}; nothing was decided`;
+  store.record({ taskId, type: 'status', message });
+  return new FourEyesRefused(message);
 }
 
 /** A decided approval whose merge has settled, ready for its post-merge check. */
