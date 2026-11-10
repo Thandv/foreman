@@ -30,7 +30,7 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { config, daemonUrl } from '../config.ts';
 import { installProcessRecorder } from '../runners/freezeInstall.ts';
-import { OUTPUT_HEADER, RUN_HEADER, RUN_TOKEN_HEADER, WRAPPER_PID_HEADER } from './slots.ts';
+import { OUTPUT_HEADER, RUN_HEADER, RUN_TOKEN_HEADER, VERIFY_SLOT_REFUSED, WRAPPER_PID_HEADER } from './slots.ts';
 import { outputDir, resultFileFor, savedOutputs, SuiteLog } from './suiteOutput.ts';
 import { detectTestCmd, runTests } from './tests.ts';
 
@@ -96,14 +96,16 @@ export function wrappableCommand(cmd: string, ticketCmd: string | null, detected
  * would have before. `onQueued` is called at most once, when the caller is
  * known to be waiting, with how many are ahead of it (null: the daemon did not
  * say). With `caller`, a daemon that already has a request open for that run
- * answers busy: nothing is held, and the caller must not run.
+ * answers busy: nothing is held, and the caller must not run. A daemon with auth
+ * on refuses a caller that is not a running run ('unauthenticated'): nothing is
+ * held, and the caller runs unslotted, as with no daemon.
  */
 export function holdSlot(
   base: string,
   onQueued: (ahead: number | null) => void,
   maxWaitMs = Infinity,
   caller?: SlotCaller | null,
-): Promise<(() => void) | null | 'timeout' | SlotBusy> {
+): Promise<(() => void) | null | 'timeout' | 'unauthenticated' | SlotBusy> {
   return new Promise((resolve) => {
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
@@ -115,7 +117,7 @@ export function holdSlot(
       told = true;
       onQueued(ahead);
     };
-    const done = (v: (() => void) | null | 'timeout' | SlotBusy): void => {
+    const done = (v: (() => void) | null | 'timeout' | 'unauthenticated' | SlotBusy): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -150,7 +152,7 @@ export function holdSlot(
       }
       if (res.statusCode !== 200) {
         res.resume();
-        return done(null);
+        return done(res.statusCode === 401 ? 'unauthenticated' : null);
       }
       res.setEncoding('utf8');
       let buf = '';
@@ -256,7 +258,7 @@ async function main(argv: string[]): Promise<number> {
     );
     return 3;
   }
-  if (release && typeof release !== 'function') {
+  if (typeof release === 'object' && release !== null) {
     const { secs, pid, output } = release.busy;
     process.stderr.write(
       `testSlot: a suite run for this ticket is already in progress (started ${secs} s ago${pid === null ? '' : `, pid ${pid}`}); ` +
@@ -264,10 +266,13 @@ async function main(argv: string[]): Promise<number> {
     );
     return EXIT_ALREADY_RUNNING;
   }
+  const held = typeof release === 'function' ? release : null;
   const waitedS = Math.round((Date.now() - started) / 1000);
-  if (release) {
+  if (held) {
     if (waited) process.stderr.write(`testSlot: test slot granted after ${waitedS} s\n`);
     process.stderr.write(`testSlot: slot held after ${waitedS}s; running ${cmd}\n`);
+  } else if (release === 'unauthenticated') {
+    process.stderr.write(`testSlot: ${VERIFY_SLOT_REFUSED}; running ${cmd} unslotted\n`);
   } else {
     process.stderr.write(`testSlot: no Foreman daemon at ${base} to share slots with; running ${cmd} unslotted\n`);
   }
@@ -303,7 +308,7 @@ async function main(argv: string[]): Promise<number> {
     return result.passed ? 0 : 1;
   } finally {
     log.close();
-    release?.();
+    held?.();
   }
 }
 

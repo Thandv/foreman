@@ -1,19 +1,35 @@
 ## Security posture
 
 - The API can queue shell commands. It binds loopback only; anything else needs
-  `FOREMAN_ALLOW_REMOTE=1`, and there is still **no authentication** — this is a local tool.
-  The approve and `landed` endpoints take no proof of who is calling and record the caller as `human`.
-  The one exception is the run a `POST /api/verify-slot` request names: `x-foreman-run` counts only
-  with `x-foreman-run-token`, an HMAC-SHA256 of the run id under a key the daemon draws at start
+  `FOREMAN_ALLOW_REMOTE=1`. Until the first principal exists there is **no authentication** — this is a
+  local tool, every request acts as the operator, and the approve and `landed` endpoints take no proof
+  of who is calling and record the caller as `human`.
+- Bearer tokens (`src/security/tokenAuth.ts`). Auth is a latch: it turns on once the ledger holds any
+  principal (`Store.hasAnyPrincipal`) and never turns back off, since principals are never deleted —
+  revoking or expiring every token, or disabling every principal, leaves every request refused, never
+  the operator again. With auth on, every `/api` request, GET and `/api/events` included, needs
+  `Authorization: Bearer <secret>` naming an unrevoked, unexpired token of an enabled principal, or it is
+  answered 401. The secret is hashed (sha256) and looked up in the ledger on every request, with no
+  cache, and is never logged, put in an event or echoed in an error. The Host (DNS-rebinding) and
+  cross-origin checks still answer first, and the board's static files stay public; the board itself
+  gets 401 from the API until it can sign in. Nothing mints a principal over HTTP yet. Tokens give
+  **attribution, not security**, until workers run in the macOS sandbox with `<FOREMAN_HOME>/secrets` and
+  `foreman.db` hidden: an unsandboxed worker runs as the daemon's user and can read both.
+- `POST /api/verify-slot` takes no bearer token; the run it names counts only with `x-foreman-run-token`
+  beside `x-foreman-run`, an HMAC-SHA256 of the run id under a key the daemon draws at start
   (32 random bytes, held in memory, never written to disk; no run outlives its daemon). Workers get
   it as `FOREMAN_RUN_TOKEN` beside `FOREMAN_RUN_ID`; the slot wrapper sends it and removes both from
-  the suite's environment. A request with a missing or wrong token is treated exactly as one that
-  names no run: it is still slotted, never refused, and claims nothing, so another local process
-  cannot make a run's lease busy or have a slot wait counted against its deadline. It is never
-  answered 403, because the wrapper reads any non-200 answer as "no daemon" and runs unslotted.
-- The ledger has `principals` and `api_tokens` tables (`src/db.ts`, written only by `src/queue.ts`), but
-  nothing creates a principal or checks a token yet, so the API above is unchanged. A principal is a `human`
-  or `service` with a unique name matching `^[a-z0-9][a-z0-9._-]{0,63}$`; `operator`, `owner-model` and
+  the suite's environment. With auth off, a request with a missing or wrong token is treated exactly
+  as one that names no run: it is still slotted and claims nothing, so another local process cannot
+  make a run's lease busy or have a slot wait counted against its deadline; it is never answered 403,
+  because the wrapper reads any other non-200 answer as "no daemon" and runs unslotted. With auth on,
+  the token is not enough, since it stays valid for its run id until the daemon restarts: the run must
+  also be `running` in the ledger. Anything else — no token, a wrong one, a finished run's, a bearer
+  alone — is answered 401 `verify-slot refused: not authenticated`, and the wrapper prints that, runs
+  the suite **unslotted** and exits with the suite's result, so a person running the suite on the host
+  is never broken.
+- The ledger has `principals` and `api_tokens` tables (`src/db.ts`, written only by `src/queue.ts`). A
+  principal is a `human` or `service` with a unique name matching `^[a-z0-9][a-z0-9._-]{0,63}$`; `operator`, `owner-model` and
   `system` are reserved actor ids, never rows, and refused as names. A principal is never deleted, only
   disabled. A token row keeps only the sha256 hex of its secret (never the secret), an optional expiry and a
   revocation time; `Store.principalByTokenHash` returns a principal only for an unrevoked, unexpired token of

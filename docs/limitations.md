@@ -41,9 +41,10 @@
 - The sandbox exists only on macOS. On Linux the default `FOREMAN_SANDBOX=tests` makes `foreman serve`
   refuse to start (its start-up self-test fails); set `FOREMAN_SANDBOX=off` and test commands run
   unconfined. `FOREMAN_SANDBOX=all` is accepted but behaves as `tests`.
-- The approve and `landed` endpoints take no proof of who is calling, and the routes record the caller as `human`.
-  The `x-foreman-run` header on `POST /api/verify-slot` is not authenticated: anything that can
-  reach the port may send any run id. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
+- Until the first principal exists the API takes no bearer token: the approve and `landed` endpoints take no proof
+  of who is calling, and the routes record the caller as `human` either way. Tokens give attribution, not security,
+  while workers run unsandboxed (docs/security.md). With auth off, the `x-foreman-run` header on
+  `POST /api/verify-slot` without its run token counts as naming no run: anything that can reach the port is slotted. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
 - Until workers are sandboxed, a worker can write the real repo's `.git/config`, `hooks/`, `info/` or a
   `refs/replace`/`refs/notes` ref by path. Foreman only detects that (a baseline taken at jail creation, compared
   at collection and at landing; docs/security.md) and holds or refuses for a person; it restores nothing. The

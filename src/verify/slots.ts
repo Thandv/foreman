@@ -111,6 +111,8 @@ export const RUN_HEADER = 'x-foreman-run';
 export const RUN_TOKEN_HEADER = 'x-foreman-run-token';
 export const WRAPPER_PID_HEADER = 'x-foreman-wrapper-pid';
 export const OUTPUT_HEADER = 'x-foreman-output';
+/** The daemon's 401 answer to a verify-slot request it will not slot (tokenAuth.ts verifySlotAllowed); the wrapper says it too. */
+export const VERIFY_SLOT_REFUSED = 'verify-slot refused: not authenticated';
 
 /** A path the slot wrapper could have built for a saved output: absolute, no whitespace, in its folder, its file name. */
 const SAVED_OUTPUT_PATH = /^\/[\x21-\x7e]*\/foreman-suite-output\/[A-Za-z0-9._]+-\d+-\d+\.log$/;
@@ -162,7 +164,8 @@ const one = (v: string | string[] | undefined): string => (Array.isArray(v) ? v[
  * second apart held both of the two slots and then waited on itself. A different run, a request that names no
  * run, and the daemon's own test stage (which never comes through here) are not affected. A request that names a run
  * without that run's token (runToken) is exactly one that names none: still slotted, never refused, no claim — so no
- * other local process can make a run's lease busy or have its slot wait recorded against it.
+ * other local process can make a run's lease busy or have its slot wait recorded against it. Once auth is on, the
+ * handler refuses such a request instead (tokenAuth.ts verifySlotAllowed).
  */
 export function claimRunLease(headers: Record<string, string | string[] | undefined>, now: () => number = Date.now): RunLease {
   const runId = one(headers[RUN_HEADER]);

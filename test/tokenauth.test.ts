@@ -14,6 +14,7 @@ import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { runToken, verifySlotStats } from '../src/verify/slots.ts';
+import { authenticate, authIsOn } from '../src/security/tokenAuth.ts';
 
 privateTmpdir(); // the slot wrapper this runs keeps its saved output in the temp dir
 
@@ -178,6 +179,21 @@ test('auth is a latch: after the only token is revoked, and after it expires, GE
   d2.store.db.prepare('UPDATE api_tokens SET expires_at = ? WHERE id = ?').run(Date.now() - 1, later.tokenId);
   assert.equal((await fetch(`${d2.base}/api/state`, { headers: bearer(later.secret) })).status, 401);
   assert.equal((await fetch(`${d2.base}/api/state`)).status, 401);
+});
+
+test('authenticate checks expiry against the clock it is given, on every call', (t) => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  assert.equal(authIsOn(store), false);
+  const T0 = 1_700_000_000_000;
+  const one = mint(store, 'alice', T0 + 1000);
+  assert.equal(authIsOn(store), true);
+  assert.equal(authenticate(store, bearer(one.secret), T0)?.id, one.principalId);
+  assert.equal(authenticate(store, bearer(one.secret), T0 + 1000), null, 'expired at its expiry time');
+  store.revokeToken(one.tokenId);
+  assert.equal(authenticate(store, bearer(one.secret), T0), null, 'no cached answer: a revoke counts at once');
+  assert.equal(authenticate(store, {}, T0), null);
+  assert.equal(authenticate(store, { authorization: 'Bearer' }, T0), null);
 });
 
 test('with auth on, the Host and CSRF checks still answer first, and the board stays public', async (t) => {

@@ -45,11 +45,12 @@ import { getRunner, runnerIds } from './runners/index.ts';
 import { modelForTask } from './roles.ts';
 import { setTicketSkills } from './skills.ts';
 import { withDroppedIssues } from './verify/crewReview.ts';
-import { acquireVerifySlot, claimRunLease, slotsAhead, VerifyWaitAborted } from './verify/slots.ts';
+import { acquireVerifySlot, claimRunLease, slotsAhead, VERIFY_SLOT_REFUSED, VerifyWaitAborted } from './verify/slots.ts';
 import { testTimeoutMs } from './verify/tests.ts';
 import { checkRepo } from './gitTripwire.ts';
 import { pinnedGit } from './gitExec.ts';
 import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
+import { authenticate, authIsOn, verifySlotAllowed } from './security/tokenAuth.ts';
 import { probeTask, STAGES } from './types.ts';
 import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
 
@@ -573,6 +574,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       return json(res, 403, { error: 'cross-origin write refused' });
     }
 
+    // Once a principal exists (tokenAuth.ts), every /api request needs a live principal's bearer token, GET and SSE
+    // included. verify-slot is the one exception: a worker proves its run with the run token instead (below).
+    if (seg[1] !== 'verify-slot' && authIsOn(store) && !authenticate(store, req.headers)) {
+      return json(res, 401, { error: 'not authenticated: send Authorization: Bearer <token>' });
+    }
+
     // --- SSE -------------------------------------------------------------
     if (seg[1] === 'events' && method === 'GET') {
       res.writeHead(200, {
@@ -620,6 +627,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       // request while the first is open is refused before it takes a place — and its wait for a slot is not charged
       // to its deadline. The claim, like the slot, lasts exactly as long as this response.
       const lease = claimRunLease(req.headers);
+      if (!verifySlotAllowed(store, lease.runId)) {
+        lease.release();
+        res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(`${VERIFY_SLOT_REFUSED}\n`);
+        return;
+      }
       if (lease.busy) {
         res.writeHead(409, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
         res.end(`${lease.busy}\n`);
