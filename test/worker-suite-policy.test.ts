@@ -3,8 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config, effectiveConfig } from '../src/config.ts';
-import { shellBrief, TARGETED_BRIEF } from '../src/scheduler.ts';
+import { briefFor, shellBrief, TARGETED_BRIEF } from '../src/scheduler.ts';
+import { Store } from '../src/queue.ts';
 import { testSlotCommand, workerShellAllowlist, workerShellDenylist } from '../src/runners/cliRunners.ts';
 import { readWorkerSuite } from '../src/verify/workerSuite.ts';
 
@@ -102,3 +104,23 @@ test('FOREMAN_WORKER_SUITE: anything but targeted is full, and config --effectiv
   process.env['FOREMAN_WORKER_SUITE'] = 'targeted';
   assert.deepEqual(effectiveConfig().knobs.find((k) => k.name === 'FOREMAN_WORKER_SUITE'), { name: 'FOREMAN_WORKER_SUITE', value: 'targeted', source: 'env' });
 });
+
+// The crew worker's brief carries its role's prompt above the shell brief, and the software playbook's roles say to run
+// the full suite once at the end. Under targeted the brief must say the shell brief's policy wins over that step.
+for (const role of ['dev', 'qa'] as const) {
+  for (const runner of ['claude-code', 'codex-cli'] as const) {
+    test(`targeted: a software/${role} crew brief on ${runner} says the targeted policy replaces the role's full-suite step`, (t) => {
+      targeted(t);
+      process.env['FOREMAN_PLAYBOOKS_DIR'] = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'playbooks');
+      t.after(() => delete process.env['FOREMAN_PLAYBOOKS_DIR']);
+      const store = new Store(':memory:');
+      t.after(() => store.close());
+      const task = store.addTask({ title: 'crew', prompt: 'TICKET-TEXT', runner, role, playbook: 'software', testCmd: 'npm run verify' });
+      const brief = briefFor(store, store.getTask(task.id)!);
+      const step = brief.search(/run the (full )?suite\s+once/);
+      assert.ok(step >= 0, 'the role prompt still carries its full-suite step');
+      const override = brief.indexOf('This replaces any instruction above to run the full suite yourself. ');
+      assert.ok(override > step, 'the targeted policy, after the role prompt, says it replaces that step');
+    });
+  }
+}
