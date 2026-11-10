@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -229,7 +230,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
   };
 }
 
-if (import.meta.main) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({
     options: {
       project: { type: 'string', multiple: true },
