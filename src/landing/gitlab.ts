@@ -53,10 +53,15 @@ function pipeline(v: unknown): MrPipeline | null {
   return { sha: commit(p, 'sha', 'head_pipeline'), status: text(p, 'status', 'head_pipeline'), webUrl: text(p, 'web_url', 'head_pipeline') };
 }
 
-function readMr(v: unknown): Mr {
-  const o = object(v, 'merge request');
+function readIid(o: Obj): number {
   const iid = o['iid'];
   if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1) throw unexpected('merge request.iid', 'a positive integer');
+  return iid;
+}
+
+function readMr(v: unknown): Mr {
+  const o = object(v, 'merge request');
+  const iid = readIid(o);
   const state = text(o, 'state', 'merge request');
   if (!MR_STATES.includes(state)) throw unexpected('merge request.state', MR_STATES.join(', '));
   return {
@@ -110,7 +115,8 @@ export class GitlabForge implements Forge {
     const list = await this.#ok('GET', projectRef, `/merge_requests?${query}`);
     if (!Array.isArray(list)) throw unexpected('merge request list', 'an array');
     if (list.length > 1) throw new ForgeError(`GitLab lists ${list.length} open merge requests from ${sourceBranch}; expected at most one`);
-    return list.length === 0 ? null : readMr(list[0]);
+    // A list entry is GitLab's MergeRequestBasic (no head_pipeline): take its iid and read the full MR.
+    return list.length === 0 ? null : this.getMr(projectRef, readIid(object(list[0], 'merge request')));
   }
 
   async openMr(projectRef: string, mr: NewMr): Promise<Mr> {
