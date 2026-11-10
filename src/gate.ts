@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ownerCall } from './assistant/ownerCall.ts';
 import { recordDecision } from './assistant/memory.ts';
 import { dailyCapUsd, subscriptionCapUsd } from './budget.ts';
-import { config } from './config.ts';
+import { config, type PostMergeMode } from './config.ts';
 import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
 import { landingRefusal, mergeApproved, type MergeCode, type MergeResult } from './merge.ts';
@@ -20,7 +20,7 @@ import { leftoverMarkers, unmergedPaths } from './isolate.ts';
 import type { Store } from './queue.ts';
 import { registerApprovedTool, type RegisterResult } from './tools/forge.ts';
 import { postMergeCheckEnabled, repoHead } from './postMerge.ts';
-import { checkMergedHead, pruneMainWorktrees, verifyLanding, type MainChecker } from './landing/verify.ts';
+import { checkLanding, checkMergedHead, pruneMainWorktrees, type MainChecker } from './landing/verify.ts';
 import type { Decision, GateMode, Run, Sensitivity, Task } from './types.ts';
 import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
@@ -221,7 +221,7 @@ export interface ApprovalResult {
   decision?: Decision | null;
   /**
    * The landing's post-merge check, still running when the approval returns: it resolves with the merge result
-   * and what the check found appended to its reason (verifyLanding), and rejects only when the check could not be
+   * and what the check found appended to its reason (checkLanding), and rejects only when the check could not be
    * recorded. Absent when no check runs for this landing.
    */
   postMerge?: Promise<MergeResult>;
@@ -248,6 +248,8 @@ export async function applyApproval(
   taskId: string,
   opts: {
     note?: string | null; source?: 'human' | 'owner-gate'; tracker?: ApprovalTracker; mainCheck?: MainChecker;
+    /** Stands in for FOREMAN_POSTMERGE_MODE in tests (src/landing/verify.ts checkLanding). */
+    postMergeMode?: PostMergeMode;
     /** Stands in for Foreman's own checkout in tests (merge.ts). */
     selfRoot?: string;
     /**
@@ -268,8 +270,8 @@ export async function applyApproval(
 const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused']);
 
 type ApproveOpts = {
-  note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; selfRoot?: string; acceptTree?: string | null;
-  stale?: () => string | null;
+  note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; postMergeMode?: PostMergeMode;
+  selfRoot?: string; acceptTree?: string | null; stale?: () => string | null;
 } & ApprovalStatement;
 
 /** Where an approval's checks, decision and merge run: in its repo's merge section, or at once. */
@@ -321,11 +323,11 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
   if ('result' in settled) return settled.result;
   const { before, run, task, merge, landable, checkAt } = settled;
   // The approval returns once the merge has settled; its post-merge check runs on, tracked so a shutdown aborts and
-  // waits for it. The landing hold ends with the check: a dependent is released by a passing check at the HEAD its
-  // parent's merge made, or at once when no check runs.
+  // waits for it. The landing hold ends with the check that covers it: a dependent is released by a passing check at
+  // a HEAD its parent's merge reached, or at once when no check runs.
   const postMerge = checkAt === null
     ? undefined
-    : tracker.track(verifyLanding(store, settled, checkAt, opts.mainCheck ?? checkMergedHead, tracker).finally(() => store.endLanding(taskId)));
+    : tracker.track(checkLanding(store, settled, checkAt, opts.mainCheck ?? checkMergedHead, tracker, opts.postMergeMode));
   if (landable && !postMerge) store.endLanding(taskId);
   if (merge.branch) {
     store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
@@ -348,7 +350,7 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
     });
   }
   // The ledger's own record of this decision: written once, when the merge has settled. What the post-merge
-  // check finds is never added to it; the check records it as events and the red-repo marker (verifyLanding).
+  // check finds is never added to it; the check records it as events and the red-repo marker (checkLanding).
   return { ...(await recordApproval(store, opts, before, run, { task, merge, registration })), ...(postMerge ? { postMerge } : {}) };
 }
 

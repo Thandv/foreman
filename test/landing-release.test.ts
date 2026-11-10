@@ -157,6 +157,8 @@ test('an approval that merged nothing releases the dependent at once and runs no
   }
 });
 
+// These three pin FOREMAN_POSTMERGE_MODE=per-merge: each landing's own check, at once, at its own merge HEAD.
+// The coalesced mode's counterparts are in test/landing-coalesce.test.ts.
 test('a second approval in the repo merges while the first one\'s main check runs; each dependent waits for its own parent\'s check', async () => {
   delete process.env['FOREMAN_POSTMERGE_CHECK'];
   const dir = repo();
@@ -172,11 +174,11 @@ test('a second approval in the repo merges while the first one\'s main check run
     const bIn = deferred();
     const bPass = deferred();
     const first = applyApproval(store, a.id, {
-      tracker, mainCheck: async (repoDir) => { aIn.resolve(); await aPass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
+      tracker, postMergeMode: 'per-merge', mainCheck: async (repoDir) => { aIn.resolve(); await aPass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
     await aIn.promise;
     const second = applyApproval(store, b.id, {
-      tracker, mainCheck: async (repoDir) => { bIn.resolve(); await bPass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
+      tracker, postMergeMode: 'per-merge', mainCheck: async (repoDir) => { bIn.resolve(); await bPass.promise; return result(true, git(repoDir, 'rev-parse', 'HEAD')); },
     });
     const mergedAlongside = await within(5_000, () => fs.existsSync(path.join(dir, 'second.txt')));
     if (!mergedAlongside) aPass.resolve(); // let the first landing finish so the test ends
@@ -213,7 +215,7 @@ test('a red from the first landing\'s check names its own merge, though a second
     const tested = new Map<string, string | undefined>();
     // Each fake check reports the HEAD it was asked to test, as checkMain does.
     const first = applyApproval(store, a.id, {
-      tracker,
+      tracker, postMergeMode: 'per-merge',
       mainCheck: async (_repoDir: string, _cmd: string | null, _signal: AbortSignal, head?: string) => {
         tested.set('a', head);
         aIn.resolve();
@@ -223,7 +225,7 @@ test('a red from the first landing\'s check names its own merge, though a second
     });
     await aIn.promise;
     const second = applyApproval(store, b.id, {
-      tracker, mainCheck: async (_repoDir: string, _cmd: string | null, _signal: AbortSignal, head?: string) => { tested.set('b', head); return result(true, head ?? ''); },
+      tracker, postMergeMode: 'per-merge', mainCheck: async (_repoDir: string, _cmd: string | null, _signal: AbortSignal, head?: string) => { tested.set('b', head); return result(true, head ?? ''); },
     });
     assert.equal((await second).merge.code, 'merged');
     bDone.resolve();
@@ -252,7 +254,7 @@ test('a first landing\'s check interrupted after a second merge passed is held a
     const aIn = deferred();
     // A's check never finishes on its own: only the shutdown ends it.
     const first = applyApproval(store, a.id, {
-      tracker,
+      tracker, postMergeMode: 'per-merge',
       mainCheck: (_repoDir, _cmd, signal) => {
         aIn.resolve();
         return new Promise<MainCheck>((resolve) => signal.addEventListener('abort', () => resolve(result(true, '')), { once: true }));
@@ -260,7 +262,7 @@ test('a first landing\'s check interrupted after a second merge passed is held a
     });
     await aIn.promise;
     const second = applyApproval(store, b.id, {
-      tracker, mainCheck: async (repoDir) => result(true, git(repoDir, 'rev-parse', 'HEAD')),
+      tracker, postMergeMode: 'per-merge', mainCheck: async (repoDir) => result(true, git(repoDir, 'rev-parse', 'HEAD')),
     });
     assert.equal((await second).merge.code, 'merged');
     assert.equal(git(dir, 'rev-parse', 'HEAD'), mergeOf(dir, b.id), 'HEAD moved past A\'s merge while A\'s check ran');

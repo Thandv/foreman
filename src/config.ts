@@ -24,6 +24,17 @@ export function onOff(name: string, raw: string | undefined = process.env[name])
   throw new Error(`${name} must be on or off, got ${JSON.stringify(raw)}`);
 }
 
+/** How post-merge checks are run (src/landing/verify.ts); see config.postMergeMode. */
+export type PostMergeMode = 'coalesced' | 'per-merge';
+
+/** FOREMAN_POSTMERGE_MODE: unset or empty is `coalesced`; either value in any case, spaces trimmed; anything else throws. */
+export function postMergeMode(raw: string | undefined = process.env['FOREMAN_POSTMERGE_MODE']): PostMergeMode {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '' || v === 'coalesced') return 'coalesced';
+  if (v === 'per-merge') return 'per-merge';
+  throw new Error(`FOREMAN_POSTMERGE_MODE must be coalesced or per-merge, got ${JSON.stringify(raw)}`);
+}
+
 const home = process.env.FOREMAN_HOME
   ? path.resolve(process.env.FOREMAN_HOME)
   : path.join(os.homedir(), '.foreman');
@@ -129,6 +140,12 @@ export const config = {
    * and the owner gate. A reviewer aid: it repairs, holds and fails nothing. Off by default; read once, at start.
    */
   revertTests: onOff('FOREMAN_REVERT_TESTS'),
+  /**
+   * FOREMAN_POSTMERGE_MODE: `coalesced` (the default) runs one post-merge check per repo at a time, and a check at the
+   * newest merged HEAD covers every landing with the same test command that merged before it; `per-merge` runs one
+   * check per landing at its own merge HEAD. Read once, at start: a typo fails the start.
+   */
+  postMergeMode: postMergeMode(),
   /** Automatic repair rounds for a gap found before review (map, scope); apart from maxRepairs. */
   preReviewRepairs: int('FOREMAN_PRE_REVIEW_REPAIRS', 2),
   /**
@@ -285,6 +302,7 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   minFreeMb: 'FOREMAN_MIN_FREE_MB',
   gitTimeoutMs: 'FOREMAN_GIT_TIMEOUT_MS',
   postMergeCheck: 'FOREMAN_POSTMERGE_CHECK',
+  postMergeMode: 'FOREMAN_POSTMERGE_MODE',
   limitBackoffMs: 'FOREMAN_LIMIT_BACKOFF_MS',
   slotWaitCreditMs: 'FOREMAN_SLOT_WAIT_CREDIT_MS',
   workerSuite: 'FOREMAN_WORKER_SUITE',

@@ -38,11 +38,21 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    decide on the code; the reason is the words you are shown and is never matched.
    Merges in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
    same repo waits until the first one's checks, decision and merge have settled, whether they
-   passed, failed or threw. The post-merge check (`src/landing/verify.ts`) runs after that, at the HEAD its own merge made,
-   so the next approval in the repo merges while it is tested, and a red names the merge whose
-   HEAD failed. A dependent stays `blocked` until its parent's check passes; it is released at
-   once when no check runs for that landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing
-   merged), and a red or interrupted check holds it with the repo. One check runs per landing.
+   passed, failed or threw. The post-merge check (`src/landing/verify.ts`) runs after that, so
+   the next approval in the repo merges while it is tested. A dependent stays `blocked` until a
+   passing check covers its parent's merge; it is released at once when no check runs for that
+   landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing merged), and a red or interrupted
+   check holds it with the repo. By default (`FOREMAN_POSTMERGE_MODE=coalesced`) one check runs
+   per repo at a time: the next one is for the test command of the oldest landing not yet
+   covered (the ticket's `testCmd`, or none, which detects the command at the checked HEAD),
+   at the newest HEAD merged with that command, and it covers every landing with that command
+   whose merge HEAD is an ancestor of it. So merges that land while a check runs share one
+   more check; merges with different commands never cover each other. A red check covering
+   several merges marks the repo red at that HEAD with one `MAIN IS RED` event, on the newest
+   one's timeline, naming them all, and ends all their holds: the red marker holds the repo's
+   work until the scheduler's red re-check passes. An interrupted check names every landing it
+   covered the same way. `FOREMAN_POSTMERGE_MODE=per-merge` runs one check per landing at the
+   HEAD its own merge made, at once, and a red names that merge alone.
    The hold is in memory; its durable twin is a `landings` row, written before the decision and
    deleted once the merge (and its ref update) has settled. A daemon that dies in between leaves
    the row: at the next start the repo shows as `landInterrupted` in `/api/state` with a

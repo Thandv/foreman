@@ -109,7 +109,7 @@ test('per-merge: the same burst runs one suite per merge, each at its own merge 
   const tracker = new ApprovalTracker();
   const { calls, mainCheck, called } = heldChecks();
   const outs: ApprovalResult[] = [];
-  for (const t of tickets) outs.push(await applyApproval(store, t.task.id, { tracker, mainCheck }));
+  for (const t of tickets) outs.push(await applyApproval(store, t.task.id, { tracker, mainCheck, postMergeMode: 'per-merge' }));
   await called(4);
   assert.deepEqual(calls.map((c) => c.head), tickets.map((t) => mergeOf(dir, t.task.id)));
   for (const c of calls) c.finish(true);
