@@ -99,6 +99,9 @@ const USAGE = `foreman — parallel agent mission control
   foreman reverify <taskId>... | --split  re-run the REVIEW on work already done, keeping the work.
                                           --split takes every task parked on a split verdict
   foreman rm <taskId>                     delete a task
+  foreman token create --host-admin --name <name> [--service] [--expires 30d]
+                                          mint a principal's token with this machine's host-admin
+                                          secret; the first one turns sign-in on for good
   foreman watch                           live table in the terminal
   foreman tools ls|show|rm|quarantine|release [<name>]   the forged-tool catalog
   foreman prune [--days N] [--keep-deps N] reclaim worktrees, branches, old ledger rows, dep caches
@@ -427,12 +430,13 @@ async function apiCall(path: string, init?: Omit<RequestInit, 'headers'> & { hea
 }
 
 /**
- * The header that lets a request carry allowCore (src/security/hostSecret.ts); the secret is created on first use.
+ * The header that lets a request carry allowCore or mint a token (src/security/hostSecret.ts); the secret is created
+ * on first use.
  * It is this machine's secret, so it goes only to this machine's daemon: any other FOREMAN_URL is refused.
  */
 function hostAdminHeaders(): Record<string, string> {
   if (base !== daemonUrl(config.host, config.port)) {
-    throw new Error(`--allow-core reaches only the local daemon (${daemonUrl(config.host, config.port)}), not FOREMAN_URL ${base}`);
+    throw new Error(`the host-admin secret (--allow-core, token create --host-admin) goes only to the local daemon (${daemonUrl(config.host, config.port)}), not FOREMAN_URL ${base}`);
   }
   return { [HOST_SECRET_HEADER]: ensureHostSecret(config.home) };
 }
@@ -1277,6 +1281,31 @@ async function main(): Promise<number> {
       if (!repo) throw new Error('usage: foreman land-clear <repo>');
       await apiCall('/api/land-interrupted/clear', { method: 'POST', body: JSON.stringify({ repo: path.resolve(repo) }) });
       process.stdout.write(`${path.resolve(repo)}: interrupted landing cleared; held work released\n`);
+      return 0;
+    }
+    case 'token': {
+      const usage = 'usage: foreman token create --host-admin --name <name> [--service] [--expires <n>d|<n>h]';
+      const name = flagStr(args, 'name');
+      if (args._[1] !== 'create' || args.flags['host-admin'] !== true || !name) throw new Error(usage);
+      const expires = flagStr(args, 'expires');
+      const ttl = expires === undefined ? null : /^([1-9]\d{0,4})([dh])$/.exec(expires);
+      if (ttl === null && expires !== undefined) throw new Error(`--expires takes a whole number of days or hours (30d, 12h); ${usage}`);
+      const minted = await apiCall('/api/tokens', {
+        method: 'POST',
+        headers: hostAdminHeaders(),
+        body: JSON.stringify({
+          name,
+          kind: args.flags['service'] === true ? 'service' : 'human',
+          ...(ttl ? { expiresInMs: Number(ttl[1]) * (ttl[2] === 'd' ? 86_400_000 : 3_600_000) } : {}),
+        }),
+      });
+      process.stderr.write(
+        `token ${minted.tokenId} for ${minted.principal.kind} ${minted.principal.name} (${minted.principal.id}` +
+          `${minted.principalCreated ? ', new principal' : ''}), ` +
+          `${minted.expiresAt === null ? 'no expiry' : `expires ${new Date(minted.expiresAt).toISOString()}`}. ` +
+          'It is shown once, below; send it as FOREMAN_TOKEN.\n',
+      );
+      process.stdout.write(`${minted.token}\n`);
       return 0;
     }
     case 'rm': {

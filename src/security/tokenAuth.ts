@@ -12,7 +12,7 @@ import type { Store } from '../queue.ts';
 import type { Principal } from '../types.ts';
 
 /** What the ledger keeps for a token (api_tokens.token_hash): the sha256 hex of its secret. */
-function tokenHash(secret: string): string {
+export function tokenHash(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
 }
 

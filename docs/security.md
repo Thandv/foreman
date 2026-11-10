@@ -12,9 +12,23 @@
   answered 401. The secret is hashed (sha256) and looked up in the ledger on every request, with no
   cache, and is never logged, put in an event or echoed in an error. The Host (DNS-rebinding) and
   cross-origin checks still answer first, and the board's static files stay public; the board itself
-  gets 401 from the API until it can sign in. Nothing mints a principal over HTTP yet. Tokens give
+  gets 401 from the API until it can sign in. Tokens give
   **attribution, not security**, until workers run in the macOS sandbox with `<FOREMAN_HOME>/secrets` and
   `foreman.db` hidden: an unsandboxed worker runs as the daemon's user and can read both.
+- Minting (`src/security/mint.ts`): `POST /api/tokens` with the host-admin secret in
+  `x-foreman-host-secret` (below), from a loopback peer (`127.0.0.0/8` or `::1` as the socket reports
+  it), is the only way to make a principal or a token. `foreman token create --host-admin --name <name>
+  [--service] [--expires 30d]` sends it. In one transaction it adds the principal when the name is new,
+  then a token (32 random bytes), and answers 201 with the raw token, which is in that response and
+  nowhere else; the first mint latches auth on. It needs no bearer and works with auth on, so it is
+  also the way back in after a lockout. A missing or wrong secret, or a peer that is not loopback, is
+  answered 401 whatever the auth state, before the body is read; a reserved or malformed name, an
+  unknown kind, a bad expiry, a disabled principal or a name held by the other kind is 400; either way
+  nothing is written. Every mint records exactly one event in the events stream (`/api/events`):
+  `principal-minted` when it made the principal, else `token-minted`, with the name, principal id,
+  kind, token id and `hostAdmin: true`, never the secret. **Known gap:** an unsandboxed worker runs as
+  the daemon's user, can read `<FOREMAN_HOME>/secrets/host-admin` and is a loopback peer, so it can
+  mint a principal for itself. The event makes that visible; only the macOS worker sandbox prevents it.
 - `POST /api/verify-slot` takes no bearer token; the run it names counts only with `x-foreman-run-token`
   beside `x-foreman-run`, an HMAC-SHA256 of the run id under a key the daemon draws at start
   (32 random bytes, held in memory, never written to disk; no run outlives its daemon). Workers get
@@ -37,8 +51,8 @@
   later revoked, expired or disabled.
 - `allowCore` (a ticket that may edit Foreman's own core) is honoured only from a request that
   carries the host-admin secret in `x-foreman-host-secret`. The secret is 32 random bytes in
-  `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`
-  or `foreman improve --allow-core --yes`; `src/security/hostSecret.ts` is the only code that touches
+  `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`,
+  `foreman improve --allow-core --yes` or `foreman token create --host-admin`; `src/security/hostSecret.ts` is the only code that touches
   that directory). `POST /api/tasks` and `POST /api/improve` compare it with `timingSafeEqual`; without
   a match the task is still queued, without `allowCore`, and records the warning event
   `allowCore dropped: request lacked the host-admin secret`. The secret is never logged, never in an

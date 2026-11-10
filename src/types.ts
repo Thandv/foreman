@@ -317,7 +317,8 @@ export interface RunEvent {
   taskId: string | null;
   runId: string | null;
   ts: number;
-  type: 'status' | 'stage' | 'log' | 'progress' | 'artifact' | 'error' | 'metrics' | 'verdict' | 'assign' | 'archive' | 'shadow' | 'warning' | 'skills' | 'decision' | 'worker-suite';
+  type: 'status' | 'stage' | 'log' | 'progress' | 'artifact' | 'error' | 'metrics' | 'verdict' | 'assign' | 'archive' | 'shadow' | 'warning' | 'skills' | 'decision' | 'worker-suite'
+    | 'principal-minted' | 'token-minted';
   stage: Stage | null;
   message: string;
 }

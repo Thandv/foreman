@@ -50,6 +50,7 @@ import { testTimeoutMs } from './verify/tests.ts';
 import { checkRepo } from './gitTripwire.ts';
 import { pinnedGit } from './gitExec.ts';
 import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
+import { hostAdminMintAllowed, mintToken, readMintRequest } from './security/mint.ts';
 import { authenticate, authIsOn, verifySlotAllowed } from './security/tokenAuth.ts';
 import { probeTask, STAGES } from './types.ts';
 import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
@@ -574,8 +575,17 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       return json(res, 403, { error: 'cross-origin write refused' });
     }
 
-    // Once a principal exists (tokenAuth.ts), every /api request needs a live principal's bearer token, GET and SSE
-    // included. verify-slot is the one exception: a worker proves its run with the run token instead (below).
+    // The host-admin mint (security/mint.ts): the host-admin secret from a loopback peer, whatever the auth state and
+    // with no bearer, so it is also the way back in after a lockout. Anything else is 401, before the body is read.
+    if (seg[1] === 'tokens' && seg.length === 2 && method === 'POST') {
+      if (!hostAdminMintAllowed(req, config.home)) {
+        return json(res, 401, { error: 'mint refused: needs the host-admin secret, from this machine' });
+      }
+      return json(res, 201, mintToken(store, readMintRequest(await readJsonBody(req))));
+    }
+
+    // Once a principal exists (tokenAuth.ts), every other /api request needs a live principal's bearer token, GET and
+    // SSE included. verify-slot is the one other exception: a worker proves its run with the run token instead (below).
     if (seg[1] !== 'verify-slot' && authIsOn(store) && !authenticate(store, req.headers)) {
       return json(res, 401, { error: 'not authenticated: send Authorization: Bearer <token>' });
     }

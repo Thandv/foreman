@@ -19,8 +19,8 @@ import {
 import { nextRunAt, parseSpec } from './schedule.ts';
 import { assertTicketSkills } from './skills.ts';
 import type {
-  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Principal, PrincipalKind, Run, RunEvent, Stage,
-  Task, TaskStatus, Verdict,
+  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Principal, PrincipalKind, ReservedActorId, Run,
+  RunEvent, Stage, Task, TaskStatus, Verdict,
 } from './types.ts';
 import { pinnedGit } from './gitExec.ts';
 import { removeJail } from './isolate.ts';
@@ -2031,6 +2031,37 @@ export class Store extends EventEmitter {
       .prepare('INSERT INTO api_tokens (id, principal_id, token_hash, expires_at, created_by, created_at) VALUES (?,?,?,?,?,?)')
       .run(tokenId, tk.principalId, tk.tokenHash, tk.expiresAt ?? null, tk.createdBy, now);
     return tokenId;
+  }
+
+  /**
+   * The host-admin mint (src/security/mint.ts), in one transaction: the principal named, added as `kind` when there is
+   * none, then a token for it, then exactly one event, 'principal-minted' when the principal is new and 'token-minted'
+   * when it is not, naming both and never the secret. The event is in the transaction so no mint is ever without
+   * one. Refuses, writing nothing, a disabled principal (its token could never authenticate) and one of another kind.
+   */
+  mintHostAdminToken(
+    m: { name: string; kind: PrincipalKind; tokenHash: string; expiresAt: number | null },
+    now: number = Date.now(),
+  ): { principal: Principal; tokenId: string; principalCreated: boolean } {
+    const createdBy: ReservedActorId = 'operator';
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT * FROM principals WHERE name = ?').get(m.name) as Record<string, unknown> | undefined;
+      const existing = row ? rowToPrincipal(row) : null;
+      if (existing && existing.disabledAt !== null) throw new Error(`principal ${m.name} is disabled`);
+      if (existing && existing.kind !== m.kind) throw new Error(`principal ${m.name} is a ${existing.kind} principal, not a ${m.kind} one`);
+      const principal = existing ?? this.addPrincipal({ kind: m.kind, name: m.name, createdBy }, now);
+      const tokenId = this.addToken({ principalId: principal.id, tokenHash: m.tokenHash, expiresAt: m.expiresAt, createdBy }, now);
+      this.record({
+        type: existing ? 'token-minted' : 'principal-minted',
+        message: JSON.stringify({ name: principal.name, principalId: principal.id, kind: principal.kind, tokenId, hostAdmin: true }),
+      });
+      this.db.exec('COMMIT');
+      return { principal, tokenId, principalCreated: !existing };
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   /** Revokes a token. False when it is unknown or already revoked. */

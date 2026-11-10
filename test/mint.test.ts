@@ -9,6 +9,7 @@ import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { ensureHostSecret, HOST_SECRET_HEADER } from '../src/security/hostSecret.ts';
+import { hostAdminMintAllowed } from '../src/security/mint.ts';
 import { authenticate, authIsOn } from '../src/security/tokenAuth.ts';
 
 const CLI = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
@@ -53,9 +54,10 @@ interface Minted {
 
 // ------------------------------------------------------------------ pins
 
-test('pin: POST /api/tokens is not a route today', async (t) => {
-  const { mint, store } = await daemon(t);
-  assert.equal((await mint({ name: 'alice' }, secretHeader())).status, 404);
+test('only POST /api/tokens mints: another method or a longer path is not a route', async (t) => {
+  const { base, store } = await daemon(t);
+  assert.equal((await fetch(`${base}/api/tokens`, { headers: secretHeader() })).status, 404);
+  assert.equal((await fetch(`${base}/api/tokens/x`, { method: 'POST', headers: secretHeader(), body: '{}' })).status, 404);
   assert.equal(store.hasAnyPrincipal(), false);
 });
 
@@ -201,8 +203,7 @@ test('foreman token create without --host-admin is refused before any request', 
 
 // ------------------------------------------------------- the loopback check
 
-test('only a loopback peer with the matching secret may mint: a remote address with the right secret may not', async () => {
-  const { hostAdminMintAllowed } = await import('../src/security/mint.ts');
+test('only a loopback peer with the matching secret may mint: a remote address with the right secret may not', () => {
   const secret = secretHeader();
   const asking = (remoteAddress: string | undefined, headers: Record<string, string>) => ({ socket: { remoteAddress }, headers });
   for (const addr of ['127.0.0.1', '127.8.9.10', '::1', '::ffff:127.0.0.1']) {
