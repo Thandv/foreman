@@ -334,6 +334,24 @@ for (const scenario of HARD_HUMAN) {
   });
 }
 
+test('with auth on, the owner model\'s approval is refused by four-eyes once per park, not on every sweep', async () => {
+  const pbDir = withPlaybooks({ 'auto.md': AUTO });
+  const stub = stubClaude([gateReply('approve', 'the diff matches the ticket')]);
+  const store = new Store(':memory:');
+  try {
+    store.addPrincipal({ kind: 'human', name: 'alice', createdBy: 'operator' });
+    const { task, run } = parked(store);
+    assert.equal(await ownerGate({ task, run, store }), 'hold');
+    assert.equal(stub.count(), 1);
+    assert.match(store.gateDecision(task.id) ?? '', /^hold@\d+$/, 'the refusal is decided, so the sweep does not pay again');
+    assert.match(gateEvents(store, task.id).join('\n'), /^owner-gate: hold — four-eyes: /);
+    assert.equal(store.getTask(task.id)!.status, 'awaiting-approval');
+  } finally {
+    store.close();
+    cleanup([pbDir, stub.dir]);
+  }
+});
+
 test('a human-gated playbook is overridden by an explicit per-ticket opt-in, not by the env', async () => {
   const pbDir = withPlaybooks({ 'manual.md': MANUAL });
   const stub = stubClaude([gateReply('approve', 'the diff matches the ticket')]);
