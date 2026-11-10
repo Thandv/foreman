@@ -10,7 +10,8 @@ import path from 'node:path';
  * task that may edit Foreman's own core. It is not a boundary against a worker:
  * workers run unsandboxed as the same user and can read the file.
  *
- * This module is the only code that touches <FOREMAN_HOME>/secrets/.
+ * <FOREMAN_HOME>/secrets/ is owned by src/security/: this module holds the host-admin
+ * secret, src/security/forgeToken.ts reads the GitLab token beside it.
  */
 
 export const HOST_SECRET_HEADER = 'x-foreman-host-secret';

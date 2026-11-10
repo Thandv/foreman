@@ -79,6 +79,24 @@ function checkIid(iid: number): void {
   if (!Number.isSafeInteger(iid) || iid < 1) throw new ForgeError(`merge request iid must be a positive integer, not ${iid}`);
 }
 
+/**
+ * `raw` as a URL a token may be sent to: https://, or http:// on a loopback host (the fake, a local GitLab), with no
+ * credentials, query or fragment. `what` names it in the error.
+ */
+export function forgeUrl(raw: string, what: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ForgeError(`${what} is not a URL`);
+  }
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) {
+    throw new ForgeError(`${what} must be https://, or http:// on a loopback host`);
+  }
+  if (url.username || url.password || url.search || url.hash) throw new ForgeError(`${what} must not carry credentials, a query or a fragment`);
+  return url;
+}
+
 export class GitlabForge implements Forge {
   readonly #root: string;
   readonly #https: boolean;
@@ -86,16 +104,7 @@ export class GitlabForge implements Forge {
   readonly #timeoutMs: number;
 
   constructor(opts: GitlabForgeOptions) {
-    let url: URL;
-    try {
-      url = new URL(opts.baseUrl);
-    } catch {
-      throw new ForgeError('GitLab baseUrl is not a URL');
-    }
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) {
-      throw new ForgeError('GitLab baseUrl must be https://, or http:// on a loopback host');
-    }
-    if (url.username || url.password || url.search || url.hash) throw new ForgeError('GitLab baseUrl must not carry credentials, a query or a fragment');
+    const url = forgeUrl(opts.baseUrl, 'GitLab baseUrl');
     if (opts.token === '') throw new ForgeError('GitLab token is empty');
     const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new ForgeError('GitLab timeoutMs must be a positive integer');

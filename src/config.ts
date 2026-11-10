@@ -35,6 +35,14 @@ export function postMergeMode(raw: string | undefined = process.env['FOREMAN_POS
   throw new Error(`FOREMAN_POSTMERGE_MODE must be coalesced or per-merge, got ${JSON.stringify(raw)}`);
 }
 
+/** FOREMAN_LANDING: unset or empty is `merge`; either value in any case, spaces trimmed; anything else throws. */
+export function landingMode(raw: string | undefined = process.env['FOREMAN_LANDING']): 'merge' | 'mr' {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '' || v === 'merge') return 'merge';
+  if (v === 'mr') return 'mr';
+  throw new Error(`FOREMAN_LANDING must be merge or mr, got ${JSON.stringify(raw)}`);
+}
+
 const home = process.env.FOREMAN_HOME
   ? path.resolve(process.env.FOREMAN_HOME)
   : path.join(os.homedir(), '.foreman');
@@ -155,6 +163,14 @@ export const config = {
    * check per landing at its own merge HEAD. Read once, at start: a typo fails the start.
    */
   postMergeMode: postMergeMode(),
+  /**
+   * FOREMAN_LANDING: `merge` (the default) merges an approved ticket in the local checkout; `mr` lands a repo mapped
+   * in <home>/landing.json through a GitLab merge request (src/landing/config.ts). Read once, at start: a typo fails
+   * the start.
+   */
+  landing: landingMode(),
+  /** How often an open merge request is polled, in ms (FOREMAN_LANDING=mr). */
+  mrPollMs: int('FOREMAN_MR_POLL_MS', 10_000),
   /** Automatic repair rounds for a gap found before review (map, scope); apart from maxRepairs. */
   preReviewRepairs: int('FOREMAN_PRE_REVIEW_REPAIRS', 2),
   /**
@@ -314,6 +330,8 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   gitTimeoutMs: 'FOREMAN_GIT_TIMEOUT_MS',
   postMergeCheck: 'FOREMAN_POSTMERGE_CHECK',
   postMergeMode: 'FOREMAN_POSTMERGE_MODE',
+  landing: 'FOREMAN_LANDING',
+  mrPollMs: 'FOREMAN_MR_POLL_MS',
   limitBackoffMs: 'FOREMAN_LIMIT_BACKOFF_MS',
   slotWaitCreditMs: 'FOREMAN_SLOT_WAIT_CREDIT_MS',
   workerSuite: 'FOREMAN_WORKER_SUITE',

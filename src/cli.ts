@@ -15,6 +15,7 @@ import { runDrill } from './drill.ts';
 import { localOnly, modeSummary } from './localOnly.ts';
 import { sandboxMode, sandboxSummary, selfTest } from './security/sandbox.ts';
 import { ensureHostSecret, HOST_SECRET_HEADER } from './security/hostSecret.ts';
+import { landingDoctorLines, loadLanding } from './landing/config.ts';
 import { probeCloud } from './models.ts';
 import { skillVariantFor, tierModel } from './roles.ts';
 import { workerSuiteInJail } from './doctorJail.ts';
@@ -108,7 +109,8 @@ const USAGE = `foreman — parallel agent mission control
   foreman trace <taskId>                  full JSON reconstruction of a task
   foreman service                         print a launchd plist for this install
   foreman config --effective              each setting src/config.ts resolves, its value and env|default; then the
-                                          names only of the other FOREMAN_* variables set
+                                          names only of the other FOREMAN_* variables set; then, with
+                                          FOREMAN_LANDING=mr, each landing.json mapping and token: set|unset
   foreman backup [--to <dir>]             one verified, gzipped copy of the database, now (the daemon
                                           takes one a day by itself; keeps 7 dailies + 4 weeklies,
                                           in the copy dir too)
@@ -526,6 +528,9 @@ async function main(): Promise<number> {
       process.stderr.write(`foreman: ${sandboxProblem}\n`);
       return 1;
     }
+    // FOREMAN_LANDING=mr with <home>/landing.json (landing/config.ts): validated once, here; a bad file or a refused
+    // token file is a refusal to start.
+    const landing = loadLanding(config.home, config.landing);
     const releaseLock = acquireDaemonLock();
     // The one opener that migrates an older ledger; every other command refuses it.
     const store = new Store(config.dbPath, { migrate: true });
@@ -541,6 +546,7 @@ async function main(): Promise<number> {
     process.stdout.write(`home ${config.home}\n`);
     process.stdout.write(`mode ${modeSummary()}\n`);
     process.stdout.write(`${await sandboxSummary()}\n`);
+    for (const line of landing?.describe(config.home) ?? []) process.stdout.write(`${line}\n`);
     if (sandboxMode() === 'all') {
       process.stdout.write('FOREMAN_SANDBOX=all: the claude-code worker is not sandboxed in this build; `all` behaves as `tests`\n');
     }
@@ -731,6 +737,7 @@ async function main(): Promise<number> {
       const valueW = Math.max(...knobs.map((k) => k.value.length));
       for (const k of knobs) process.stdout.write(`${k.name.padEnd(nameW)}  ${k.value.padEnd(valueW)}  ${k.source}\n`);
       process.stdout.write(`${others.length} other FOREMAN_* names are read in place (not shown)${others.length ? `: ${others.join(', ')}` : ''}\n`);
+      for (const line of loadLanding(config.home, config.landing)?.describe(config.home) ?? []) process.stdout.write(`${line}\n`);
       return 0;
     }
     case 'backup': {
@@ -2099,6 +2106,9 @@ async function main(): Promise<number> {
       // own environment, and its /api/doctor does not report skills.
       process.stdout.write(`${skillsDoctorLine()}\n`);
       process.stdout.write(`${await workerSuiteInJail()}\n`);
+      // As this shell's FOREMAN_LANDING and landing.json have it; asks the forge only when a mapping exists.
+      const landing = loadLanding(config.home, config.landing);
+      if (landing) for (const line of [...landing.describe(config.home), ...await landingDoctorLines(landing)]) process.stdout.write(`${line}\n`);
       if (d.bench) {
         process.stdout.write(`\nbench (${new Date(d.bench.measuredAt).toLocaleString()}):\n`);
         for (const m of [...d.bench.models].sort((a: { score: number }, b: { score: number }) => b.score - a.score)) {

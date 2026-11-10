@@ -70,6 +70,8 @@ where they are used, so their values are never printed, only their names. No set
 | `FOREMAN_VERIFY` | on | `off` skips the review (the pre-review checks, the council and the crew chain). The tests still run and a failure still sends the work back; work that passes parks for approval unreviewed | `src/scheduler.ts` |
 | `FOREMAN_POSTMERGE_CHECK` | on | `off` skips the main check after a merge | `src/config.ts` |
 | `FOREMAN_POSTMERGE_MODE` | `coalesced` | `coalesced` runs one main check per repo at a time, at the newest merged HEAD, covering every merge before it with the same test command; `per-merge` runs one per merge, at its own merge HEAD. Anything else fails the start. See [lifecycle](lifecycle.md) | `src/config.ts` |
+| `FOREMAN_LANDING` | `merge` | `merge` merges an approved ticket in the local checkout. `mr` lands each repo mapped in `<FOREMAN_HOME>/landing.json` through a GitLab merge request; a repo not in the file, or no file, lands as with `merge`. Both switches are needed, so a stray file changes nothing. Anything else fails the start. See [Merge-request landing](#merge-request-landing-landingjson) | `src/config.ts` |
+| `FOREMAN_MR_POLL_MS` | `10000` | How often, in ms, an open merge request is polled (`FOREMAN_LANDING=mr`) | `src/config.ts` |
 | `FOREMAN_FAST_VERIFY` | off | `1` or `on` gives a whitespace-only diff, or a small one that touches only docs or config, one review instead of the full council (anything but a pass goes on to the full council); code and security-adjacent paths never qualify | `src/verify/triage.ts` |
 | `FOREMAN_FAST_VERIFY_MAX_LINES` | `20` | Largest changed-line count that still counts as small | `src/verify/triage.ts` |
 | `FOREMAN_CREW_REVIEW` | `escalate` | `always` runs the crew chain on every ticket and its verdict lands; anything else escalates to it only when needed | `src/verify/crewReview.ts` |
@@ -171,3 +173,27 @@ last started fresh sends it to your desk instead (Give to AI puts it back in the
 do Retry and a repair round). A cancel ends the run for good — a Retry you issue meanwhile stands. Marking a ticket
 done from your own desk lands nothing; if an interrupted run's worktree is still on disk, you are told where it is, so
 you can commit and merge that work yourself.
+
+### Merge-request landing (`landing.json`)
+
+With `FOREMAN_LANDING=mr`, `<FOREMAN_HOME>/landing.json` maps a repo's absolute, resolved path to where it lands:
+
+```json
+{
+  "/work/app": {
+    "mode": "mr", "forge": "gitlab", "baseUrl": "https://gitlab.example.com", "project": "group/app",
+    "pushUrl": "https://gitlab.example.com/group/app.git", "targetBranch": "main", "requirePipeline": true
+  }
+}
+```
+
+Every field is required and no other is allowed. `baseUrl` and an http(s) `pushUrl` must be `https://`, or `http://`
+on a loopback host, with no credentials, query or fragment; `pushUrl` may instead be an absolute local path (a bare
+repo, as the local fake GitLab uses). The file is read once, at start (`src/landing/config.ts`): a relative repo path,
+a mode other than `mr`, an unknown or missing key or a bad URL stops the start with a `LandingConfigError` naming the
+repo and the field. The token is `<FOREMAN_HOME>/secrets/gitlab-token`, never an environment variable (see
+[The GitLab token](security.md#the-gitlab-token-foreman_landingmr)). `foreman config --effective` and the start-up
+output list each mapping and `token: set` or `token: unset`. `foreman doctor` asks GitLab for each mapped project and
+prints a FAIL line when its merge method is not `merge` (landing is confirmed by the merge commit's second parent being
+the reviewed commit) or the project cannot be read (no default branch, unknown project, refused token). Doctor calls
+the network only for a real GitLab in the file.

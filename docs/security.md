@@ -89,8 +89,8 @@
 - `allowCore` (a ticket that may edit Foreman's own core) is honoured only from a request that
   carries the host-admin secret in `x-foreman-host-secret`. The secret is 32 random bytes in
   `<FOREMAN_HOME>/secrets/host-admin` (mode 0600, created once by the first `foreman add --allow-core`,
-  `foreman improve --allow-core --yes` or `foreman token create --host-admin`; `src/security/hostSecret.ts` is the only code that touches
-  that directory). `POST /api/tasks` and `POST /api/improve` compare it with `timingSafeEqual`; without
+  `foreman improve --allow-core --yes` or `foreman token create --host-admin`; `src/security/` owns
+  that directory: `hostSecret.ts` this file, `forgeToken.ts` the GitLab token). `POST /api/tasks` and `POST /api/improve` compare it with `timingSafeEqual`; without
   a match the task is still queued, without `allowCore`, and records the warning event
   `allowCore dropped: request lacked the host-admin secret`. The secret is never logged, never in an
   event and never in a worker's environment. The CLI sends it only to the local daemon: with a
@@ -136,6 +136,19 @@ today: it starts a child with exactly the environment a `claude-code` worker get
 and process, not a security boundary** against a worker: a self-minted principal counts as another human,
 and its `principal-minted` event is the only record of it. The macOS worker sandbox, with the secrets and
 the ledger hidden and egress only through the gateway, is what closes it; under it these probes must fail.
+
+## The GitLab token (`FOREMAN_LANDING=mr`)
+
+Merge-request landing (`src/landing/config.ts`) calls GitLab with a token read only from
+`<FOREMAN_HOME>/secrets/gitlab-token` (`src/security/forgeToken.ts`), which you create. It is never read from the
+environment (workers inherit the daemon's) or from a repo's config (a worker can write that). The file must be a
+regular file, not a symlink, owned by the user running Foreman, with mode 0600; anything else is refused with a named
+error, and with `FOREMAN_LANDING=mr` and a `landing.json` the daemon does not start. Its value goes only to the GitLab
+adapter, as the `PRIVATE-TOKEN` header; `foreman config --effective`, `foreman doctor`, the start-up output, events and
+traces say `token: set` or `token: unset`, never the value. A missing file is `unset` (the local fake GitLab runs
+without one). Limit: like the host-admin secret, this is **not a boundary against a worker**. Until the macOS
+worker egress and file restriction lands, or a gateway holds the token instead, an unsandboxed worker running as the
+daemon's user can read the file.
 
 ## The git tripwire (`src/gitTripwire.ts`)
 
