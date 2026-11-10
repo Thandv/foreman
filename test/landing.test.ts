@@ -420,7 +420,7 @@ test('a file written between the check and the commit is caught on the commit it
     const task = { ...f.task, status: 'done' as const };
     const out = await mergeApproved(task, f.run, {
       source: 'human',
-      beforeCommit: () => fs.writeFileSync(path.join(f.jail, 'racing.txt'), 'written after the check passed\n'),
+      beforeWorktreeCommit: () => fs.writeFileSync(path.join(f.jail, 'racing.txt'), 'written after the check passed\n'),
     });
     assert.equal(out.merged, false);
     assert.match(out.reason, /work changed after review: racing\.txt \(added since review\)/);

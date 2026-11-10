@@ -244,22 +244,58 @@ async function unmergedRefusal(repo: string, run: Run & { branch: string }): Pro
 }
 
 /**
- * Land an approved run's branch. Deliberately conservative: it refuses on a
- * dirty checkout, never force-merges, and aborts a conflicting merge so the
- * operator's repo is left exactly as it was found.
+ * A change to Foreman itself lands with every hook off. The jail shares the
+ * repo's config, so a worker can point core.hooksPath at a script of its own,
+ * and a hook that runs during the worktree commit or the merge writes to the
+ * checkout Foreman runs from after every check has passed. (Every landing now
+ * runs with hooks off — `git` above pins core.hooksPath — since a worker can
+ * write `.git/hooks` of any repo; these stay as the explicit statement.)
+ * `guarded`: a change to Foreman itself, by a task not allowed to touch its core.
  */
-export async function mergeApproved(
+function landingFlags(task: Task, self: boolean): { hooksOff: string[]; noVerify: string[]; guarded: boolean } {
+  return { hooksOff: self ? NO_HOOKS : [], noVerify: self ? ['--no-verify'] : [], guarded: self && !task.allowCore };
+}
+
+/** The commit a landing would land, checked: what `prepareLandingCommit` answers when nothing refuses it. */
+export interface LandingCommit {
+  /** The checkout's top level, where every step of the landing runs. */
+  repo: string;
+  branch: string;
+  /** A change to Foreman itself, asked of git now. */
+  self: boolean;
+  /** `against` as a commit, read after the worktree was committed. */
+  against: string;
+  /** The task branch, read once: everything checked is about this commit. */
+  tip: string;
+  tipTree: string;
+  /** Commits `tip` has that `against` has not. */
+  ahead: string;
+  /** What the reviewed-tree check asks to be read in the timeline, if anything. */
+  note: string | null;
+}
+
+/**
+ * Every check a landing of an approved run makes before anything merges, and
+ * the commit of the run's worktree onto its branch: approval, the branch,
+ * `beforeCommit` (a refusal of the caller's own, asked before anything is
+ * committed), the reviewed-tree check before the commit and again on the
+ * commit, the count and the core guard against `against`. A refusal comes back
+ * as the MergeResult to give; otherwise the commit that may land.
+ */
+export async function prepareLandingCommit(
   task: Task,
   run: Run | null,
   opts: {
+    /** The commit the branch lands on: counted and core-guarded against. Read once the worktree is committed. */
+    against: string;
+    /** Asked of the checkout's top level after the branch is found and before the worktree is committed; a result is the refusal to give. */
+    beforeCommit?: (repo: string) => Promise<MergeResult | null>;
     /** Stands in for Foreman's own checkout in tests. */
     selfRoot?: string;
-    /** Called after the landing check has passed, just before the merge. A test moves the branch here. */
-    beforeMerge?: () => Promise<void> | void;
     /** Called after the reviewed-tree check has passed on the worktree, just before it is committed. A test writes a file here. */
-    beforeCommit?: () => Promise<void> | void;
+    beforeWorktreeCommit?: () => Promise<void> | void;
   } & Approver,
-): Promise<MergeResult> {
+): Promise<LandingCommit | MergeResult> {
   // The gate is the whole point: only an approved task may land.
   if (task.status !== 'done') {
     return { merged: false, code: 'not-approved', reason: `task is ${task.status}, not approved`, branch: run?.branch ?? null };
@@ -285,22 +321,13 @@ export async function mergeApproved(
       ? { merged: false, code: 'core-refused', reason: refusal, branch }
       : { merged: false, code: 'merge-disabled', reason: 'merge-on-approve disabled for this task', branch };
   }
-  // A change to Foreman itself lands with every hook off. The jail shares the
-  // repo's config, so a worker can point core.hooksPath at a script of its
-  // own, and a hook that runs during this commit or this merge writes to the
-  // checkout Foreman runs from after every check has passed. (Every landing
-  // now runs with hooks off — `git` above pins core.hooksPath — since a worker
-  // can write `.git/hooks` of any repo; these stay as the explicit statement.)
-  const hooksOff = self ? NO_HOOKS : [];
-  const noVerify = self ? ['--no-verify'] : [];
-  // A change to Foreman itself, by a task not allowed to touch its core.
-  const guarded = self && !task.allowCore;
+  const { hooksOff, noVerify, guarded } = landingFlags(task, self);
 
   const exists = await git(repo, ['rev-parse', '--verify', branch]).then(() => true).catch(() => false);
   if (!exists) return { merged: false, code: 'branch-gone', reason: `branch ${branch} no longer exists`, branch };
 
-  const dirty = (await git(repo, ['status', '--porcelain'])).trim();
-  if (dirty) return { merged: false, code: 'uncommitted', reason: 'repo has uncommitted changes; merge skipped', branch };
+  const refused = await opts.beforeCommit?.(repo);
+  if (refused) return refused;
 
   // The worktree left the change unstaged, so commit it on its own branch first.
   const worktree = run.worktreePath;
@@ -320,7 +347,7 @@ export async function mergeApproved(
       if ('refusal' in early && !(guarded && (await unmergedRefusal(repo, { ...run, branch })))) {
         return { merged: false, code: 'not-reviewed', reason: early.refusal, branch };
       }
-      await opts.beforeCommit?.();
+      await opts.beforeWorktreeCommit?.();
       await git(worktree, ['add', '-A']);
       await git(worktree, [...hooksOff, 'commit', ...noVerify, '-m', `foreman: ${task.title}\n\ntask ${task.id}`]);
     }
@@ -331,37 +358,71 @@ export async function mergeApproved(
   // whatever the name points at by then: a process a run left behind can add
   // a commit to the branch between the check and the merge.
   const tip = (await git(repo, ['rev-parse', '--verify', `${branch}^{commit}`])).trim();
-  const head = (await git(repo, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+  const against = (await git(repo, ['rev-parse', '--verify', `${opts.against}^{commit}`])).trim();
 
-  const ahead = (await git(repo, ['rev-list', '--count', `${head}..${tip}`]).catch(() => '0')).trim();
+  const ahead = (await git(repo, ['rev-list', '--count', `${against}..${tip}`]).catch(() => '0')).trim();
   if (ahead === '0') return { merged: false, code: 'nothing-ahead', reason: 'branch has no commits ahead of HEAD', branch };
 
   // The hard block on a change to Foreman's own core. Here, on the commit that
   // is about to land, because nothing earlier sees all of it: the commit above
   // takes whatever is in the worktree by now. The paths come from git's own
-  // listing of what the merge would change in HEAD (`landingPaths`), never
+  // listing of what the merge would change in `against` (`landingPaths`), never
   // from patch text. Anything that cannot be listed is refused.
   if (guarded) {
     let refusal: string | null;
     try {
-      refusal = coreRefusal(await landingPaths(repo, head, tip), true);
+      refusal = coreRefusal(await landingPaths(repo, against, tip), true);
     } catch (err) {
       refusal = `core change refused: the paths ${branch} would land could not be listed (${(err as Error).message.slice(0, 200)})`;
     }
-    if (refusal) return { merged: false, code: 'core-refused', reason: refusal + (await putCoreBack(repo, head)), branch };
+    if (refusal) return { merged: false, code: 'core-refused', reason: refusal + (await putCoreBack(repo, against)), branch };
   }
 
   // The reviewed-tree check, on the commit that is about to land: its tree is
   // the reviewed one, or a person has said otherwise. Every repo, Foreman's
   // own included, and after the core guard, which it adds to and never
   // replaces: a change that fails both is refused as a core change.
+  let tipTree: string;
   let reviewed: Awaited<ReturnType<typeof reviewedTreeCheck>>;
   try {
-    reviewed = await reviewedTreeCheck(repo, task, run, (await git(repo, ['rev-parse', '--verify', `${tip}^{tree}`])).trim(), opts);
+    tipTree = (await git(repo, ['rev-parse', '--verify', `${tip}^{tree}`])).trim();
+    reviewed = await reviewedTreeCheck(repo, task, run, tipTree, opts);
   } catch (err) {
     return { merged: false, code: 'not-reviewed', reason: `work changed after review cannot be ruled out: the tree of ${branch} could not be read (${(err as Error).message.slice(0, 200)})`, branch };
   }
   if ('refusal' in reviewed) return { merged: false, code: 'not-reviewed', reason: reviewed.refusal, branch };
+  return { repo, branch, self, against, tip, tipTree, ahead, note: reviewed.note };
+}
+
+/**
+ * Land an approved run's branch. Deliberately conservative: it refuses on a
+ * dirty checkout, never force-merges, and aborts a conflicting merge so the
+ * operator's repo is left exactly as it was found.
+ */
+export async function mergeApproved(
+  task: Task,
+  run: Run | null,
+  opts: {
+    /** Stands in for Foreman's own checkout in tests. */
+    selfRoot?: string;
+    /** Called after the landing check has passed, just before the merge. A test moves the branch here. */
+    beforeMerge?: () => Promise<void> | void;
+    /** Called after the reviewed-tree check has passed on the worktree, just before it is committed. A test writes a file here. */
+    beforeWorktreeCommit?: () => Promise<void> | void;
+  } & Approver,
+): Promise<MergeResult> {
+  const landing = await prepareLandingCommit(task, run, {
+    ...opts,
+    against: 'HEAD',
+    // The checkout must be clean, asked before the worktree is committed.
+    beforeCommit: async (repo) => {
+      const dirty = (await git(repo, ['status', '--porcelain'])).trim();
+      return dirty ? { merged: false, code: 'uncommitted', reason: 'repo has uncommitted changes; merge skipped', branch: run?.branch ?? null } : null;
+    },
+  });
+  if ('code' in landing) return landing;
+  const { repo, branch, self, against: head, tip, ahead, note } = landing;
+  const { hooksOff, noVerify, guarded } = landingFlags(task, self);
 
   await opts.beforeMerge?.();
   try {
@@ -378,7 +439,7 @@ export async function mergeApproved(
     const undone = await refuseLanded(repo, head, tip);
     if (undone) return { merged: false, code: 'core-refused', reason: undone, branch };
   }
-  return { merged: true, code: 'merged', reason: `merged ${ahead} commit(s) from ${branch}`, branch, ...(reviewed.note ? { note: reviewed.note } : {}) };
+  return { merged: true, code: 'merged', reason: `merged ${ahead} commit(s) from ${branch}`, branch, ...(note ? { note } : {}) };
 }
 
 export interface PruneResult {

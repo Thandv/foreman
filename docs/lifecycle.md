@@ -32,7 +32,11 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    and only you can waive one. A review is advice to the gate: `foreman reopen <id>` puts a
    review-failed task back at `awaiting-approval`, work intact, when you have verified it yourself.
 7. **merge** — approving a code task merges its branch `--no-ff`. It refuses on a dirty repo and
-   aborts cleanly on conflict; your checkout is never left mid-merge. Every landing answers a typed
+   aborts cleanly on conflict; your checkout is never left mid-merge. Everything checked before
+   the merge (approval, the branch, the reviewed tree before and after the worktree is committed,
+   the commit count and the core guard against the commit it lands on) is one step,
+   `prepareLandingCommit`, so any other way of landing runs the same checks; the local merge adds
+   the clean-checkout check, asked before the worktree is committed. Every landing answers a typed
    `code` beside its `reason` (`MergeResult` in `src/merge.ts`: `merged`, `conflict`,
    `not-reviewed`, `core-refused` and the rest). The gate, the owner gate, the CLI and the board
    decide on the code; the reason is the words you are shown and is never matched.

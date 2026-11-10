@@ -9,7 +9,7 @@ import { Store } from '../src/queue.ts';
 import { applyApproval, type ApprovalResult } from '../src/gate.ts';
 import { recordBaseline } from '../src/gitTripwire.ts';
 import { pinnedGit } from '../src/gitExec.ts';
-import { mergeApproved, type MergeCode } from '../src/merge.ts';
+import { mergeApproved, prepareLandingCommit, type MergeCode } from '../src/merge.ts';
 import { jailTree } from '../src/isolate.ts';
 import { NOTHING_TO_CHANGE_CLOSED } from '../src/verify/gateOutcome.ts';
 import type { Run, Task } from '../src/types.ts';
@@ -454,3 +454,38 @@ for (const row of DIRECT) {
     }
   });
 }
+
+test('prepareLandingCommit counts and core-guards against the sha it is given, and asks nothing of a dirty checkout without beforeCommit', async () => {
+  // Main moved past the base with a core change; the ticket branched from main and changed a.txt.
+  const d = direct(null);
+  const dir = d.dir;
+  try {
+    const base = git(dir, 'rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'src', 'security', 'admit.ts'), 'export const admit = 2;\n');
+    git(dir, 'commit', '-qam', 'main moved');
+    git(dir, 'branch', '-qf', 'ticket', 'HEAD'); git(dir, 'checkout', '-q', 'ticket');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'TICKET\n'); git(dir, 'commit', '-qam', 'ticket');
+    git(dir, 'checkout', '-q', '-');
+    fs.writeFileSync(path.join(dir, 'stray.txt'), 'the checkout is dirty\n');
+    const task = d.task;
+    const run = { ...d.run, reviewedTree: treeOf(dir, 'ticket') };
+    const tip = git(dir, 'rev-parse', 'ticket');
+
+    const prepared = await prepareLandingCommit(task, run, { source: 'human', against: base });
+    assert.ok(!('code' in prepared), 'code' in prepared ? prepared.reason : '');
+    assert.deepEqual(prepared, { repo: dir, branch: 'ticket', self: false, against: base, tip, tipTree: treeOf(dir, 'ticket'), ahead: '2', note: null });
+
+    const guarded = await prepareLandingCommit(task, run, { source: 'human', against: base, selfRoot: dir });
+    assert.ok('code' in guarded);
+    assert.equal(guarded.code, 'core-refused');
+    assert.match(guarded.reason, /^core change refused: .*src\/security\/admit\.ts/s);
+    // Against HEAD the same branch changes no core path.
+    const atHead = await prepareLandingCommit(task, run, { source: 'human', against: 'HEAD', selfRoot: dir });
+    assert.ok(!('code' in atHead), 'code' in atHead ? atHead.reason : '');
+    assert.equal(atHead.ahead, '1');
+    assert.equal(git(dir, 'rev-parse', 'ticket'), tip, 'nothing was committed');
+    assert.equal(fs.readFileSync(path.join(dir, 'stray.txt'), 'utf8'), 'the checkout is dirty\n');
+  } finally {
+    d.close();
+  }
+});
