@@ -121,6 +121,12 @@ export interface Task {
    * in `archive` outlives the row (see archive.ts).
    */
   archivedAt: number | null;
+  /**
+   * Epoch ms this task entered awaiting-approval, kept through a re-park or a
+   * gate change while it waits; null when it is not parked, or was parked
+   * before this was recorded (then updated_at stands in).
+   */
+  awaitingSince: number | null;
   createdAt: number;
   updatedAt: number;
   deps: string[];
@@ -325,7 +331,7 @@ export function probeTask(over: Partial<Task> = {}): Task {
     attempts: 0, maxAttempts: 1, error: null, testCmd: null, mergeOnApprove: false,
     repairNotes: null, repairs: 0, maxRepairs: 0, scheduleId: null, parentId: null, allowCore: false, baseRef: null,
     role: null, playbook: null, points: null, acceptance: null, forbiddenPaths: null, isEpic: false, gate: null, gateDecision: null,
-    assignee: null, archivedAt: null,
+    assignee: null, archivedAt: null, awaitingSince: null,
     createdAt: 0, updatedAt: 0, deps: [], ...over,
   };
 }

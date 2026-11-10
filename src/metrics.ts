@@ -33,6 +33,11 @@ export interface Metrics {
   gateWait: { samples: number; p50Ms: number; p90Ms: number };
   /** Per repo: p95 of how long its tickets now at awaiting-approval have been there (since their last update), ms. */
   awaitingApprovalAgeP95Ms: Record<string, number>;
+  /**
+   * Per repo: p95 of how long its tickets now at awaiting-approval have been parked (since they entered the status;
+   * since their last update for a ticket parked before that was recorded), ms.
+   */
+  awaitingSinceParkP95Ms: Record<string, number>;
   /** Per repo whose main is red now: whole minutes since it went red. */
   redRepoMinutes: Record<string, number>;
 }
@@ -46,18 +51,11 @@ export function collectMetrics(store: Store, stageMs: ReadonlyMap<TickStage, num
 
   const gate = computeLatencyReport(store.recentRunsForLatency(GATE_WAIT_RUNS)).stages.find((s) => s.stage === 'gate-wait');
 
-  const ages = new Map<string, number[]>();
   const parked = store.db
-    .prepare("SELECT repo, updated_at FROM tasks WHERE status = 'awaiting-approval'")
-    .all() as Array<{ repo: string | null; updated_at: number }>;
-  for (const row of parked) {
-    const repo = row.repo ?? NO_REPO;
-    ages.set(repo, [...(ages.get(repo) ?? []), Math.max(0, now - row.updated_at)]);
-  }
-  const awaitingApprovalAgeP95Ms: Record<string, number> = {};
-  for (const [repo, list] of [...ages].sort(([a], [b]) => a.localeCompare(b))) {
-    awaitingApprovalAgeP95Ms[repo] = percentile(list.sort((a, b) => a - b), 0.95);
-  }
+    .prepare("SELECT repo, updated_at, COALESCE(awaiting_since, updated_at) AS parked_at FROM tasks WHERE status = 'awaiting-approval'")
+    .all() as Array<{ repo: string | null; updated_at: number; parked_at: number }>;
+  const awaitingApprovalAgeP95Ms = p95ByRepo(parked.map((row) => [row.repo, now - row.updated_at]));
+  const awaitingSinceParkP95Ms = p95ByRepo(parked.map((row) => [row.repo, now - row.parked_at]));
 
   const redRepoMinutes: Record<string, number> = {};
   for (const [repo, red] of store.redRepoList()) {
@@ -72,8 +70,23 @@ export function collectMetrics(store: Store, stageMs: ReadonlyMap<TickStage, num
     verifySlotWaiters: verifySlotStats().waiting,
     gateWait: { samples: gate?.count ?? 0, p50Ms: gate?.medianMs ?? 0, p90Ms: gate?.p90Ms ?? 0 },
     awaitingApprovalAgeP95Ms,
+    awaitingSinceParkP95Ms,
     redRepoMinutes,
   };
+}
+
+/** p95 of the ages per repo (no repo under NO_REPO), repos sorted; a negative age counts as 0. */
+function p95ByRepo(ages: Array<[repo: string | null, ageMs: number]>): Record<string, number> {
+  const byRepo = new Map<string, number[]>();
+  for (const [repo, age] of ages) {
+    const key = repo ?? NO_REPO;
+    byRepo.set(key, [...(byRepo.get(key) ?? []), Math.max(0, age)]);
+  }
+  const out: Record<string, number> = {};
+  for (const [repo, list] of [...byRepo].sort(([a], [b]) => a.localeCompare(b))) {
+    out[repo] = percentile(list.sort((a, b) => a - b), 0.95);
+  }
+  return out;
 }
 
 /** A Prometheus label value: backslash, double quote and newline escaped. */
@@ -103,6 +116,11 @@ export function toProm(m: Metrics): string {
   ]);
   gauge('foreman_gate_wait_samples', 'Gate waits the quantiles are taken over.', [['', m.gateWait.samples]]);
   gauge('foreman_awaiting_approval_age_p95_ms', 'p95 age of tickets awaiting approval, per repo, ms.', by('repo', m.awaitingApprovalAgeP95Ms));
+  gauge(
+    'foreman_awaiting_approval_since_park_p95_ms',
+    'p95 time tickets awaiting approval have been parked, per repo, ms.',
+    by('repo', m.awaitingSinceParkP95Ms),
+  );
   gauge('foreman_red_repo_minutes', 'Minutes each red repo has been red.', by('repo', m.redRepoMinutes));
   return `${out.join('\n')}\n`;
 }

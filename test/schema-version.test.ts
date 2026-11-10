@@ -20,6 +20,7 @@ const NOW = new Date(2026, 9, 11, 12, 0, 0);
  */
 const FINGERPRINTS: Record<number, string> = {
   1: '846ef77b5af7182a0d1a35aa9a569615f6d574bb67cc6652e8f1110898a17600',
+  2: '0dc3ebfa071ec30c65004aabc02dfd510cce85ebe2df68baf567c23d01876465',
 };
 
 /** A scratch folder removed when the test ends, pass or fail. */

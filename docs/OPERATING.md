@@ -135,8 +135,11 @@ The daily JSONL files under `<home>/traces` are written the same with or without
 started (`eventLoopLagP99Ms`, `null` before the first sample), how long each tick stage took the last time it ran, in
 tick order (`tickStageMs`), tasks by status, suite runs waiting for a verify slot, the gate wait p50 and p90 over the
 last 100 runs (as `foreman doctor --latency` computes it), per repo the p95 age of its tickets at `awaiting-approval`
-(counted from each ticket's last update; tickets with no repo under `(none)`), and the whole minutes each red repo has
-been red. Any other `format` is a 400.
+(`awaitingApprovalAgeP95Ms`, counted from each ticket's last update, so a gate change resets it; tickets with no repo
+under `(none)`), per repo the p95 time those tickets have been parked (`awaitingSinceParkP95Ms`, Prometheus
+`foreman_awaiting_approval_since_park_p95_ms`, counted from when each entered `awaiting-approval`, or from its last
+update for a ticket parked before that was recorded), and the whole minutes each red repo has been red. Any other
+`format` is a 400.
 
 Start low: four workers with two suite runners fits a laptop. Raise `FOREMAN_MAX_VERIFIES` only when suite runs are
 the wait and the machine has cores to spare. Settings are read at `foreman serve`; restart to change them. See

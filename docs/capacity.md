@@ -82,3 +82,10 @@ What they say:
 - With one model call per ticket, the owner gate is the pipeline's bottleneck: tickets queue behind each other's calls. Batching cut the gate's calls from 20 to 5 and its p50 wait in half, and nearly doubled throughput. Dispatch and landing do not depend on it.
 - Every landed ticket ran the suite twice, its own check and one post-merge check: no re-runs, no coalescing.
 - A worker's own run through the wrapper takes one of the verify slots the gate's runs use. Under `full` each worker held one for a suite's length before it finished, and dispatch p50 roughly doubled; under `targeted` the workers took none and the gate's runs per ticket did not change.
+
+## Approval age
+
+`GET /api/metrics` reports two approval ages per repo, and a comparison only ever sets a figure beside the same one:
+
+- `awaitingApprovalAgeP95Ms` (`foreman_awaiting_approval_age_p95_ms`) counts from each parked ticket's last update. Any write resets it: a gate change makes a ticket parked three hours read as zero.
+- `awaitingSinceParkP95Ms` (`foreman_awaiting_approval_since_park_p95_ms`) counts from when the ticket entered `awaiting-approval` (`tasks.awaiting_since`), or from its last update for a ticket parked before that was recorded.

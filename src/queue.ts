@@ -614,9 +614,16 @@ export class Store extends EventEmitter {
   }
 
   setStatus(taskId: string, status: TaskStatus, error?: string | null): void {
+    const now = Date.now();
+    // awaiting_since is decided from the status before this call (the CASE reads the old row): entering the gate
+    // stamps it, staying there keeps it, leaving clears it.
     this.db
-      .prepare('UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?')
-      .run(status, error ?? null, Date.now(), taskId);
+      .prepare(
+        `UPDATE tasks SET awaiting_since = CASE WHEN ? <> 'awaiting-approval' THEN NULL
+           WHEN status = 'awaiting-approval' THEN awaiting_since ELSE ? END,
+         status = ?, error = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(status, now, status, error ?? null, now, taskId);
     this.record({ taskId, type: 'status', message: error ? `${status}: ${error}` : status });
     // The single funnel every status transition passes through (the gate, the
     // scheduler, cancel). One extra lookup only when a task with a parent
@@ -1099,10 +1106,10 @@ export class Store extends EventEmitter {
     return Number(row?.['n'] ?? 0);
   }
 
-  /** Everything parked at the gate, oldest first — the owner gate's work list. */
+  /** Everything parked at the gate, longest parked first — the owner gate's work list. */
   awaitingApproval(limit = 100): Task[] {
     const rows = this.db
-      .prepare("SELECT * FROM tasks WHERE status = 'awaiting-approval' ORDER BY updated_at ASC LIMIT ?")
+      .prepare("SELECT * FROM tasks WHERE status = 'awaiting-approval' ORDER BY COALESCE(awaiting_since, updated_at) ASC LIMIT ?")
       .all(limit) as Record<string, unknown>[];
     return rows.map((r) => rowToTask(r, this.depsOf(String(r['id']))));
   }
@@ -1212,7 +1219,7 @@ export class Store extends EventEmitter {
     if (Number(row['attempts']) >= Number(row['max_attempts'])) {
       this.setStatus(taskId, 'failed', texts.failed);
     } else {
-      this.db.prepare("UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?").run(Date.now(), taskId);
+      this.db.prepare("UPDATE tasks SET status = 'queued', awaiting_since = NULL, updated_at = ? WHERE id = ?").run(Date.now(), taskId);
       // `safe` (the live daemon's reconcile): a failed write must not stop the epic from being reopened.
       if (opts.safe) safeRecord(this, { taskId, type: 'status', message: texts.requeued });
       else this.record({ taskId, type: 'status', message: texts.requeued });
@@ -3027,7 +3034,7 @@ export class Store extends EventEmitter {
     const task = this.getTask(taskId);
     if (!task || (task.preReviewRepairs ?? 0) >= cap) return false;
     this.db
-      .prepare('UPDATE tasks SET pre_review_repairs = pre_review_repairs + 1, repair_notes = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET pre_review_repairs = pre_review_repairs + 1, repair_notes = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, awaiting_since = NULL, updated_at = ? WHERE id = ?')
       .run(notes.slice(0, 8000), 'queued', Date.now(), taskId);
     this.record({ taskId, type: 'status', message: `pre-review repair round ${(task.preReviewRepairs ?? 0) + 1} queued` });
     const parent = this.parentIdOf(taskId);
@@ -3050,7 +3057,7 @@ export class Store extends EventEmitter {
     if (!task || task.repairs >= task.maxRepairs) return false;
     const notes = conflictRepairNotes(null, testCmd);
     this.db
-      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, base_ref = NULL, carry_run = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, base_ref = NULL, carry_run = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, awaiting_since = NULL, updated_at = ? WHERE id = ?')
       .run(notes.slice(0, 8000), approvedRunId, 'queued', Date.now(), taskId);
     this.record({ taskId, type: 'status', message: `merge conflict on approval; repair round ${task.repairs + 1} queued: the approved diff is applied onto current main` });
     const parent = this.parentIdOf(taskId);
@@ -3110,7 +3117,7 @@ export class Store extends EventEmitter {
     this.db
       // gate_decision goes with attempts: the repaired work is not the work the
       // gate already ruled on, so it is re-gated deliberately.
-      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, carry_run = NULL, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, carry_run = NULL, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, awaiting_since = NULL, updated_at = ? WHERE id = ?')
       .run(critique.slice(0, 8000), 'queued', Date.now(), taskId);
     this.record({ taskId, type: 'status', message: `repair round ${task.repairs + 1} queued` });
     // This path moves the row by raw SQL, so setStatus's reopen hook never

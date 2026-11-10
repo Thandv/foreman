@@ -194,7 +194,7 @@ const councilTask = (over: Partial<Task> = {}): Task => ({
   sensitivity: 'S1', budgetUsd: null, priority: 0, status: 'verifying', attempts: 1, maxAttempts: 2,
   error: null, testCmd: null, mergeOnApprove: false, repairNotes: null, repairs: 0, maxRepairs: 1,
   scheduleId: null, parentId: null, allowCore: false, baseRef: null, role: null, playbook: null, points: null,
-  acceptance: null, isEpic: false, gate: null, gateDecision: null, assignee: null, archivedAt: null, createdAt: 0, updatedAt: 0, deps: [], ...over,
+  acceptance: null, isEpic: false, gate: null, gateDecision: null, assignee: null, archivedAt: null, awaitingSince: null, createdAt: 0, updatedAt: 0, deps: [], ...over,
 });
 
 async function council(replies: string[], store: Store, over: Partial<Task> = {}) {

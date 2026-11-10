@@ -396,6 +396,11 @@ export const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ['runs', 'brief_bytes', 'INTEGER'],
   ['runs', 'brief_cuts', 'TEXT'],
   ['runs', 'report_bytes', 'INTEGER'],
+  // Epoch ms this task entered awaiting-approval (Store.setStatus), kept while
+  // it stays parked and cleared by every path that moves it out. Apart from
+  // updated_at, which any later write (a gate change) resets. NULL on a task
+  // parked before the column existed: readers fall back to updated_at.
+  ['tasks', 'awaiting_since', 'INTEGER'],
 ];
 
 const STATUSES = new Set<string>([
@@ -482,7 +487,7 @@ function migrate(db: DatabaseSync): void {
  * user_version`). Bump it, and add its row to test/schema-version.test.ts,
  * whenever SCHEMA, COLUMNS or MIGRATED_INDEXES change.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** A ledger written by a newer Foreman: this binary must not touch it. */
 export class NewerSchemaError extends Error {
@@ -619,6 +624,7 @@ export function rowToTask(row: Row, deps: string[] = []): Task {
     gateDecision: nstr(row['gate_decision']),
     assignee: nstr(row['assignee']) as Task['assignee'],
     archivedAt: nnum(row['archived_at']),
+    awaitingSince: nnum(row['awaiting_since']),
     createdAt: num(row['created_at']),
     updatedAt: num(row['updated_at']),
     deps,
