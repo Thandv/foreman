@@ -60,6 +60,16 @@ export function stopPersonaServer(id: string): boolean {
   return true;
 }
 
+/** Does something at this server URL answer `/models`? A refused or timed-out probe is a no. */
+export async function answersModels(base: string, timeoutMs = 3_000): Promise<boolean> {
+  try {
+    const res = await fetch(`${base}/models`, { signal: AbortSignal.timeout(timeoutMs) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export interface ServeResult {
   ok: boolean;
   reason: string;
@@ -73,6 +83,19 @@ export async function servePersona(
   const adapter = personaAdapterDir(persona.id);
   if (!fs.existsSync(adapter) || !fs.readdirSync(adapter).some((f) => f.endsWith('.safetensors'))) {
     return { ok: false, reason: `no trained adapter at ${adapter}`, pid: null };
+  }
+  const base = personaServerUrl(persona.id);
+  // personaPort hashes ids into 200 ports, so another process can already hold this one, and the wait below
+  // would take its /models for this server coming up and route persona prompts to it. A listener is the
+  // persona's own only while its pid file names a live pid.
+  if (personaServerPid(persona.id) === null && (await answersModels(base))) {
+    return {
+      ok: false,
+      reason:
+        `port ${personaPort(persona.id)} answered by another process (persona ${persona.id}); ` +
+        'set FOREMAN_PERSONA_PORT_BASE or FOREMAN_PERSONA_URL_<ID>',
+      pid: null,
+    };
   }
 
   const args = [
@@ -100,7 +123,6 @@ export async function servePersona(
   fs.mkdirSync(path.dirname(pidFile(persona.id)), { recursive: true });
   fs.writeFileSync(pidFile(persona.id), String(child.pid ?? 0));
 
-  const base = personaServerUrl(persona.id);
   const deadline = Date.now() + (opts.startTimeoutMs ?? 300_000);
   for (;;) {
     if (spawnError) {

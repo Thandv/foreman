@@ -149,7 +149,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_TRAIN_NICE` | `19` | `nice` level of a training run | `src/align/governor.ts` |
 | `FOREMAN_SERVE_NICE` | `10` | `nice` level of a persona server | `src/align/personaServe.ts` |
 | `FOREMAN_PERSONAS_DIR` | `$FOREMAN_HOME/personas` | Where personas live | `src/align/personas.ts` |
-| `FOREMAN_PERSONA_PORT_BASE` | `4200` | First port persona servers use (plus a hash of the persona id, under 200) | `src/align/personas.ts` |
+| `FOREMAN_PERSONA_PORT_BASE` | `4200` | First port persona servers use (plus a hash of the persona id, under 200). A persona whose port another process already answers is not served: serving it, at daemon start or by `foreman persona serve`, fails and names this variable | `src/align/personas.ts` |
 | `FOREMAN_PERSONA_BASE` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Base model new personas train from | `src/align/personas.ts` |
 
 A daemon stop (`foreman stop`, a launchd restart, an upgrade) is not a verdict on the work in flight: each running

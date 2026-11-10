@@ -59,19 +59,29 @@ async function fixture(t: TestContext): Promise<Fixture> {
   return { persona, pidFile: path.join(home, 'align', 'personas', persona.id, 'server.pid'), marker };
 }
 
-test('servePersona takes a foreign listener on the persona port for its own server (pinned, today)', async (t) => {
-  const { persona, pidFile } = await fixture(t);
+const foreign = (id: string): RegExp =>
+  new RegExp(`^port \\d+ answered by another process \\(persona ${id.replace(/\./g, '\\.')}\\); set FOREMAN_PERSONA_PORT_BASE or FOREMAN_PERSONA_URL_<ID>$`);
+
+test('servePersona refuses a persona port another process already answers, and spawns nothing', async (t) => {
+  const { persona, pidFile, marker } = await fixture(t);
   const result = await servePersona(persona, { startTimeoutMs: 60_000 });
-  assert.equal(result.ok, true);
-  assert.notEqual(result.pid, null);
-  assert.equal(fs.existsSync(pidFile), true, 'a server was spawned');
+  assert.equal(result.ok, false);
+  assert.equal(result.pid, null);
+  assert.match(result.reason, foreign(persona.id));
+  assert.match(result.reason, new RegExp(`port ${personaPort(persona.id)} `));
+  assert.equal(fs.existsSync(pidFile), false, 'no pid file');
+  assert.equal(fs.existsSync(marker), false, 'nothing was spawned');
 });
 
-test('startAdoptedPersonas reports ok for a foreign listener on the persona port (pinned, today)', async (t) => {
-  const { persona, pidFile } = await fixture(t);
+test('startAdoptedPersonas reports a foreign listener on the persona port as not ok, and spawns nothing', async (t) => {
+  const { persona, pidFile, marker } = await fixture(t);
   const reports = await startAdoptedPersonas({ startTimeoutMs: 60_000 });
-  assert.deepEqual(reports, [{ id: persona.id, ok: true, reason: 'serving' }]);
-  assert.equal(fs.existsSync(pidFile), true, 'a server was spawned');
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0]!.id, persona.id);
+  assert.equal(reports[0]!.ok, false);
+  assert.match(reports[0]!.reason, foreign(persona.id));
+  assert.equal(fs.existsSync(pidFile), false, 'no pid file');
+  assert.equal(fs.existsSync(marker), false, 'nothing was spawned');
 });
 
 test("the persona's own live server (pid file pid alive) is still 'already serving'", async (t) => {
