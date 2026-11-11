@@ -31,7 +31,7 @@ itself stays on GitLab.
 node scripts/demo/mr-landing.ts [--keep] [--check]
 ```
 
-It runs from a clean checkout in about a minute and touches nothing outside temp dirs. It has a `FOREMAN_HOME` and a port
+It runs from a clean checkout in seconds and touches nothing outside temp dirs. It has a `FOREMAN_HOME` and a port
 of its own (never `~/.foreman` or the live daemon), a bare "GitLab" repo with a clone, and the local fake GitLab
 (`scripts/forge/fakeGitlab.ts`) with a token, a pipeline left running and a short "checking" window. It writes
 `landing.json` and `secrets/gitlab-token`, mints two people (alice, bob), and starts a daemon from this checkout with
@@ -42,7 +42,9 @@ prints each step of three passes:
    whose head is the reviewed commit. The pipeline succeeds, the MR merges at that sha, the checkout is synced, the main
    check is green and alice's second ticket, which depended on the first, is released.
 2. The pipeline fails. The ticket is back at the gate, with the pipeline's URL.
-3. The MR's head moves after review. A merge at the reviewed sha is refused (409), and the ticket is back at the gate.
+3. The MR's head moves after review and the moved head's pipeline passes, so only the stale sha is left to refuse: the
+   demo's own merge call at the reviewed sha is refused (409). The ticket is back at the gate ("MR head moved after
+   review"): Foreman reads the moved head and never makes that call.
 
 `--keep` leaves the temp dirs (and prints them) so you can read `landing.json`, the ledger and the repos; remove them
 yourself. `--check` answers the pipeline at once and does not pause: the suite runs the demo that way
@@ -58,4 +60,4 @@ in `<FOREMAN_HOME>/secrets/gitlab-token` (mode 0600), run `foreman doctor`, and 
 
 - Held repo: look at the checkout (`git status`, is it on the target branch and clean), fast-forward it by hand if
   GitLab merged, then `foreman land-clear <repo>`.
-- A ticket whose MR was merged on GitLab at the reviewed tree can be recorded with `foreman landed <id>` ([commands](commands.md)).
+- A ticket whose MR was merged on GitLab at the reviewed tree can be recorded with `foreman landed <id> --commit <sha>` ([commands](commands.md)).

@@ -3,7 +3,8 @@
 //   1. alice's approval of alice's own ticket is refused; bob's opens the MR; the pipeline passes; it merges at the
 //      reviewed sha, the checkout is synced, the main check is green and the dependent ticket is released;
 //   2. the pipeline fails: the ticket is back at the gate;
-//   3. the MR's head moves: GitLab refuses a merge at the reviewed sha (409) and the ticket is back at the gate.
+//   3. the MR's head moves and its pipeline passes: GitLab refuses a merge at the reviewed sha (409) and the ticket is
+//      back at the gate.
 // Usage: node scripts/demo/mr-landing.ts [--keep] [--check]
 //   --keep   leave the temp dirs (daemon home with landing.json and the token file, repo, forge) and print them
 //   --check  no pauses and a pipeline that answers at once: the mode the suite runs (test/demo-mr-landing.test.ts)
@@ -25,6 +26,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const WAIT_MS = 60_000;
 const PROJECT = 'group/app';
 const TEST_CMD = { testCmd: 'true' };
+/** How long the fake reports 'checking' after a push or a pipeline change. */
+const CHECKING_MS = check ? 0 : 1_000;
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=Demo', '-c', 'user.email=demo@example.invalid', ...args], { cwd, encoding: 'utf8' }).trim();
@@ -35,7 +38,7 @@ const pause = (ms: number): Promise<void> => (check ? Promise.resolve() : new Pr
 async function main(): Promise<void> {
   const { repo, bare } = forgeFixture();
   const token = randomBytes(24).toString('hex');
-  const fake = await startFakeGitlab({ projects: { [PROJECT]: bare }, token, pipeline: 'manual', checkingMs: check ? 0 : 1_000 });
+  const fake = await startFakeGitlab({ projects: { [PROJECT]: bare }, token, pipeline: 'manual', checkingMs: CHECKING_MS });
   const landing = { [repo]: { mode: 'mr', forge: 'gitlab', baseUrl: fake.url, project: PROJECT, pushUrl: bare, targetBranch: 'main', requirePipeline: true } };
   const d = await startDaemon('demo', root, {
     files: { 'landing.json': JSON.stringify(landing), 'secrets/gitlab-token': `${token}\n` },
@@ -108,9 +111,15 @@ async function passes(d: Daemon, feed: Feed, fake: FakeGitlab, { repo, bare, tok
   console.log(`  1. bob approves ${t4}: mr-opened, !${third.iid} head ${short(third.head)} is the reviewed commit`);
   const moved = git(bare, 'commit-tree', `${third.head}^{tree}`, '-p', third.head, '-m', 'pushed after review');
   git(bare, 'update-ref', `refs/heads/foreman/${t4}`, moved);
+  // GitLab checks mergeability before the sha (405 while the pipeline runs), so the moved head is made mergeable first:
+  // read the MR (the fake sees the push), pass its pipeline and wait out the checking window. The stale sha is then the
+  // only reason left to refuse.
+  await forge(fake, 'GET', mrPath(third.iid), token);
+  await forge(fake, 'POST', `/__fake/pipelines/${moved}`, token, { status: 'success' });
+  await pause(CHECKING_MS);
   const refused = await forge(fake, 'PUT', `${mrPath(third.iid)}/merge?sha=${third.head}`, token);
   if (refused.status !== 409) throw new Error(`the merge at the reviewed sha was not refused: ${refused.status}`);
-  console.log(`  2. head moved to ${short(moved)}: the merge at the reviewed sha was refused (409) ${String(refused.json['message'])}`);
+  console.log(`  2. head moved to ${short(moved)} and its pipeline passed: the merge at the reviewed sha was refused (409) ${String(refused.json['message'])}`);
   console.log(`  3. ${t4} is back at the gate (awaiting-approval): ${await backAtGate(t4)}`);
 }
 
