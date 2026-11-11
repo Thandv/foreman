@@ -453,12 +453,13 @@ test('an MR GitLab reads as not_approved from the first read is waited out, with
 test('a merge GitLab refuses while its status reads a lasting word sends the ticket back to the gate with GitLab\'s message', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a } = await opened(t, f);
+  // Two reads before the merge call (the poll's, and the one in its turn), then the read after GitLab's refusal.
   let reads = 0;
   patch(f, (forge) => {
     const getMr = forge.getMr.bind(forge);
     forge.getMr = async (project, iid) => {
       const mr = await getMr(project, iid);
-      return ++reads > 1 ? { ...mr, mergeStatus: 'conflict' } : mr;
+      return ++reads > 2 ? { ...mr, mergeStatus: 'conflict' } : mr;
     };
     forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '405 Method Not Allowed' });
   });
@@ -670,7 +671,7 @@ test('a merge GitLab refuses while its status is still settling is waited for, n
     const getMr = forge.getMr.bind(forge);
     forge.getMr = async (project, iid) => {
       const mr = await getMr(project, iid);
-      return ++reads > 1 ? { ...mr, mergeStatus: 'checking' } : mr;
+      return ++reads > 2 ? { ...mr, mergeStatus: 'checking' } : mr;
     };
     forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '405 checking' });
   });

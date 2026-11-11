@@ -368,45 +368,35 @@ async function pollOnce(store: Store, mr: Entry, now: number, check: PostMergeRu
 }
 
 /**
- * Reads the MR and merges it when it may be: its head is still the reviewed commit, it is still as Foreman opened it
- * (notAsOpened), its pipeline for that commit
- * passed (or none is required), GitLab calls it mergeable and four-eyes still lets the approver land it (the approver
- * may have been disabled while the pipeline ran). A merged MR is to be confirmed at its merge commit. An MR that reads
- * open after merge calls with no answer or a server error goes back to the gate after MAX_UNANSWERED_MERGES of them,
- * or once `timedOut`.
+ * Reads the MR and merges it when it may be (whyNotMerge says nothing against it), reading it again in its merge turn
+ * right before the call, since a person may merge, close or edit it while the merge waits; four-eyes must still let the
+ * approver land it (the approver may have been disabled while the pipeline ran). A merged MR is to be confirmed at its
+ * merge commit. An MR that reads open after merge calls with no answer or a server error goes back to the gate after
+ * MAX_UNANSWERED_MERGES of them, or once `timedOut`.
  */
 async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping, timedOut: boolean): Promise<Step> {
-  const { project, requirePipeline } = map;
+  const { project } = map;
   const seen = await forge.getMr(project, mr.iid);
-  if (seen.state === 'merged') return { confirm: seen.mergeCommitSha };
-  if (seen.state !== 'opened' && seen.state !== 'closed') return { wait: `the merge request is ${seen.state}` };
   // An open or closed MR shows that no merge call of Foreman's merged it.
-  const unanswered = mr.mergeCalled;
-  mr.mergeCalled = false;
-  if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
-  if (seen.headSha !== mr.tip) return { gate: `MR head moved after review: !${mr.iid} is at ${seen.headSha}, not ${mr.tip}` };
-  const wrong = notAsOpened(seen, map);
-  if (wrong) return { gate: wrong };
+  const unanswered = mr.mergeCalled && (seen.state === 'opened' || seen.state === 'closed');
+  if (unanswered) mr.mergeCalled = false;
+  const notNow = whyNotMerge(mr, seen, map);
+  if (notNow && !('wait' in notNow)) return notNow;
   if (unanswered && ++mr.unanswered >= MAX_UNANSWERED_MERGES) {
     return { gate: `merge request !${mr.iid} still reads open after ${mr.unanswered} merge calls GitLab did not answer with a result; last: ${mr.unansweredError}` };
   }
   if (unanswered && timedOut) {
     return { gate: `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${mr.unansweredError}` };
   }
-  const pipeline = seen.pipeline?.sha === mr.tip ? seen.pipeline : null;
-  if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
-    return { gate: `the pipeline of !${mr.iid} ${pipeline.status}: ${pipeline.webUrl}` };
-  }
-  if (requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
-  if (NEEDS_NEW_HEAD.has(seen.mergeStatus)) {
-    return { gate: `GitLab reports ${seen.mergeStatus}: the merge request conflicts with ${map.targetBranch} or needs a rebase; rework it, then approve again` };
-  }
-  if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
-  // Merges into one target branch go one at a time: GitLab can refuse two that overlap. The ticket, the repo hold and
-  // four-eyes are read in the merge's turn, so waiting behind another merge does not stretch the recheck's age. A turn
-  // that makes a merge call lasts until pollOne has confirmed and synced that merge, or held the repo for it.
+  if (notNow) return notNow;
+  // Merges into one target branch go one at a time: GitLab can refuse two that overlap. The MR, the ticket, the repo
+  // hold and four-eyes are read in the merge's turn, so waiting behind another merge does not stretch the recheck's age.
+  // A turn that makes a merge call lasts until pollOne has confirmed and synced that merge, or held the repo for it.
   const out = await oneMergeAtATime(`${project}\0${map.targetBranch}`, async (extend): Promise<Step | MergeOutcome> => {
-    // A person may have reopened the ticket while the MR was read or the merge waited its turn.
+    // A person may have merged, closed or edited the MR on GitLab while the merge waited its turn.
+    const again = whyNotMerge(mr, await forge.getMr(project, mr.iid), map);
+    if (again) return again;
+    // Or reopened the ticket while the MR was read or the merge waited.
     if (left(store, mr)) return { wait: 'the ticket left done' };
     // left() saw the ticket `done`, so it exists.
     const refused = await mr.fourEyes(store.getTask(mr.taskId)!);
@@ -430,14 +420,41 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
   if (out.merged) return { confirm: out.mergeCommitSha };
   if (out.reason === 'head-moved') return { gate: `MR head moved after review: ${out.detail}` };
   if (out.reason === 'not-mergeable') {
-    const now = (await forge.getMr(project, mr.iid)).mergeStatus;
-    if (TRANSIENT_MERGE_STATUS.has(now)) return { wait: `GitLab reports ${now}` };
-    if (now === 'mergeable' && !mr.mergeRetried) {
+    // GitLab also answers 405 when a person merged or closed the MR just before the call.
+    const now = await forge.getMr(project, mr.iid);
+    if (now.state === 'merged') return { confirm: now.mergeCommitSha };
+    if (now.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
+    if (TRANSIENT_MERGE_STATUS.has(now.mergeStatus)) return { wait: `GitLab reports ${now.mergeStatus}` };
+    if (now.mergeStatus === 'mergeable' && !mr.mergeRetried) {
       mr.mergeRetried = true;
       return { wait: 'GitLab refused the merge while reporting mergeable; trying once more' };
     }
   }
   return { gate: `GitLab did not merge !${mr.iid}: ${out.detail}` };
+}
+
+/**
+ * What stops a merge of `mr` as `seen` now, or null when it may merge: merged (confirm it), closed, not open, a head
+ * that is not the reviewed commit, not as Foreman opened it (notAsOpened), its pipeline for that commit failed or
+ * not passed yet (or none is required), or GitLab not calling it mergeable.
+ */
+function whyNotMerge(mr: Entry, seen: Mr, map: LandingMapping): Step | null {
+  if (seen.state === 'merged') return { confirm: seen.mergeCommitSha };
+  if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
+  if (seen.state !== 'opened') return { wait: `the merge request is ${seen.state}` };
+  if (seen.headSha !== mr.tip) return { gate: `MR head moved after review: !${mr.iid} is at ${seen.headSha}, not ${mr.tip}` };
+  const wrong = notAsOpened(seen, map);
+  if (wrong) return { gate: wrong };
+  const pipeline = seen.pipeline?.sha === mr.tip ? seen.pipeline : null;
+  if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
+    return { gate: `the pipeline of !${mr.iid} ${pipeline.status}: ${pipeline.webUrl}` };
+  }
+  if (map.requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
+  if (NEEDS_NEW_HEAD.has(seen.mergeStatus)) {
+    return { gate: `GitLab reports ${seen.mergeStatus}: the merge request conflicts with ${map.targetBranch} or needs a rebase; rework it, then approve again` };
+  }
+  if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
+  return null;
 }
 
 /** The tail of the merge calls queued for each "project\0target branch". */
