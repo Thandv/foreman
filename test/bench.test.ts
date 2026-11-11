@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/queue.ts';
-import { mergedToVerifiedMs, namedInRed, outcome, parseSuiteLog, perLanded, whyNotLanded } from '../scripts/bench/outcome.ts';
+import { mergedToVerifiedMs, namedInRed, outcome, ownChecksOf, parseSuiteLog, perLanded, redReading, whyNotLanded } from '../scripts/bench/outcome.ts';
 import { assertIsolated, LIVE_PORT } from '../scripts/bench/isolation.ts';
 
 // The benchmarks in scripts/bench are too slow for the suite at their real sizes. These runs are the smallest sizes
@@ -143,6 +143,8 @@ test('the landing bench reads suite runs per landed ticket, merged-to-verified a
   assert.deepEqual(runs.map((r) => [r.endedAt, r.files.length]), [[1000, 1], [1500, 2], [2400, 3]]);
   assert.equal(perLanded(7, 4), 1.75);
   assert.equal(perLanded(3, 0), 0, 'nothing landed');
+  assert.equal(perLanded(41, 20), 2.05);
+  assert.equal(perLanded(2, 3), 0.67, 'two places');
   // ticket-1 merged at 1200 and the first run that ended after it and held its file ended at 1500.
   assert.equal(mergedToVerifiedMs(runs, 'ticket-1.txt', 1200), 300);
   // ticket-0 holds in the run at 1000 too, but that run ended before it merged: it verified nothing.
@@ -150,6 +152,17 @@ test('the landing bench reads suite runs per landed ticket, merged-to-verified a
   assert.equal(mergedToVerifiedMs(runs, 'ticket-2.txt', 3000), undefined, 'no check has covered it yet');
   assert.deepEqual(namedInRed(['MAIN IS RED after merging t-1, t-2 (cmd): new work for this repo is held', 'status: merged']), ['t-1', 't-2']);
   assert.deepEqual(namedInRed(['status: merged']), []);
+});
+
+test('the landing bench leaves a not-landed ticket\'s own checks out of suite runs per landed ticket, and says its red had no culprit to name', () => {
+  // ticket-2 never merged: its own check (only its file) is not a run spent on landing. A post-merge checkout that holds
+  // it anyway (3a6712a merges in the shared working tree) is a post-merge check and stays counted.
+  const runs = parseSuiteLog('1000 ticket-0.txt\n1100 ticket-2.txt\n1200 ticket-1.txt\n1500 ticket-0.txt,ticket-1.txt\n1600 ticket-0.txt,ticket-2.txt\n');
+  assert.equal(ownChecksOf(runs, ['ticket-2.txt']), 1);
+  assert.equal(ownChecksOf(runs, []), 0);
+  assert.equal(redReading({ culpritLanded: false, named: [], attributed: false }), 'culprit not landed');
+  assert.equal(redReading({ culpritLanded: true, named: [], attributed: false }), 'NOT the culprit among 0');
+  assert.equal(redReading({ culpritLanded: true, named: ['a', 'b'], attributed: true }), 'culprit among 2');
 });
 
 test('the landing bench lands a burst under before and after, counts the suite runs from the suite\'s own log and attributes the red', async () => {
