@@ -62,7 +62,9 @@
 - Four-eyes (`src/security/fourEyes.ts`). With auth off nothing changes. With auth on, the approve route (and
   `--as-is`), `POST /api/tasks/:id/landed` and the owner gate's approval are allowed only for an enabled `human`
   principal: `owner-model` and a `service` principal never satisfy it. Once more than one enabled human exists, the
-  approver must not be the ticket's creator (`tasks.created_by`), and a ticket with no recorded creator is refused.
+  approver must not be the ticket's creator (`tasks.created_by`), and a ticket with no recorded creator, or one whose
+  creator is not a person (a `service` principal, or a reserved id such as `operator`), is refused: otherwise a
+  person who can use a service token could create a ticket as the service and approve it as themselves.
   A change to protected paths always needs that second person, even while only one human exists: Foreman's
   `PROTECTED_PATHS` in Foreman's own repo, and in any repo the human-only paths and the repo's `gate.humanPaths`.
   The change is the run's work from its base commit to the reviewed tree (the `--as-is` tree when one is named),
@@ -77,8 +79,8 @@
   leaves the ticket where it was and puts the reason on its timeline. Known limits: the live-human count is whatever
   the host-admin secret has minted, so its holder can mint a second name for themselves (mints are
   `principal-minted` events); with auth on and one human, a protected change cannot land until a second person is
-  minted, and tasks with no recorded creator (from schedules, standing asks, improvements) cannot be approved once
-  there are two.
+  minted, and tasks with no recorded creator (from schedules, standing asks, improvements), tasks a `service`
+  principal created and tasks from before sign-in (which record `operator`) cannot be approved once there are two.
 - The approver of record on a merge request (`FOREMAN_LANDING=mr`) is Foreman's approve decision, not GitLab: GitLab
   shows the user of Foreman's GitLab token, which is in Foreman's secrets directory (readable by an unsandboxed worker,
   see [The GitLab token](#the-gitlab-token-foreman_landingmr) below), and Foreman never calls GitLab's MR approve.

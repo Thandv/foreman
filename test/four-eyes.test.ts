@@ -135,17 +135,19 @@ test('with two humans, the creator cannot mark their own ticket landed', async (
   assert.equal(r.store.getTask(task.id)!.status, 'awaiting-approval');
 });
 
-test('the rule: only a live human approves; with two, never the author; protected paths always need two', () => {
+test('the rule: only a live human approves; with two, never the author, and the author must be a person; protected paths always need two', () => {
   const human = (id: string): Principal => ({ id, kind: 'human', name: id.slice(2), createdBy: 'operator', createdAt: 0, disabledAt: null });
   const alice = human('p_alice');
   const service: Principal = { ...human('p_ci'), kind: 'service' };
-  assert.match(fourEyes(null, { createdBy: null }, null, 2)!, /not one/);
-  assert.match(fourEyes(service, { createdBy: 'p_bob' }, null, 2)!, /not one/);
-  assert.match(fourEyes(alice, { createdBy: 'p_alice' }, null, 2)!, /alice created this ticket/);
-  assert.match(fourEyes(alice, { createdBy: null }, null, 2)!, /author of this ticket is unknown/);
-  assert.equal(fourEyes(alice, { createdBy: 'p_bob' }, 'src/gate.ts', 2), null);
-  assert.equal(fourEyes(alice, { createdBy: 'p_alice' }, null, 1), null);
-  assert.match(fourEyes(alice, { createdBy: 'p_alice' }, 'src/gate.ts', 1)!, /touches src\/gate\.ts.*mint a principal/);
+  assert.match(fourEyes(null, { createdBy: null }, null, 2, null)!, /not one/);
+  assert.match(fourEyes(service, { createdBy: 'p_bob' }, null, 2, 'human')!, /not one/);
+  assert.match(fourEyes(alice, { createdBy: 'p_alice' }, null, 2, 'human')!, /alice created this ticket/);
+  assert.match(fourEyes(alice, { createdBy: null }, null, 2, null)!, /author of this ticket is unknown/);
+  assert.match(fourEyes(alice, { createdBy: 'p_ci' }, null, 2, 'service')!, /p_ci, which is not a person/);
+  assert.match(fourEyes(alice, { createdBy: 'operator' }, null, 2, null)!, /operator, which is not a person/);
+  assert.equal(fourEyes(alice, { createdBy: 'p_bob' }, 'src/gate.ts', 2, 'human'), null);
+  assert.equal(fourEyes(alice, { createdBy: 'p_alice' }, null, 1, 'human'), null);
+  assert.match(fourEyes(alice, { createdBy: 'p_alice' }, 'src/gate.ts', 1, 'human')!, /touches src\/gate\.ts.*mint a principal/);
 });
 
 test('with two humans, the other person approves and is the actor of record; their hand landing passes four-eyes and meets D6', async (t) => {

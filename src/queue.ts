@@ -2147,6 +2147,12 @@ export class Store extends EventEmitter {
     return row ? rowToPrincipal(row) : null;
   }
 
+  /** The kind of the principal with this id, enabled or disabled, or null (unknown, or a reserved actor id). */
+  principalKind(principalId: string): PrincipalKind | null {
+    const row = this.db.prepare('SELECT kind FROM principals WHERE id = ?').get(principalId) as { kind: string } | undefined;
+    return row ? (row.kind as PrincipalKind) : null;
+  }
+
   /** Enabled human principals. */
   humanPrincipalCount(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM principals WHERE kind = 'human' AND disabled_at IS NULL").get() as { n: number }).n);
