@@ -7,6 +7,7 @@ import { config } from '../src/config.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
 import type { Forge } from '../src/landing/forge.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
+import { ForgeMirror, MirrorError } from '../src/landing/push.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
 import type { Task } from '../src/types.ts';
 import { approve, fixture, git, landingRows, parked, type Fixture } from './helpers/landingMr.ts';
@@ -211,6 +212,38 @@ test('a ticket reopened while Foreman\'s merge call is in flight still has the m
   assert.ok(messages(store, a).includes(`merged !1 at ${m}; checkout sync pending`));
   assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
   assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
+});
+
+test('a forge merge whose confirm fails after the ticket is reopened keeps the hold and the marker until it is confirmed', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, tip } = await opened(t, f);
+  let failures = 1;
+  useLanding(new (class extends Landing {
+    override mirror(m: LandingMapping, home: string): ForgeMirror {
+      const real = super.mirror(m, home);
+      const confirm = real.confirmMerge.bind(real);
+      real.confirmMerge = async (merge, reviewed) => {
+        if (failures-- <= 0) return confirm(merge, reviewed);
+        store.setStatus(a.id, 'queued');
+        throw new MirrorError('fetch failed');
+      };
+      return real;
+    }
+  })([f.map], null), f.home);
+  const poll = poller(store);
+  await poll();
+  assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip, 'the forge merged the reviewed commit');
+  assert.equal(pendingMr(a.id)?.phase, 'open', 'still followed');
+  assert.equal(store.isLanding(a.id), true, 'the hold stays');
+  assert.equal(landingRows(store), 1, 'the marker stays');
+  await poll();
+  const m = git(f.forge, 'rev-parse', 'main');
+  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
+  assert.equal(landingRows(store), 0, 'the marker closes once confirmed');
+  assert.equal(store.isLanding(a.id), true);
+  assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
+  assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
+  assert.equal(merges(f).length, 1);
 });
 
 test('stop() waits for a merge call still in flight, so its merge is confirmed before the store closes', { timeout: 20_000 }, async (t) => {
