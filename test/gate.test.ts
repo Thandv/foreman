@@ -1812,10 +1812,10 @@ test('the human-only paths: manifests, shell, scripts, CI, git plumbing and anyt
     'pkg/scripts/a.mjs', '.github/workflows/ci.yml', 'Makefile', 'native/Makefile', '.gitattributes', '.gitmodules',
     'src/security/guard.ts', 'src/auth.ts', 'src/Authz/roles.ts', 'lib/trustStore.ts', 'src/sandbox/jail.ts', 'crypto-utils/a.ts',
     // GitLab's CI definition: with MR landing it defines the pipeline that gates the MR.
-    '.gitlab-ci.yml', '.gitlab/ci/build.yml', '.gitlab',
+    '.gitlab-ci.yml', '.gitlab-ci.yaml', 'sub/.GitLab-CI.yml', '.gitlab/ci/build.yml', '.gitlab',
   ];
   for (const p of held) assert.equal(humanOnlyPath(['docs/a.md', p]), p, `${p} is a person's`);
-  const free = ['docs/a.md', 'src/app.ts', 'src/package.json.ts', 'src/description.ts', 'test/oauth.test.ts', 'src/shell.ts', 'README.md', 'docs/gitlab.md'];
+  const free = ['docs/a.md', 'src/app.ts', 'src/package.json.ts', 'src/description.ts', 'test/oauth.test.ts', 'src/shell.ts', 'README.md', 'docs/gitlab.md', 'docs/.gitlab-notes.md', 'src/.gitlabrc.ts'];
   assert.equal(humanOnlyPath(free), null, 'ordinary source and docs stay the owner\'s');
 });
 
