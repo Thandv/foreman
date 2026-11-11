@@ -355,17 +355,18 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
   }
   if (requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
-  if (store.landInterrupted(mr.checkout)) return { wait: 'the repo is held until foreman land-clear' };
-  // Merges into one target branch go one at a time: GitLab can refuse two that overlap. The ticket and four-eyes are
-  // read in the merge's turn, so waiting behind another merge does not stretch the recheck's age.
+  // Merges into one target branch go one at a time: GitLab can refuse two that overlap. The ticket, the repo hold and
+  // four-eyes are read in the merge's turn, so waiting behind another merge does not stretch the recheck's age.
   const out = await oneMergeAtATime(`${project}\0${map.targetBranch}`, async (): Promise<Step | MergeOutcome> => {
     // A person may have reopened the ticket while the MR was read or the merge waited its turn.
     if (left(store, mr)) return { wait: 'the ticket left done' };
     // left() saw the ticket `done`, so it exists.
     const refused = await mr.fourEyes(store.getTask(mr.taskId)!);
     if (refused !== null) return { gate: `four-eyes: ${refused}` };
-    // Or while four-eyes was asked (it awaits a git diff): nothing awaits between this check and the merge call.
+    // Or while four-eyes was asked (it awaits a git diff): nothing awaits between these checks and the merge call.
     if (left(store, mr)) return { wait: 'the ticket left done' };
+    // The merge it waited behind may have held the repo (not confirmed, or not synced).
+    if (store.landInterrupted(mr.checkout)) return { wait: 'the repo is held until foreman land-clear' };
     mr.mergeCalled = true;
     return forge.merge(project, mr.iid, mr.tip).catch((err: unknown) => {
       // A 4xx is GitLab's answer that nothing merged, so the timeout applies again; no answer, or a server error, may
