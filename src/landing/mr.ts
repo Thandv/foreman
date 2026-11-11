@@ -296,6 +296,8 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   // left() saw the ticket `done`, so it exists.
   const refused = await mr.fourEyes(store.getTask(mr.taskId)!);
   if (refused !== null) return refuseMerge(store, mr, forge, project, `four-eyes: ${refused}`);
+  // Or while four-eyes was asked (it awaits a git diff): nothing awaits between this check and the merge call.
+  if (left(store, mr)) return { wait: 'the ticket left done' };
   mr.mergeCalled = true;
   const out = await forge.merge(project, mr.iid, mr.tip);
   mr.mergeCalled = false;
