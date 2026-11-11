@@ -210,7 +210,7 @@ test('two approvals in one repo open two MRs without waiting for CI', async (t) 
 const notePosts = (fake: FakeGitlab): Array<{ path: string; body: string }> =>
   fake.requests.filter((r) => r.method === 'POST' && /\/notes$/.test(r.path)).map((r) => ({ path: r.path, body: (JSON.parse(r.body!) as { body: string }).body }));
 
-test('pin: the MR an approval opens names the task and the reviewed tree in its description', async (t) => {
+test('the MR an approval opens names the task in its description and points to the approval note for the tree', async (t) => {
   const f = await fixture(t);
   useLanding(new Landing([f.map], null), f.home);
   const store = new Store(':memory:');
@@ -221,7 +221,8 @@ test('pin: the MR an approval opens names the task and the reviewed tree in its 
   const open = f.fake.requests.find((r) => r.method === 'POST' && /\/merge_requests$/.test(r.path))!;
   assert.deepEqual(JSON.parse(open.body!), {
     source_branch: `foreman/${a.id}`, target_branch: 'main', title: 'described',
-    description: `Foreman task ${a.id}\n\nReviewed tree ${store.latestRun(a.id)!.reviewedTree}`,
+    // A reused MR keeps its description, so it names no tree that a later approval would make stale.
+    description: `Foreman task ${a.id}\n\nThe reviewed tree is in the latest Foreman approval note.`,
     remove_source_branch: true, squash: false,
   });
 });
@@ -253,7 +254,7 @@ test('a four-eyes approval names its approver of record in one MR note, and its 
   assert.equal(notes.length, 1, 'exactly one note');
   assert.equal(notes[0]!.path, '/api/v4/projects/group%2Fapp/merge_requests/1/notes');
   assert.equal(notes[0]!.body, [
-    `Approved in Foreman at reviewed tree ${store.latestRun(a.id)!.reviewedTree}.`,
+    `Approved in Foreman at reviewed tree ${store.latestRun(a.id)!.reviewedTree}. This replaces any earlier Foreman approval on this request.`,
     '',
     `Foreman-Approved-By: bob (${bob.id})`,
     'Foreman-Author: alice',
