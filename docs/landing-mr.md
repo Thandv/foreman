@@ -22,8 +22,9 @@ right before the merge call.
 | merged, checkout synced | The merge commit is confirmed on the target branch and the checkout is fast-forwarded to it | the post-merge check is green and the dependents are released |
 | repo held | A merge could not be confirmed or the checkout could not take it | `foreman land-clear <repo>` after you have looked |
 
-A daemon restart while an MR is open also holds the repo: run `foreman land-clear <repo>` after the restart. The MR
-itself stays on GitLab.
+A daemon restart while an MR is open also holds the repo, and sends the ticket back to the gate: nothing follows the MR
+after a restart. Run `foreman land-clear <repo>`, then approve again (the open MR is reused), or, if GitLab merged it at
+the reviewed commit meanwhile, record it with `foreman landed <id> --commit <sha>`. The MR itself stays on GitLab.
 
 ## The demo
 

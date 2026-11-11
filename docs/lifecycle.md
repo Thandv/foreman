@@ -106,7 +106,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
    section for at most about five forge calls of 15 s each, plus the mirror's git. A change to
    Foreman itself always lands by the local merge. A daemon that stops with an MR open leaves its
-   `landings` row, so the next start holds the repo until `foreman land-clear <repo>`. A mapped
+   `landings` row, so the next start holds the repo until `foreman land-clear <repo>`, and sends the
+   `done` ticket back to `awaiting-approval` (nothing follows the MR after a restart): approving
+   again reuses the MR. A mapped
    ticket is not hand-landed with `foreman landed` (409), except to record its own MR merged on the
    forge at the reviewed tree ([commands](commands.md)); with auth on, no ticket is hand-landed otherwise.
 

@@ -938,12 +938,15 @@ export class Store extends EventEmitter {
   /**
    * At daemon start: every landing row this process did not write is a merge a crash cut short. Its repo's dependents
    * are held (reconcileBlocked) and it is listed in /api/state until the operator clears it (clearLandInterrupted).
+   * A row whose approval opened a merge request (landing/mr.ts) also sends its `done` ticket back to the gate: the
+   * pending-MR table is in memory, so nothing follows that MR any more.
    */
   adoptInterruptedLandings(): void {
     const rows = this.db.prepare('SELECT id, repo, task_id, started_at FROM landings ORDER BY started_at, id').all() as Record<string, unknown>[];
     for (const r of rows) {
       const id = Number(r['id']);
       if (this.openLandings.has(id)) continue;
+      this.unfollowedMr(String(r['task_id']), Number(r['started_at']));
       const repo = path.resolve(String(r['repo']));
       const known = this.interrupted.get(repo);
       if (known) {
@@ -958,6 +961,22 @@ export class Store extends EventEmitter {
           `Check the checkout (git status, git log), then foreman land-clear ${repo}`,
       });
     }
+  }
+
+  /**
+   * A `done` ticket whose approval after `since` (its landing row's start) opened a merge request: back to
+   * awaiting-approval with the reason. Its MR stays on the forge: approving again reuses it.
+   */
+  private unfollowedMr(taskId: string, since: number): void {
+    if (this.getTask(taskId)?.status !== 'done') return;
+    const approval = this.decisionsForTask(taskId).filter((d) => d.action === 'approve').at(-1);
+    const iid = approval && approval.at >= since ? approval.extra?.['mrIid'] : undefined;
+    if (typeof iid !== 'number') return;
+    this.setStatus(taskId, 'awaiting-approval', this.withCoreGuard(taskId,
+      `approved, but not landed: the daemon restarted while its merge request !${iid} was open, and nothing follows it now — ` +
+      `after foreman land-clear, approve again to follow it (the open MR is reused), or, if it merged at the reviewed commit, ` +
+      `foreman landed ${taskId} --commit <sha>`));
+    this.record({ taskId, type: 'status', message: `merge request !${iid} back to the gate: the daemon restarted while it was open` });
   }
 
   /**
