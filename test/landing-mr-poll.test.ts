@@ -254,6 +254,27 @@ test('a merge call whose answer was lost and that did not merge is dropped once 
   assert.ok(messages(store, a).includes('merge request !1 no longer followed: the ticket is queued; no merge made by Foreman'));
 });
 
+test('a merge call whose answer was lost is dropped, not sent to the gate, when the MR then reads closed after a reopen', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    forge.merge = async () => { throw new ForgeError('no answer within 15000 ms'); };
+  });
+  const poll = poller(store);
+  await poll();
+  store.setStatus(a.id, 'queued');
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), state: 'closed' });
+  });
+  await poll();
+  assert.equal(store.getTask(a.id)?.status, 'queued', 'the person\'s status stands');
+  assert.equal(pendingMr(a.id), undefined, 'the entry is dropped');
+  assert.equal(store.isLanding(a.id), false);
+  assert.equal(landingRows(store), 0);
+  assert.ok(messages(store, a).includes('merge request !1 no longer followed: the ticket is queued; no merge made by Foreman'));
+});
+
 test('a merge refused while the ticket was reopened leaves the person\'s status and drops the entry', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a } = await opened(t, f);
