@@ -38,7 +38,10 @@ tickets in one repo, parked at the gate, then approved through the API:
    2.05 suite runs per landed ticket under `per-merge` and 1.2 under `coalesced`. Approve to merged (p50 about 6.3 s)
    and merged to verified (p50 8.9 s and 5.9 s) are longer than the plain burst's, because each landing waits for the
    fake pipeline (1.5 s) and the target fetch; under `coalesced` one check covered up to 10 merges, so its red names
-   the culprit among 10 tickets.
+   the culprit among 10 tickets. The fake runs merges one at a time and does not recheck other merge requests when the
+   target moves, so these cells say nothing about merges that collide on a real GitLab. Foreman now sends merge calls
+   into one target one at a time and tries a refusal once more while GitLab reports `mergeable`; the fake's
+   `refuseOverlappingMerges` and `recheckAfterMerge` options behave like that, and these cells were not rerun with them.
 2. **Coalescing helps in proportion to overlap.** In the burst the checks overlap and the post-merge checks coalesce: 2.05
    to 1.45 suite runs per landed ticket. In the steady run a check ends before the next merge, so there is little to
    share: 2.05 to 1.9, and merged-to-verified is longer under `coalesced` (about 1.5 s against 1.0 s) because a merge that

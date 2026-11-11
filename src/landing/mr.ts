@@ -54,6 +54,8 @@ interface Entry extends PendingMr {
   mergeCalled: boolean;
   /** Four-eyes for the approver as the ledger stands now (FourEyesRecheck), asked right before the merge call. */
   fourEyes: FourEyesRecheck;
+  /** GitLab refused a merge while it reported mergeable (two merges into one target can collide): tried once more. */
+  mergeRetried: boolean;
 }
 
 /**
@@ -207,7 +209,7 @@ export async function openForApproval(
     if (wrong) return { merged: false, code: 'mr-refused', reason: wrong, branch };
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, checkout: task.repo!, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
-      polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
+      polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false, mergeRetried: false,
       fourEyes: opts.fourEyes,
     });
     return { merged: false, code: 'mr-opened', reason: `opened !${mr.iid} ${mr.webUrl}`, branch, ...(note ? { note } : {}) };
@@ -357,23 +359,44 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
   // left() saw the ticket `done`, so it exists.
   const refused = await mr.fourEyes(store.getTask(mr.taskId)!);
   if (refused !== null) return { gate: `four-eyes: ${refused}` };
-  // Or while four-eyes was asked (it awaits a git diff): nothing awaits between this check and the merge call.
-  if (left(store, mr)) return { wait: 'the ticket left done' };
-  mr.mergeCalled = true;
-  const out = await forge.merge(project, mr.iid, mr.tip).catch((err: unknown) => {
-    // A 4xx is GitLab's answer that nothing merged, so the timeout applies again; no answer, or a server error, may
-    // hide a merge, and keeps the MR until a read shows it open.
-    if (err instanceof ForgeError && err.status !== null && err.status >= 400 && err.status < 500) mr.mergeCalled = false;
-    throw err;
+  // Merges into one target branch go one at a time: GitLab can refuse two that overlap.
+  const out = await oneMergeAtATime(`${project}\0${map.targetBranch}`, async () => {
+    // Or while four-eyes was asked (it awaits a git diff) or the merge waited its turn: nothing awaits between this
+    // check and the merge call.
+    if (left(store, mr)) return null;
+    mr.mergeCalled = true;
+    return forge.merge(project, mr.iid, mr.tip).catch((err: unknown) => {
+      // A 4xx is GitLab's answer that nothing merged, so the timeout applies again; no answer, or a server error, may
+      // hide a merge, and keeps the MR until a read shows it open.
+      if (err instanceof ForgeError && err.status !== null && err.status >= 400 && err.status < 500) mr.mergeCalled = false;
+      throw err;
+    });
   });
+  if (out === null) return { wait: 'the ticket left done' };
   mr.mergeCalled = false;
   if (out.merged) return { confirm: out.mergeCommitSha };
   if (out.reason === 'head-moved') return { gate: `MR head moved after review: ${out.detail}` };
   if (out.reason === 'not-mergeable') {
     const now = (await forge.getMr(project, mr.iid)).mergeStatus;
     if (TRANSIENT_MERGE_STATUS.has(now)) return { wait: `GitLab reports ${now}` };
+    if (now === 'mergeable' && !mr.mergeRetried) {
+      mr.mergeRetried = true;
+      return { wait: 'GitLab refused the merge while reporting mergeable; trying once more' };
+    }
   }
   return { gate: `GitLab did not merge !${mr.iid}: ${out.detail}` };
+}
+
+/** The tail of the merge calls queued for each "project\0target branch". */
+const mergeQueues = new Map<string, Promise<unknown>>();
+
+/** Runs `call` after every merge call queued before it for `key` has ended. */
+function oneMergeAtATime<T>(key: string, call: () => Promise<T>): Promise<T> {
+  const turn = (mergeQueues.get(key) ?? Promise.resolve()).then(call);
+  const tail = turn.catch(() => undefined);
+  mergeQueues.set(key, tail);
+  void tail.then(() => { if (mergeQueues.get(key) === tail) mergeQueues.delete(key); });
+  return turn;
 }
 
 function pipelineWait(mr: Mr): string {
