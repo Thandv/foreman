@@ -10,7 +10,7 @@ import { GitlabForge } from '../src/landing/gitlab.ts';
 import { ForgeMirror, MirrorError } from '../src/landing/push.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
 import type { Task } from '../src/types.ts';
-import { approve, fixture, git, landingRows, parked, type Fixture } from './helpers/landingMr.ts';
+import { approve, fixture, git, landingRows, parked, postMerge, type Fixture } from './helpers/landingMr.ts';
 
 // An open merge request (src/landing/mr.ts) is polled by a tick stage and merged on the forge at the reviewed sha once
 // its pipeline passes; the merge is then confirmed in the Foreman-owned mirror.
@@ -41,9 +41,9 @@ test('the scheduler merges an approved ticket\'s MR at the reviewed sha once its
   const a = parked(store, f.repo, 'polled');
   const tip = git(f.repo, 'rev-parse', 'polled');
   assert.equal((await approve(store, a.id)).merge.code, 'mr-opened');
-  const merged = eventOn(store, a.id, /^merged !1 at /);
+  const synced = eventOn(store, a.id, /^checkout synced to /);
   await sched.pulse();
-  assert.match(await merged, /checkout sync pending$/);
+  assert.equal(await synced, `checkout synced to ${git(f.forge, 'rev-parse', 'main')}`);
   assert.deepEqual(merges(f).map((r) => r.query), [{ sha: tip }], 'one merge call, at the reviewed sha');
   assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip);
 });
@@ -64,7 +64,7 @@ function poller(store: Store, start = Date.now()): (at?: number) => Promise<void
   let now = start;
   return (at?: number) => {
     now = at ?? now + config.mrPollMs;
-    return pollMergeRequests(store, now, (err) => { throw err; });
+    return pollMergeRequests(store, now, (err) => { throw err; }, postMerge());
   };
 }
 
@@ -91,7 +91,24 @@ function atGate(store: Store, task: Task, reason: RegExp): void {
   assert.equal(pendingMr(task.id), undefined);
 }
 
-test('a passing pipeline: one merge call at the reviewed sha, confirmed in the mirror; the dependent stays held for the sync', async (t) => {
+/** The merge is synced: the checkout is at the forge's main, the hold ended, the marker closed, the MR let go. */
+function synced(store: Store, f: Fixture, task: Task): void {
+  assert.equal(git(f.repo, 'rev-parse', 'HEAD'), git(f.forge, 'rev-parse', 'main'), 'the checkout is at the merge commit');
+  assert.equal(store.isLanding(task.id), false, 'the hold ended');
+  assert.equal(landingRows(store), 0, 'the marker closed');
+  assert.equal(pendingMr(task.id), undefined);
+}
+
+/** The repo is held for the operator with `reason`: the hold and the marker stay, and the MR is let go. */
+function held(store: Store, f: Fixture, task: Task, reason: RegExp): void {
+  assert.equal(store.landInterrupted(f.repo)?.taskId, task.id);
+  assert.ok(messages(store, task).some((m) => reason.test(m)), 'the reason is on the timeline');
+  assert.equal(store.isLanding(task.id), true);
+  assert.equal(landingRows(store), 1, 'the marker stays, so the next start holds the repo too');
+  assert.equal(pendingMr(task.id), undefined);
+}
+
+test('a passing pipeline: one merge call at the reviewed sha, confirmed in the mirror, synced and checked; the dependent is released', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a, child, tip } = await opened(t, f);
   const poll = poller(store);
@@ -99,12 +116,10 @@ test('a passing pipeline: one merge call at the reviewed sha, confirmed in the m
   assert.deepEqual(merges(f).map((r) => r.query), [{ sha: tip }]);
   const m = git(f.forge, 'rev-parse', 'main');
   assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip);
-  assert.deepEqual({ phase: pendingMr(a.id)!.phase, merged: pendingMr(a.id)!.merged }, { phase: 'merged', merged: m });
-  assert.ok(messages(store, a).includes(`merged !1 at ${m}; checkout sync pending`));
-  assert.equal(landingRows(store), 0, 'the marker closed');
-  assert.equal(store.isLanding(a.id), true, 'the hold stays until the checkout is synced');
+  assert.ok(messages(store, a).includes(`merged !1 at ${m}`));
+  synced(store, f, a);
   store.reconcileBlocked();
-  assert.equal(store.getTask(child.id)!.status, 'blocked');
+  assert.equal(store.getTask(child.id)!.status, 'queued');
   await poll();
   assert.equal(merges(f).length, 1, 'a merged MR is not polled again');
 });
@@ -127,7 +142,7 @@ test('a "checking" window of three polls is waited out, then the MR merges', asy
   assert.equal(messages(store, a).filter((m) => m === 'merge request !1 waiting: GitLab reports checking').length, 1, 'one event for the wait');
   await poll();
   assert.equal(merges(f).length, 1);
-  assert.equal(pendingMr(a.id)!.phase, 'merged');
+  synced(store, f, a);
 });
 
 test('a commit pushed to the source branch after review sends the ticket back to the gate; the target is unchanged', async (t) => {
@@ -154,12 +169,10 @@ test('an MR merged by a person on the forge is confirmed the same way', async (t
   assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).merge('group/app', 1, tip)).merged, true);
   await poller(store)();
   assert.equal(merges(f).length, 1, 'only the person\'s merge');
-  assert.equal(pendingMr(a.id)!.phase, 'merged');
-  assert.equal(pendingMr(a.id)!.merged, git(f.forge, 'rev-parse', 'main'));
-  assert.equal(landingRows(store), 0);
+  synced(store, f, a);
 });
 
-test('a merge commit that is not the reviewed commit keeps the hold and the marker', async (t) => {
+test('a merge commit that is not the reviewed commit holds the repo with the hold and the marker', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a, main } = await opened(t, f);
   patch(f, (forge) => {
@@ -168,10 +181,7 @@ test('a merge commit that is not the reviewed commit keeps the hold and the mark
   });
   await poller(store)();
   assert.equal(merges(f).length, 0);
-  assert.equal(pendingMr(a.id)!.phase, 'held');
-  assert.ok(messages(store, a).some((m) => /^merge request !1 merged, but the merged commit is not the reviewed commit /.test(m)));
-  assert.equal(store.isLanding(a.id), true);
-  assert.equal(landingRows(store), 1, 'the marker stays, so the next start holds the repo');
+  held(store, f, a, /^land-held\(.*\): merge request !1 merged, but the merged commit is not the reviewed commit /);
 });
 
 test('a ticket reopened while its MR is read is dropped with no merge call', async (t) => {
@@ -207,9 +217,8 @@ test('a ticket reopened while Foreman\'s merge call is in flight still has the m
   await poller(store)();
   const m = git(f.forge, 'rev-parse', 'main');
   assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip, 'the forge merged the reviewed commit');
-  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
-  assert.equal(store.isLanding(a.id), true, 'the hold stays until the checkout is synced');
-  assert.ok(messages(store, a).includes(`merged !1 at ${m}; checkout sync pending`));
+  assert.ok(messages(store, a).includes(`merged !1 at ${m}`));
+  synced(store, f, a);
   assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
   assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
 });
@@ -230,10 +239,7 @@ test('a merge Foreman made whose answer was lost is confirmed after the ticket i
   assert.ok(messages(store, a).includes('merge request !1 waiting: no answer within 15000 ms'));
   store.setStatus(a.id, 'queued');
   await poll();
-  const m = git(f.forge, 'rev-parse', 'main');
-  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
-  assert.equal(store.isLanding(a.id), true, 'the hold stays until the checkout is synced');
-  assert.equal(landingRows(store), 0, 'the marker closes once confirmed');
+  synced(store, f, a);
   assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
   assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
 });
@@ -315,10 +321,7 @@ test('a forge merge whose confirm fails after the ticket is reopened keeps the h
   assert.equal(store.isLanding(a.id), true, 'the hold stays');
   assert.equal(landingRows(store), 1, 'the marker stays');
   await poll();
-  const m = git(f.forge, 'rev-parse', 'main');
-  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
-  assert.equal(landingRows(store), 0, 'the marker closes once confirmed');
-  assert.equal(store.isLanding(a.id), true);
+  synced(store, f, a);
   assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
   assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
   assert.equal(merges(f).length, 1);
@@ -345,7 +348,7 @@ test('stop() waits for a merge call still in flight, so its merge is confirmed b
   const stopped = sched.stop();
   release();
   await stopped;
-  assert.match(messages(store, a).find((m) => m.startsWith('merged !1 at ')) ?? '', /checkout sync pending$/, 'merged before stop() returned');
+  assert.ok(messages(store, a).includes(`checkout synced to ${git(f.forge, 'rev-parse', 'main')}`), 'merged and synced before stop() returned');
   assert.equal(landingRows(store), 0, 'the marker closed');
 });
 
@@ -377,10 +380,8 @@ test('a merge call whose answer was lost at FOREMAN_MR_TIMEOUT_MIN is read back,
   assert.equal(landingRows(store), 1, 'the marker stays open');
   assert.equal(store.isLanding(a.id), true);
   await poll();
-  const m = git(f.forge, 'rev-parse', 'main');
-  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
   assert.equal(store.getTask(a.id)!.status, 'done');
-  assert.equal(landingRows(store), 0, 'the marker closes once confirmed');
+  synced(store, f, a);
 });
 
 test('a merge GitLab refuses for a lasting reason sends the ticket back to the gate with its message', async (t) => {
@@ -419,17 +420,15 @@ test('a throwing forge adapter is recorded against the stage, and the tick still
   }
 });
 
-test('a merge commit the target no longer reaches keeps the hold and the marker', async (t) => {
+test('a merge commit the target no longer reaches holds the repo with the hold and the marker', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a, tip, main } = await opened(t, f);
   assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).merge('group/app', 1, tip)).merged, true);
   await new Landing([f.map], null).mirror(f.map, f.home).fetchTarget();
   git(f.forge, 'update-ref', 'refs/heads/main', main);
   await poller(store)();
-  assert.equal(pendingMr(a.id)!.phase, 'held', 'the merge commit is in the mirror and its ^2 is the tip, but it is not on the target');
-  assert.ok(messages(store, a).some((m) => /^merge request !1 merged, but the merged commit is not the reviewed commit /.test(m)));
-  assert.equal(store.isLanding(a.id), true);
-  assert.equal(landingRows(store), 1, 'the marker stays');
+  // The merge commit is in the mirror and its ^2 is the tip, but it is not on the target.
+  held(store, f, a, /^land-held\(.*\): merge request !1 merged, but the merged commit is not the reviewed commit /);
 });
 
 test('an MR closed on the forge sends the ticket back to the gate', async (t) => {
@@ -454,7 +453,7 @@ test('a mapping that does not require a pipeline merges an MR with none', async 
   });
   await poller(store)();
   assert.deepEqual(merges(f).map((r) => r.query), [{ sha: tip }]);
-  assert.equal(pendingMr(a.id)!.phase, 'merged');
+  synced(store, f, a);
 });
 
 test('a merge GitLab refuses while its status is still settling is waited for, not bounced', async (t) => {

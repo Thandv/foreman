@@ -71,6 +71,11 @@ a parent also cancels its descendants.
   merge may or may not have happened: check the checkout (`git status`, `git log`), finish or undo the merge by hand,
   then run `foreman land-clear <repo>`; the next tick releases the held work. It is kept until you clear it, across
   restarts.
+- **A merge request the checkout could not take.** A repo that lands by merge request is held the same way when the
+  forge's merge cannot be confirmed as the reviewed commit, or the checkout cannot be fast-forwarded to it (dirty, not
+  on the target branch): the ticket's timeline carries a `land-held(<repo>): <reason>` warning and the repo is listed
+  in `landInterrupted`, its other merge requests wait unmerged, and its dependents stay blocked. Sync the checkout by
+  hand (`git status`; `git merge --ff-only <sha>` on the target branch), then `foreman land-clear <repo>`.
 - **A crash, and a crash loop.** Each start writes a `daemon_starts` row, and an orderly stop (`foreman stop`, or a
   signal the daemon shuts down on) marks it `clean_exit` last, so a stop that runs out of time counts as a crash, and
   so does a stop that exits non-zero, as an uncaught exception's does. After a clean stop, recovery is unchanged.

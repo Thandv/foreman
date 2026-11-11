@@ -34,7 +34,7 @@ agreement   how often the local reviewer would have decided what the cloud revie
 drill       local-only readiness probes (see Local-only mode)
 hold        `hold --reason <text>`: claim no new work while the rest of the daemon runs (see Operating)
 resume      lift the hold; the next tick claims new work again
-land-clear  `land-clear <repo>`: release a repo a crash left mid-merge, once you have checked it (see Operating)
+land-clear  `land-clear <repo>`: release a repo a crash left mid-merge, or a merge request left unsynced, once you have checked it (see Operating)
 token       `token create --host-admin --name <name> [--service] [--expires 30d]`: mint a principal's API token (see Security)
 ```
 

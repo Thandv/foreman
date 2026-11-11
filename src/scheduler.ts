@@ -13,7 +13,7 @@ import { shadowEnabled } from './agreement.ts';
 import { registeredExtensions } from './extensions.ts';
 import { provisionDeps } from './deps.ts';
 import {
-  effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
+  approvals, effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
   ownerGateBatch, quotedPathsInDiff, type GateBatchItem,
 } from './gate.ts';
 import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
@@ -2592,9 +2592,16 @@ export class Scheduler {
   /** MR polls in flight; stop() settles them before the store closes. */
   private readonly mrPolls = new Set<Promise<void>>();
 
-  /** Polls the open merge requests (landing/mr.ts); the tick does not wait for the forge. */
+  /**
+   * Polls the open merge requests (landing/mr.ts); the tick does not wait for the forge. A merge synced into the
+   * checkout is checked with this scheduler's checkMain, tracked by the daemon's approvals, so a shutdown aborts it.
+   */
   private pollMergeRequests(): void {
-    const poll = pollMergeRequests(this.store, this.now(), (err) => this.stageFailed('pollMergeRequests', err));
+    const check = {
+      tracker: approvals,
+      mainCheck: (repo: string, cmd: string | null, signal: AbortSignal, head: string) => this.checkMainFn(repo, cmd, signal, undefined, head),
+    };
+    const poll = pollMergeRequests(this.store, this.now(), (err) => this.stageFailed('pollMergeRequests', err), check);
     this.mrPolls.add(poll);
     void poll.finally(() => this.mrPolls.delete(poll));
   }

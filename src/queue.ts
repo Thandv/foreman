@@ -915,8 +915,11 @@ export class Store extends EventEmitter {
   /** Landing markers this Store wrote and has not closed: live merges, never taken for interrupted ones. */
   private readonly openLandings = new Set<number>();
 
-  /** Repos whose landing a crash cut short, as adoptInterruptedLandings found them; keyed by resolved repo path. */
-  private readonly interrupted = new Map<string, InterruptedLanding & { ids: number[] }>();
+  /**
+   * Repos whose landing a crash cut short (adoptInterruptedLandings) or that holdLanding held, keyed by resolved repo
+   * path: the markers land-clear deletes, and the tasks whose landing hold it ends.
+   */
+  private readonly interrupted = new Map<string, InterruptedLanding & { ids: number[]; tasks: string[] }>();
 
   /** The durable marker of a merge under way (gate.ts): written before the merge, closed once its ref update is recorded. */
   openLanding(repo: string, taskId: string, runId: string | null): number {
@@ -948,13 +951,32 @@ export class Store extends EventEmitter {
         continue;
       }
       const taskId = String(r['task_id']);
-      this.interrupted.set(repo, { repo, taskId, since: Number(r['started_at']), ids: [id] });
+      this.interrupted.set(repo, { repo, taskId, since: Number(r['started_at']), ids: [id], tasks: [] });
       this.record({
         taskId, type: 'warning',
         message: `land-interrupted(${repo}): the daemon stopped during the merge of ${taskId}; new work cut from this repo is held. ` +
           `Check the checkout (git status, git log), then foreman land-clear ${repo}`,
       });
     }
+  }
+
+  /**
+   * Holds `repo` the way a cut-short landing does, until the operator's `foreman land-clear`: a merge request's merge
+   * that could not be confirmed, or not synced into the checkout (landing/mr.ts). Its dependents stay held, the repo's
+   * other merge requests are not merged, and it is listed in /api/state. The task's landing hold and its durable
+   * `marker` pass to the repo's hold: land-clear ends the one and deletes the other.
+   */
+  holdLanding(repo: string, taskId: string, reason: string, marker: number): void {
+    const key = path.resolve(repo);
+    const held = this.interrupted.get(key) ?? { repo: key, taskId, since: Date.now(), ids: [], tasks: [] };
+    held.ids.push(marker);
+    held.tasks.push(taskId);
+    this.interrupted.set(key, held);
+    this.record({
+      taskId, type: 'warning',
+      message: `land-held(${key}): ${reason}; new work cut from this repo is held. ` +
+        `Sync the checkout by hand (git status, git log), then foreman land-clear ${key}`,
+    });
   }
 
   landInterrupted(repo: string | null | undefined): InterruptedLanding | null {
@@ -966,13 +988,13 @@ export class Store extends EventEmitter {
     return [...this.interrupted.values()].map(({ repo, taskId, since }) => ({ repo, taskId, since }));
   }
 
-  /** The operator's word that a cut-short landing's repo is sound again; false when none was held. */
+  /** The operator's word that a cut-short or held landing's repo is sound again; false when none was held. */
   clearLandInterrupted(repo: string): boolean {
     const key = path.resolve(repo);
     const found = this.interrupted.get(key);
     if (!found) return false;
-    const drop = this.db.prepare('DELETE FROM landings WHERE id = ?');
-    for (const id of found.ids) drop.run(id);
+    for (const id of found.ids) this.closeLanding(id);
+    for (const taskId of found.tasks) this.endLanding(taskId);
     this.interrupted.delete(key);
     this.record({ taskId: found.taskId, type: 'status', message: `land-interrupted(${key}) cleared by the operator; held work released` });
     return true;

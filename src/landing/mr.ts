@@ -8,17 +8,20 @@ import type { Run, Task } from '../types.ts';
 import type { Landing, LandingMapping } from './config.ts';
 import { ForgeError, type Forge, type Mr } from './forge.ts';
 import { forgeBranch, MirrorError } from './push.ts';
+import { withRepoMergeSection } from './queue.ts';
+import { checkMrLanding, type PostMergeRun } from './verify.ts';
 
 /**
  * Landing by merge request: an approved ticket whose repo is mapped in landing.json (./config.ts) is not merged into
  * the operator's checkout. Its reviewed commit is pushed to foreman/<task id> through the Foreman-owned mirror
- * (./push.ts) and a merge request is opened on the forge (./forge.ts); the MR merges later (LD-MR7a), once its
- * pipeline passes (pollMergeRequests). A change to Foreman itself always lands locally: the core guard is not
- * delegated to a forge.
+ * (./push.ts) and a merge request is opened on the forge (./forge.ts); the MR merges later, once its pipeline
+ * passes (pollMergeRequests), and the checkout is then fast-forwarded to the merge and handed to the post-merge check
+ * (./verify.ts). A change to Foreman itself always lands locally: the core guard is not delegated to a forge.
  *
  * The ticket stays `done` with its landing hold on and its durable landing marker open while its MR is pending; this
- * module's pending-MR table owns both from then on. In memory only: a daemon that stops with an MR open leaves the
- * marker, and the next start holds the repo for the operator (Store.adoptInterruptedLandings).
+ * module's pending-MR table owns both from then on, until the checkout is synced (the post-merge check then ends the
+ * hold) or the repo is held for the operator (Store.holdLanding). In memory only: a daemon that stops with an MR open
+ * leaves the marker, and the next start holds the repo for the operator (Store.adoptInterruptedLandings).
  */
 
 /** An MR opened for an approval and not merged yet. */
@@ -27,6 +30,8 @@ export interface PendingMr {
   runId: string;
   /** The checkout's top level, as the mapping names it. */
   repo: string;
+  /** The task's repo, as the ticket names it: the key of its merge section and its landing marker. */
+  checkout: string;
   iid: number;
   /** The reviewed commit the MR's head is. */
   tip: string;
@@ -36,11 +41,10 @@ export interface PendingMr {
   marker: number;
   openedAt: number;
   /**
-   * 'open' while it is polled; 'merged' once the forge merged it and the mirror confirmed the merge commit `merged`
-   * (the checkout is not synced to it yet, so the landing hold stays on); 'held' when the forge's merge commit is not
-   * the reviewed commit, which keeps the hold and the marker for the operator.
+   * 'open' while it is polled; 'merged' once the forge merged it and the mirror confirmed the merge commit `merged`,
+   * while the checkout is synced to it. The entry is let go once synced, or once the repo is held for the operator.
    */
-  phase: 'open' | 'merged' | 'held';
+  phase: 'open' | 'merged';
   merged: string | null;
 }
 
@@ -192,7 +196,7 @@ export async function openForApproval(
       return { merged: false, code: 'mr-refused', reason: `the head of !${mr.iid} is ${mr.headSha}, not the reviewed commit ${tip}`, branch };
     }
     pending.set(task.id, {
-      taskId: task.id, runId: run!.id, repo: map.repo, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
+      taskId: task.id, runId: run!.id, repo: map.repo, checkout: task.repo!, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
       phase: 'open', merged: null, polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
       fourEyes: opts.fourEyes,
     });
@@ -213,17 +217,18 @@ type Step = { wait: string } | { gate: string } | { confirm: string | null };
  * The tick stage: each open MR not polled in the last FOREMAN_MR_POLL_MS is polled, one call at a time per MR, and
  * the tick does not wait for it. A ticket that left `done` (a person reopened, rejected or archived it) is dropped
  * here, before any call: its hold ends and its marker closes. Once the forge has merged, the merge is confirmed and
- * settled whatever the ticket's status, so the marker is never closed on a merge left unrecorded. A poll that throws something other than a forge or
- * mirror failure goes to `onError` and the MR is polled again next time. Resolves when the polls started here end.
+ * settled whatever the ticket's status, so the marker is never closed on a merge left unrecorded. A poll that throws
+ * something other than a forge or mirror failure goes to `onError` and the MR is polled again next time. A confirmed
+ * merge's post-merge check runs with `check`. Resolves when the polls started here end, their checks included.
  */
-export function pollMergeRequests(store: Store, now: number, onError: (err: unknown) => void): Promise<void> {
+export function pollMergeRequests(store: Store, now: number, onError: (err: unknown) => void, check: PostMergeRun): Promise<void> {
   const started: Promise<void>[] = [];
   for (const mr of pending.values()) {
     if (mr.phase !== 'open' || mr.polling || now - mr.polledAt < config.mrPollMs) continue;
     if (left(store, mr)) continue;
     mr.polledAt = now;
     mr.polling = true;
-    started.push(pollOne(store, mr, now).catch(onError).finally(() => { mr.polling = false; }));
+    started.push(pollOne(store, mr, now, check).catch(onError).finally(() => { mr.polling = false; }));
   }
   return Promise.all(started).then(() => undefined);
 }
@@ -245,7 +250,7 @@ function left(store: Store, mr: Entry): boolean {
   return true;
 }
 
-async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
+async function pollOne(store: Store, mr: Entry, now: number, check: PostMergeRun): Promise<void> {
   const map = active?.landing.mappings.find((m) => m.repo === mr.repo);
   if (!active || !map) throw new Error(`merge request !${mr.iid} of ${mr.taskId}: ${mr.repo} is no longer mapped for landing`);
   const forge = active.landing.forge(map);
@@ -261,7 +266,7 @@ async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
     if (!(err instanceof ForgeError) && !(err instanceof MirrorError)) throw err;
     step = { wait: err.message };
   }
-  if ('confirm' in step) return settle(store, mr, step.confirm);
+  if ('confirm' in step) return settle(store, mr, step.confirm, map, check);
   if (left(store, mr)) return;
   if ('gate' in step) return backToGate(store, mr, step.gate);
   if (!mr.forgeMerged && !mr.mergeCalled && now - mr.openedAt >= config.mrTimeoutMin * 60_000) {
@@ -291,6 +296,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   }
   if (requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
+  if (store.landInterrupted(mr.checkout)) return { wait: 'the repo is held until foreman land-clear' };
   // A person may have reopened the ticket while the MR was read.
   if (left(store, mr)) return { wait: 'the ticket left done' };
   // left() saw the ticket `done`, so it exists.
@@ -328,26 +334,51 @@ function pipelineWait(mr: Mr): string {
 
 /**
  * A merged MR: confirmed (`merged` is the merge commit, on the target with the reviewed commit as its second parent),
- * its marker closes and it waits for the checkout sync with the landing hold on; not confirmed (null), the hold and
- * the marker stay, so the next start holds the repo for the operator. A ticket that left `done` meanwhile is warned of.
+ * the checkout is synced to it inside the repo's merge section, its marker closes and the merge goes to its post-merge
+ * check, which ends the landing hold. Not confirmed (null), or not synced, the repo is held for the operator with the
+ * hold and the marker (Store.holdLanding). A ticket that left `done` meanwhile is warned of.
  */
-function settle(store: Store, mr: Entry, merged: string | null): void {
+async function settle(store: Store, mr: Entry, merged: string | null, map: LandingMapping, check: PostMergeRun): Promise<void> {
   const status = store.getTask(mr.taskId)?.status ?? 'gone';
   if (status !== 'done') {
     store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request !${mr.iid} merged on the forge while the ticket is ${status}` });
   }
-  if (merged === null) {
-    mr.phase = 'held';
-    store.record({
-      taskId: mr.taskId, runId: mr.runId, type: 'warning',
-      message: `merge request !${mr.iid} merged, but the merged commit is not the reviewed commit ${mr.tip}; its dependents stay held`,
-    });
-    return;
-  }
+  if (merged === null) return hold(store, mr, `merge request !${mr.iid} merged, but the merged commit is not the reviewed commit ${mr.tip}`);
   mr.phase = 'merged';
   mr.merged = merged;
+  store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merged !${mr.iid} at ${merged}` });
+  const unsynced = await withRepoMergeSection(mr.checkout, () => syncCheckout(store, mr, map, merged))
+    .catch((err: Error) => `checkout not synced to ${merged}: ${err.message.slice(0, 300)}`);
+  if (unsynced !== null) return hold(store, mr, `merge request !${mr.iid} merged at ${merged}, but ${unsynced}`);
+  pending.delete(mr.taskId);
   store.closeLanding(mr.marker);
-  store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merged !${mr.iid} at ${merged}; checkout sync pending` });
+  store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `checkout synced to ${merged}` });
+  await checkMrLanding(store, { taskId: mr.taskId, runId: mr.runId, mergeHead: merged, reason: `merged !${mr.iid} at ${merged}` }, check);
+}
+
+/**
+ * Fast-forwards the checkout to `merged`: imported from the mirror (no URL is resolved in the task repo), then merged
+ * by sha, only when the repo is not held, the checkout is on the target branch and clean. Null, or why not.
+ */
+async function syncCheckout(store: Store, mr: Entry, map: LandingMapping, merged: string): Promise<string | null> {
+  if (!active) throw new Error('merge-request landing is not configured');
+  if (store.landInterrupted(mr.checkout)) return 'the repo is held for an earlier landing';
+  await active.landing.mirror(map, active.home).importCommit(merged);
+  const head = await pinnedGit(mr.checkout, ['symbolic-ref', '--quiet', 'HEAD']).then((r) => r.stdout.trim(), (err: { code?: unknown }) => {
+    // Exit 1: HEAD is detached.
+    if (err.code === 1) return null;
+    throw err;
+  });
+  if (head !== `refs/heads/${map.targetBranch}`) return `checkout not on ${map.targetBranch}`;
+  if ((await pinnedGit(mr.checkout, ['status', '--porcelain'])).stdout.trim()) return 'checkout dirty';
+  await pinnedGit(mr.checkout, ['merge', '--ff-only', '--quiet', merged]);
+  return null;
+}
+
+/** The repo is held for the operator with the task's hold and marker (Store.holdLanding), and the entry is let go. */
+function hold(store: Store, mr: Entry, reason: string): void {
+  pending.delete(mr.taskId);
+  store.holdLanding(mr.checkout, mr.taskId, reason, mr.marker);
 }
 
 /** The MR will not merge as reviewed: the ticket goes back to awaiting-approval with the reason, and is let go. */

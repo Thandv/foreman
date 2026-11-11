@@ -14,7 +14,7 @@ import { pollMergeRequests, useLanding } from '../src/landing/mr.ts';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
-import { approve, fixture, git, parked, type Fixture } from './helpers/landingMr.ts';
+import { approve, fixture, git, parked, postMerge, type Fixture } from './helpers/landingMr.ts';
 
 process.env['FOREMAN_PREWARM'] = 'off';
 
@@ -70,7 +70,7 @@ async function approvedThenBackAtGate(
     : await approve(store, task.id);
   assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
   store.setStatus(task.id, 'awaiting-approval', 'given back');
-  await pollMergeRequests(store, Date.now(), (err) => { throw err; });
+  await pollMergeRequests(store, Date.now(), (err) => { throw err; }, postMerge());
   return { taskId: task.id, tip: git(f.repo, 'rev-parse', branch) };
 }
 

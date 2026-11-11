@@ -8,6 +8,7 @@ import type { Store } from '../../src/queue.ts';
 import { ApprovalTracker, applyApproval } from '../../src/gate.ts';
 import type { LandingMapping } from '../../src/landing/config.ts';
 import { useLanding } from '../../src/landing/mr.ts';
+import type { MainChecker, PostMergeRun } from '../../src/landing/verify.ts';
 import type { Task } from '../../src/types.ts';
 
 // A repo that lands by merge request on the local fake GitLab (scripts/forge/fakeGitlab.ts): its operator checkout, the
@@ -67,3 +68,9 @@ export const approve = (store: Store, taskId: string, selfRoot?: string) =>
 
 export const landingRows = (store: Store): number =>
   Number((store.db.prepare('SELECT count(*) AS n FROM landings').get() as { n: number }).n);
+
+/** A post-merge check that passes at once, at the HEAD it is asked about. */
+export const passes: MainChecker = async (_repo, cmd, _signal, head) => ({ ok: true, head, cmd, tail: '', firstTail: '' });
+
+/** What a polled MR's post-merge check runs with in a test: `mainCheck` (default: passes), per-merge. */
+export const postMerge = (mainCheck: MainChecker = passes): PostMergeRun => ({ mainCheck, tracker: new ApprovalTracker(), mode: 'per-merge' });

@@ -10,7 +10,7 @@ import { ForgeError, type Forge } from '../src/landing/forge.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
 import { Store } from '../src/queue.ts';
 import type { Principal } from '../src/types.ts';
-import { approve, fixture, git, landingRows, parked, type Fixture } from './helpers/landingMr.ts';
+import { approve, fixture, git, landingRows, parked, postMerge, type Fixture } from './helpers/landingMr.ts';
 
 // Four-eyes is asked again right before the forge merge call (src/landing/mr.ts), which can come minutes after the
 // approval: the MR waits for its pipeline. An approver disabled meanwhile gets no merge.
@@ -48,7 +48,7 @@ async function opened(t: test.TestContext, authOn: boolean) {
   assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
   const tip = git(f.repo, 'rev-parse', 'work');
   let now = Date.now();
-  const poll = (): Promise<void> => pollMergeRequests(store, now += config.mrPollMs, (err) => { throw err; });
+  const poll = (): Promise<void> => pollMergeRequests(store, now += config.mrPollMs, (err) => { throw err; }, postMerge());
   await poll();
   assert.equal(merges(f.fake), 0, 'the pipeline is still running');
   return { f, store, a, bob, tip, poll, notesBefore: notes(f.fake).length };
@@ -61,17 +61,17 @@ test('pin: with nothing changed, a green pipeline leads to exactly one merge cal
   await poll();
   assert.equal(merges(f.fake), 1);
   assert.equal(notes(f.fake).length, notesBefore);
-  assert.equal(pendingMr(a.id)!.phase, 'merged');
+  assert.equal(git(f.repo, 'rev-parse', 'HEAD'), git(f.forge, 'rev-parse', 'main'), 'merged and synced');
   assert.equal(store.getTask(a.id)!.status, 'done');
 });
 
 test('pin: with auth off, a green pipeline leads to exactly one merge call and no further note', async (t) => {
-  const { f, a, tip, poll, notesBefore } = await opened(t, false);
+  const { f, tip, poll, notesBefore } = await opened(t, false);
   await pipelinePasses(f, tip);
   await poll();
   assert.equal(merges(f.fake), 1);
   assert.equal(notes(f.fake).length, notesBefore);
-  assert.equal(pendingMr(a.id)!.phase, 'merged');
+  assert.equal(git(f.repo, 'rev-parse', 'HEAD'), git(f.forge, 'rev-parse', 'main'), 'merged and synced');
 });
 
 test('an approver disabled while the pipeline ran gets no merge call: one MR note, and the ticket is back at the gate', async (t) => {

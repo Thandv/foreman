@@ -129,13 +129,25 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made:
      the MR gets one note saying why (a note the forge refuses is a `warning`), and the ticket goes
      back to `awaiting-approval` with the reason.
+   - The repo is held (below, or a crash mid-merge): it waits, with no merge call, until
+     `foreman land-clear <repo>`.
    - Merged (by Foreman, or by a person in GitLab): the mirror fetches the target branch and
-     confirms the merge commit is on it with the reviewed commit as its second parent. Confirmed,
-     the row is deleted and the ticket's event reads `merged !<iid> at <sha>; checkout sync
-     pending`. The landing hold stays on: the checkout is not synced to the merge yet, so the
-     dependents stay `blocked` and the epic open. Not confirmed, the hold and the row stay, with a
-     warning that the merged commit is not the reviewed commit; the next start holds the repo
-     for the operator.
+     confirms the merge commit is on it with the reviewed commit as its second parent. Confirmed
+     (`merged !<iid> at <sha>`), the checkout is synced inside the repo's merge section, so two MRs
+     of a repo confirmed in one tick sync one after the other: the merge commit is copied in from
+     the mirror (no URL is resolved in the task repo) and the checkout is fast-forwarded to it
+     (`merge --ff-only` by sha, pinned git, hooks off), but only when it is on the target branch and
+     clean. Then the row is deleted (`checkout synced to <sha>`) and the merge commit gets the
+     post-merge check, as a local merge's HEAD does: per merge or coalesced
+     (`FOREMAN_POSTMERGE_MODE`), red attributed to the ticket the same way. The landing hold ends
+     with the check, so a dependent is released on green; with `FOREMAN_POSTMERGE_CHECK=off` it
+     ends at the sync.
+   - Not confirmed, or a checkout that cannot be synced (`checkout dirty`, `checkout not on
+     <branch>`, a fast-forward git refuses): the repo is held as a crash mid-merge holds it. The
+     ticket gets a `land-held(<repo>): <reason>` warning, the repo is listed in `GET /api/state`
+     (`landInterrupted`), its dependents stay `blocked`, its other MRs are not merged, and the
+     ticket's hold and row stay until you sync the checkout by hand and run
+     `foreman land-clear <repo>`, which ends the hold and deletes the row.
      A merge made on the forge is settled this way even when the ticket left `done` meanwhile
      (a person reopened it during the merge call), with a warning naming its status; a confirm
      that fails (a mirror failure) is retried at the next poll, with the hold and the row kept.

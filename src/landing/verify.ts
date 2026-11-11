@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config, type PostMergeMode } from '../config.ts';
 import { swallowed } from '../debug.ts';
 import { pinnedGit } from '../gitExec.ts';
-import { checkMain, type MainCheck } from '../postMerge.ts';
+import { checkMain, postMergeCheckEnabled, type MainCheck } from '../postMerge.ts';
 // Type-only: gate.ts value-imports this file, so a value edge back would be a cycle.
 import type { ApprovalTracker } from '../gate.ts';
 import type { MergeResult } from '../merge.ts';
@@ -183,6 +183,32 @@ export function checkLanding(
     lanes.set(repo, [entry]);
     void drainLane(store, repo);
   });
+}
+
+/** What a post-merge check runs with outside an approval: the daemon's tracker and checker, or a test's. */
+export interface PostMergeRun {
+  mainCheck: MainChecker;
+  tracker: ApprovalTracker;
+  /** Stands in for FOREMAN_POSTMERGE_MODE in tests. */
+  mode?: PostMergeMode;
+}
+
+/**
+ * The post-merge check of a merge request's landing (landing/mr.ts), once the checkout has been synced to the forge's
+ * merge commit `mergeHead`: checkLanding at that commit, tracked like an approval's, so its hold ends with the check
+ * that covers it. With FOREMAN_POSTMERGE_CHECK off, or the ticket gone, the hold ends at once.
+ */
+export async function checkMrLanding(
+  store: Store, mr: { taskId: string; runId: string; mergeHead: string; reason: string }, post: PostMergeRun,
+): Promise<void> {
+  const task = store.getTask(mr.taskId);
+  if (!task?.repo || !postMergeCheckEnabled()) {
+    store.endLanding(mr.taskId);
+    return;
+  }
+  const landedRun = store.getRun(mr.runId);
+  const merge: MergeResult = { merged: true, code: 'merged', reason: mr.reason, branch: landedRun?.branch ?? null };
+  await post.tracker.track(checkLanding(store, { task, run: landedRun, merge }, mr.mergeHead, post.mainCheck, post.tracker, post.mode));
 }
 
 /** Runs `repo`'s checks until every landing queued there is covered, then drops the lane. */
