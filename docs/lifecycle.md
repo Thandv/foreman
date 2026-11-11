@@ -108,7 +108,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    Foreman itself always lands by the local merge. A daemon that stops with an MR open leaves its
    `landings` row, so the next start holds the repo until `foreman land-clear <repo>`, and sends the
    `done` ticket back to `awaiting-approval` (nothing follows the MR after a restart): approving
-   again reuses the MR. A mapped
+   again reuses the MR. A row kept because GitLab merged the MR but the checkout could not take it
+   (`land-held`) leaves the ticket `done`. A mapped
    ticket is not hand-landed with `foreman landed` (409), except to record its own MR merged on the
    forge at the reviewed tree ([commands](commands.md)); with auth on, no ticket is hand-landed otherwise.
 

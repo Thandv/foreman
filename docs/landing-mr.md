@@ -25,6 +25,8 @@ right before the merge call.
 A daemon restart while an MR is open also holds the repo, and sends the ticket back to the gate: nothing follows the MR
 after a restart. Run `foreman land-clear <repo>`, then approve again (the open MR is reused), or, if GitLab merged it at
 the reviewed commit meanwhile, record it with `foreman landed <id> --commit <sha>`. The MR itself stays on GitLab.
+A repo already held because GitLab merged the MR but the checkout could not take it stays held after a restart, and
+its ticket stays done: sync the checkout by hand, then `foreman land-clear <repo>`.
 
 ## The demo
 

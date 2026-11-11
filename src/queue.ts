@@ -965,10 +965,13 @@ export class Store extends EventEmitter {
 
   /**
    * A `done` ticket whose approval after `since` (its landing row's start) opened a merge request: back to
-   * awaiting-approval with the reason. Its MR stays on the forge: approving again reuses it.
+   * awaiting-approval with the reason. Its MR stays on the forge: approving again reuses it. A row holdLanding kept
+   * after the forge merged the MR (its `land-held` warning, written after `since`) is not an open MR: the ticket stays
+   * done, and land-clear releases its dependents once the operator has synced the checkout.
    */
   private unfollowedMr(taskId: string, since: number): void {
     if (this.getTask(taskId)?.status !== 'done') return;
+    if (this.warningsWithPrefix(taskId, 'land-held(').some((w) => w.ts >= since)) return;
     const approval = this.decisionsForTask(taskId).filter((d) => d.action === 'approve').at(-1);
     const iid = approval && approval.at >= since ? approval.extra?.['mrIid'] : undefined;
     if (typeof iid !== 'number') return;
