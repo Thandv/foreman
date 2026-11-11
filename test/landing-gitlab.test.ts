@@ -230,7 +230,10 @@ test('findOpenMr reads past a full page of fork MRs to the project\'s own', asyn
   await withStub((req, res) => {
     const u = new URL(req.url ?? '/', 'http://stub.invalid');
     asked.push(u.pathname.replace(/^.*\/merge_requests/, '') + u.search);
-    if (!u.pathname.endsWith('/merge_requests')) return res.writeHead(404).end(JSON.stringify({ message: '404 Not Found' }));
+    if (!u.pathname.endsWith('/merge_requests')) {
+      res.writeHead(404).end(JSON.stringify({ message: '404 Not Found' }));
+      return;
+    }
     // GitLab lists newest first: a full first page of fork MRs, then the project's own MR on page two.
     res.writeHead(200).end(JSON.stringify(u.searchParams.get('page') === '2' ? [{ iid: 7, source_project_id: 1, target_project_id: 1 }] : Array(100).fill(fork)));
   }, async (url) => {

@@ -102,7 +102,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    pipelines or merge trains) is `mr-refused`: the ticket goes back to
    `awaiting-approval` with the reason, the hold ends and the row is deleted; approving again
    writes a second decision and reuses the MR still open. Only an open MR from the project's own
-   `foreman/<task id>` branch (not a fork's) into the mapped target branch is reused, and one set
+   `foreman/<task id>` branch (not a fork's) into the mapped target branch is reused (every page of
+   GitLab's list is read, so fork MRs listed first do not hide it), and one set
    to squash is `mr-refused`. Each approval that opens or reuses an MR
    then posts one note on it naming the reviewed tree, the approver of record, the ticket's author
    and the decision id, and the decision keeps the MR's iid ([security](security.md)). The MR's
