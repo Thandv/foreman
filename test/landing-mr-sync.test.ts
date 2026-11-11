@@ -215,13 +215,24 @@ test('two MRs merged in one tick: the second sync does not start until the first
       return real;
     }
   })([f.map], null), f.home);
-  const polled = poll();
+  // A person merges both on the forge, so one poll reads both merged: Foreman's own merge calls into one target wait
+  // for the previous merge's sync (src/landing/mr.ts), so only merges read as done reach the section together.
+  const forge = new Landing([f.map], null).forge(f.map);
+  assert.ok((await forge.merge(f.map.project, 1, git(f.repo, 'rev-parse', 'work'))).merged);
+  assert.ok((await forge.merge(f.map.project, 2, git(f.repo, 'rev-parse', 'second'))).merged);
+  const polls = [poll()];
+  await until(() => imports === 1);
   // The second settle either queues behind the first in the repo's section, or (unsectioned) starts its own import.
-  await until(() => mergeSectionsPending(f.repo) === 2 || imports === 2);
+  // Its confirmation may lose the mirror's fetch of the target to the first one's: it is read again at the next poll
+  // (the first, still syncing, is not polled again).
+  for (let i = 0; i < 200 && mergeSectionsPending(f.repo) < 2 && imports < 2; i++) {
+    polls.push(poll());
+    await new Promise((r) => setTimeout(r, 25));
+  }
   assert.equal(imports, 1, 'the second sync waits for the first one\'s section');
   assert.equal(mergeSectionsPending(f.repo), 2);
   release();
-  await polled;
+  await Promise.all(polls);
   assert.equal(imports, 2);
   assert.equal(git(f.repo, 'rev-parse', 'HEAD'), git(f.forge, 'rev-parse', 'main'));
   assert.equal(store.isLanding(a.id), false);

@@ -160,7 +160,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    - Pipeline `success` for the reviewed commit and `mergeable`: four-eyes (`docs/security.md`) is
      asked again for the approve decision's actor, then one merge call at the reviewed sha, which
      GitLab refuses if the head has moved. Merge calls into one target branch are sent one at a
-     time (GitLab can refuse two that overlap); the ticket, the repo hold (below) and four-eyes are read in its turn, right before the call. If four-eyes now refuses (the approver was disabled while
+     time (GitLab can refuse two that overlap); the ticket, the repo hold (below) and four-eyes are read in its turn, right before the call. A turn that makes a merge call lasts until that merge is
+     confirmed and the checkout synced, or the repo held for it (not until its post-merge check),
+     so a merge that cannot be confirmed holds the repo before the next merge call. If four-eyes now refuses (the approver was disabled while
      the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made,
      and the ticket goes back to `awaiting-approval` with the reason and that note, as above.
    - The repo is held (below, or a crash mid-merge): it waits, with no merge call, until

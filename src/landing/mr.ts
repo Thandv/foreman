@@ -56,6 +56,8 @@ interface Entry extends PendingMr {
   fourEyes: FourEyesRecheck;
   /** GitLab refused a merge while it reported mergeable (two merges into one target can collide): tried once more. */
   mergeRetried: boolean;
+  /** Ends this MR's turn in its target's merge queue: set when its merge call is made, called once pollOne is done. */
+  endTurn?: () => void;
 }
 
 /**
@@ -317,6 +319,20 @@ function left(store: Store, mr: Entry): boolean {
 }
 
 async function pollOne(store: Store, mr: Entry, now: number, check: PostMergeRun): Promise<void> {
+  try {
+    await pollOnce(store, mr, now, check);
+  } finally {
+    endTurn(mr);
+  }
+}
+
+/** Ends `mr`'s turn in its target's merge queue, if it has one, so the next merge into that target may start. */
+function endTurn(mr: Entry): void {
+  mr.endTurn?.();
+  mr.endTurn = undefined;
+}
+
+async function pollOnce(store: Store, mr: Entry, now: number, check: PostMergeRun): Promise<void> {
   const map = active?.landing.mappings.find((m) => m.repo === mr.repo);
   if (!active || !map) throw new Error(`merge request !${mr.iid} of ${mr.taskId}: ${mr.repo} is no longer mapped for landing`);
   const forge = active.landing.forge(map);
@@ -370,8 +386,9 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
   }
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
   // Merges into one target branch go one at a time: GitLab can refuse two that overlap. The ticket, the repo hold and
-  // four-eyes are read in the merge's turn, so waiting behind another merge does not stretch the recheck's age.
-  const out = await oneMergeAtATime(`${project}\0${map.targetBranch}`, async (): Promise<Step | MergeOutcome> => {
+  // four-eyes are read in the merge's turn, so waiting behind another merge does not stretch the recheck's age. A turn
+  // that makes a merge call lasts until pollOne has confirmed and synced that merge, or held the repo for it.
+  const out = await oneMergeAtATime(`${project}\0${map.targetBranch}`, async (extend): Promise<Step | MergeOutcome> => {
     // A person may have reopened the ticket while the MR was read or the merge waited its turn.
     if (left(store, mr)) return { wait: 'the ticket left done' };
     // left() saw the ticket `done`, so it exists.
@@ -381,6 +398,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
     if (left(store, mr)) return { wait: 'the ticket left done' };
     // The merge it waited behind may have held the repo (not confirmed, or not synced).
     if (store.landInterrupted(mr.checkout)) return { wait: 'the repo is held until foreman land-clear' };
+    extend(new Promise<void>((resolve) => { mr.endTurn = resolve; }));
     mr.mergeCalled = true;
     return forge.merge(project, mr.iid, mr.tip).catch((err: unknown) => {
       // A 4xx is GitLab's answer that nothing merged, so the timeout applies again; no answer, or a server error, may
@@ -407,10 +425,14 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
 /** The tail of the merge calls queued for each "project\0target branch". */
 const mergeQueues = new Map<string, Promise<unknown>>();
 
-/** Runs `call` after every merge call queued before it for `key` has ended. */
-function oneMergeAtATime<T>(key: string, call: () => Promise<T>): Promise<T> {
-  const turn = (mergeQueues.get(key) ?? Promise.resolve()).then(call);
-  const tail = turn.catch(() => undefined);
+/**
+ * Runs `call` after every turn queued before it for `key` has ended. A turn ends when `call` settles, or later, when
+ * the promise `call` hands to `extend` settles.
+ */
+function oneMergeAtATime<T>(key: string, call: (extend: (until: Promise<void>) => void) => Promise<T>): Promise<T> {
+  let until: Promise<void> = Promise.resolve();
+  const turn = (mergeQueues.get(key) ?? Promise.resolve()).then(() => call((p) => { until = p; }));
+  const tail = turn.then(() => until, () => until).catch(() => undefined);
   mergeQueues.set(key, tail);
   void tail.then(() => { if (mergeQueues.get(key) === tail) mergeQueues.delete(key); });
   return turn;
@@ -440,6 +462,8 @@ async function settle(store: Store, mr: Entry, merged: string | null, map: Landi
   pending.delete(mr.taskId);
   store.closeLanding(mr.marker);
   store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `checkout synced to ${merged}` });
+  // Confirmed and synced: the next merge into the target need not wait for the post-merge check.
+  endTurn(mr);
   await checkMrLanding(store, { taskId: mr.taskId, runId: mr.runId, mergeHead: merged, reason: `merged !${mr.iid} at ${merged}` }, check);
 }
 
