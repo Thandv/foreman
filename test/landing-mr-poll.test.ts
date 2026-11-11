@@ -505,6 +505,30 @@ test('an approval in a project that requires squash or runs merge trains is refu
   }
 });
 
+test('a daemon restart with an MR open sends the ticket back to the gate; land-clear does not release its dependent', async (t) => {
+  const f = await fixture(t, { pipeline: 'manual' });
+  useLanding(new Landing([f.map], null), f.home);
+  const dbPath = `${f.home}/foreman.db`;
+  const before = new Store(dbPath);
+  const a = parked(before, f.repo, 'work');
+  const child = before.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: f.repo, deps: [a.id] });
+  assert.equal((await approve(before, a.id)).merge.code, 'mr-opened');
+  // The daemon stops with the MR open: its pending table goes with it.
+  before.close();
+  useLanding(null, f.home);
+  useLanding(new Landing([f.map], null), f.home);
+  assert.equal(pendingMr(a.id), undefined);
+  const store = new Store(dbPath);
+  t.after(() => store.close());
+  store.adoptInterruptedLandings();
+  assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
+  assert.match(store.getTask(a.id)!.error ?? '', /daemon restarted while its merge request !1 was open/);
+  assert.equal(store.landInterrupted(f.repo)?.taskId, a.id, 'the repo is still held for a look');
+  assert.ok(store.clearLandInterrupted(f.repo));
+  store.reconcileBlocked();
+  assert.equal(store.getTask(child.id)!.status, 'blocked', 'not released onto a main without the change');
+});
+
 test('a throwing forge adapter is recorded against the stage, and the tick still dispatches', { timeout: 20_000 }, async (t) => {
   const f = await fixture(t);
   const { store, a } = await opened(t, f);
