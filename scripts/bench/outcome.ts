@@ -53,6 +53,20 @@ export function parseSuiteLog(text: string): SuiteRun[] {
 }
 
 /**
+ * How many runs were the own checks of tickets that wrote `unlanded` and never merged: a ticket's own check holds only
+ * its file. A post-merge checkout that holds such a file anyway is a post-merge check and is not counted.
+ */
+export function ownChecksOf(runs: SuiteRun[], unlanded: string[]): number {
+  return runs.filter((r) => r.files.length === 1 && unlanded.includes(r.files[0]!)).length;
+}
+
+/** How a red reads against the bad last ticket; a culprit that never merged cannot be named. */
+export function redReading(red: { culpritLanded: boolean; named: string[]; attributed: boolean }): string {
+  if (!red.culpritLanded) return 'culprit not landed';
+  return `${red.attributed ? 'culprit' : 'NOT the culprit'} among ${red.named.length}`;
+}
+
+/**
  * How long after `mergedAt` a post-merge check first covered the ticket that wrote `file`: the first suite run to end
  * at or after the merge in a checkout that held the file. A ticket's own check holds the file too, but ends before the
  * merge. Undefined while no check has covered it.

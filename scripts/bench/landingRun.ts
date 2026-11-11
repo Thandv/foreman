@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { percentile } from '../../src/latency.ts';
-import { mergedToVerifiedMs, namedInRed, parseSuiteLog, perLanded } from './outcome.ts';
+import { mergedToVerifiedMs, namedInRed, ownChecksOf, parseSuiteLog, perLanded, type SuiteRun } from './outcome.ts';
 
 export interface LandingTarget {
   url: string;
@@ -39,8 +39,11 @@ interface Spread { p50: number; p95: number }
 export interface LandingResult {
   tickets: number;
   landed: number;
-  /** Fake suite runs (each ticket's own check, post-merge checks, re-runs) and per landed ticket. */
+  /** Fake suite runs: each ticket's own check, post-merge checks, re-runs. */
   suiteRuns: number;
+  /** Of suiteRuns, the own checks of tickets that did not land. */
+  unlandedOwnChecks: number;
+  /** suiteRuns less unlandedOwnChecks, per landed ticket. */
   suiteRunsPerLanded: number;
   /** Verify slots the workers' own wrapper runs were granted, per landed ticket; not in suiteRuns. */
   workerLeasesPerLanded: number;
@@ -53,8 +56,8 @@ export interface LandingResult {
   notLanded: Array<{ id: string; why: string }>;
   /** Landed tickets no check covered when the wait ended. */
   unverified: number;
-  /** The last ticket's change is bad: did a red name it, and how many tickets did the red name. */
-  red: { culprit: string; named: string[]; attributed: boolean };
+  /** The last ticket's change is bad: did it merge, did a red name it, and how many tickets did the red name. */
+  red: { culprit: string; culpritLanded: boolean; named: string[]; attributed: boolean };
   errors: string[];
 }
 
@@ -76,7 +79,10 @@ async function view(t: LandingTarget, id: string): Promise<TaskView> {
   return { status: json.task.status, events: json.events };
 }
 
-const spread = (ms: number[]): Spread => ({ p50: percentile([...ms].sort((a, b) => a - b), 0.5), p95: percentile([...ms].sort((a, b) => a - b), 0.95) });
+function spread(ms: number[]): Spread {
+  const sorted = [...ms].sort((a, b) => a - b);
+  return { p50: percentile(sorted, 0.5), p95: percentile(sorted, 0.95) };
+}
 
 /** The fake suite: waits suiteMs, logs when it ended and which ticket files it holds, and fails only in a post-merge checkout (foreman-main-*) that has bad.txt. */
 function fakeSuite(t: LandingTarget, suiteMs: number): { cmd: string; log: string } {
@@ -129,9 +135,10 @@ export async function runLanding(t: LandingTarget, plan: LandingPlan): Promise<L
   let verified: Array<number | undefined> = [];
   let named: string[] = [];
   let refused: boolean[] = [];
+  let runs: SuiteRun[] = [];
   for (;;) {
     views = await Promise.all(ids.map((id) => view(t, id)));
-    const runs = parseSuiteLog(fs.existsSync(suite.log) ? fs.readFileSync(suite.log, 'utf8') : '');
+    runs = parseSuiteLog(fs.existsSync(suite.log) ? fs.readFileSync(suite.log, 'utf8') : '');
     mergedAt = views.map((v) => v.events.find((e) => plan.merged.test(e.message))?.ts);
     verified = mergedAt.map((at, i) => (at === undefined ? undefined : mergedToVerifiedMs(runs, `ticket-${i}.txt`, at)));
     named = namedInRed(views.flatMap((v) => v.events.map((e) => e.message)));
@@ -147,19 +154,20 @@ export async function runLanding(t: LandingTarget, plan: LandingPlan): Promise<L
   const ends = verified.flatMap((v, i) => (v === undefined || mergedAt[i] === undefined ? [] : [mergedAt[i]! + v]));
   const span = ends.length ? Math.max(...ends) - approvedAt[0]! : 0;
   const leases = plan.leasesFile && fs.existsSync(plan.leasesFile) ? fs.readFileSync(plan.leasesFile, 'utf8').split('\n').filter((l) => l !== '').length : 0;
-  const suiteRuns = parseSuiteLog(fs.existsSync(suite.log) ? fs.readFileSync(suite.log, 'utf8') : '').length;
+  const unlandedOwnChecks = ownChecksOf(runs, ids.flatMap((_, i) => (mergedAt[i] === undefined ? [`ticket-${i}.txt`] : [])));
   return {
     tickets: plan.tickets,
     landed,
-    suiteRuns,
-    suiteRunsPerLanded: perLanded(suiteRuns, landed),
+    suiteRuns: runs.length,
+    unlandedOwnChecks,
+    suiteRunsPerLanded: perLanded(runs.length - unlandedOwnChecks, landed),
     workerLeasesPerLanded: perLanded(leases, landed),
     landingsPerHour: span > 0 ? Math.round((ends.length / span) * 3_600_000) : 0,
     approveToMergedMs: spread(mergedAt.flatMap((at, i) => (at === undefined ? [] : [at - approvedAt[i]!]))),
     mergedToVerifiedMs: spread(verified.filter((v): v is number => v !== undefined)),
     notLanded: ids.flatMap((id, i) => (refused[i] ? [{ id, why: views[i]!.events.findLast((e) => e.message.startsWith('merge: '))?.message.slice(0, 160) ?? views[i]!.status }] : [])),
     unverified: good.filter((i) => mergedAt[i] !== undefined && verified[i] === undefined).length,
-    red: { culprit: ids[last]!, named, attributed: named.includes(ids[last]!) },
+    red: { culprit: ids[last]!, culpritLanded: mergedAt[last] !== undefined, named, attributed: named.includes(ids[last]!) },
     errors,
   };
 }

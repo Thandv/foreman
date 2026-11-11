@@ -13,6 +13,7 @@ import { count, options, scratch } from './env.ts';
 import { forgeFixture } from './api.ts';
 import { startDaemon } from './daemon.ts';
 import { runLanding, type LandingPlan, type LandingResult } from './landingRun.ts';
+import { redReading } from './outcome.ts';
 import { workerCommand } from './worker.ts';
 import { startFakeGitlab } from '../forge/fakeGitlab.ts';
 import { randomBytes } from 'node:crypto';
@@ -90,7 +91,7 @@ if (json) {
     console.log([
       c.scenario, c.mode, `${c.landed}/${c.tickets}`, c.suiteRunsPerLanded, c.workerLeasesPerLanded, c.landingsPerHour,
       `${c.approveToMergedMs.p50}/${c.approveToMergedMs.p95}`, `${c.mergedToVerifiedMs.p50}/${c.mergedToVerifiedMs.p95}`,
-      c.unverified, `${c.red.attributed ? 'culprit' : 'NOT the culprit'} among ${c.red.named.length}`,
+      c.unverified, redReading(c.red),
     ].join('\t'));
     if (c.notLanded.length) console.log(`  ${c.notLanded.length} not landed, the first: ${c.notLanded[0]!.why}`);
     for (const e of c.errors) console.log(`  error: ${e}`);

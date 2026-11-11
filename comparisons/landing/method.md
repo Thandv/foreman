@@ -21,7 +21,10 @@ tickets in one repo, parked at the gate, then approved through the API:
   `FOREMAN_POSTMERGE_MODE=per-merge`. **after**: `targeted` and `coalesced`.
 - The suite is a command that waits 900 ms and logs when it ended and which ticket files its checkout held. Suite runs per
   landed ticket count its log lines (each ticket's own check, post-merge checks, re-runs) over the tickets that landed;
-  the workers' wrapper runs are counted apart.
+  the workers' wrapper runs are counted apart. The bench now leaves out the own checks of tickets that did not land
+  (`unlandedOwnChecks`); `raw.json` and the harness `result.json` were written before that and count them, which only
+  changes the cells with tickets not landed: the `mr` cells (21 stored, 2 without them) and the harness's 3a6712a cell
+  (2.47 stored, 32 runs over 15 landed = 2.13 without the 5 conflicted tickets' own checks).
 - The last ticket's change is bad and turns the suite red in a post-merge checkout only.
 
 ## Read these caveats first
@@ -35,7 +38,9 @@ tickets in one repo, parked at the gate, then approved through the API:
    to 1.45 suite runs per landed ticket. In the steady run a check ends before the next merge, so there is little to
    share: 2.05 to 1.9, and merged-to-verified is longer under `coalesced` (about 1.5 s against 1.0 s) because a merge that
    arrives while a check runs waits for the next one.
-3. **Red attribution.** With one bad change last, both modes' red names the culprit. Under `coalesced` the red can name
+3. **Red attribution.** With one bad change last, both modes' red names the culprit. On 3a6712a the bad last ticket was
+   one of the 5 whose merge conflicted, so it never merged and no red could name it: the harness verdict's "does NOT
+   name the culprit among 0 task(s)" means the culprit did not land (the bench now reports `culprit not landed`). Under `coalesced` the red can name
    every ticket one check covered (two in the harness run), because bisecting a red batch is not built yet.
 4. **Merged-to-verified is read from the suite's own log**: the first run to end after the merge in a checkout that held
    the ticket's file. A ticket's own check holds its file but ends before it merges, so it cannot be mistaken for the
