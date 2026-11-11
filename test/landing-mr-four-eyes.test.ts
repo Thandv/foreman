@@ -110,3 +110,19 @@ test('a refusal note the forge does not take is a warning; still no merge call, 
   assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
   assert.equal(pendingMr(a.id), undefined);
 });
+
+test('a ticket that leaves done while four-eyes is asked again gets no merge call', async (t) => {
+  const { f, store, a, tip, poll } = await opened(t, true);
+  const live = store.livePrincipal.bind(store);
+  store.livePrincipal = (id) => {
+    store.setStatus(a.id, 'queued');
+    return live(id);
+  };
+  await pipelinePasses(f, tip);
+  await poll();
+  assert.equal(merges(f.fake), 0, 'no merge call');
+  assert.equal(pendingMr(a.id), undefined, 'the entry is dropped');
+  assert.equal(store.getTask(a.id)!.status, 'queued');
+  assert.equal(store.isLanding(a.id), false);
+  assert.equal(landingRows(store), 0);
+});
