@@ -187,6 +187,36 @@ test('a red covering two merges names both in one event, ends both holds, and a 
   assert.equal(store.getTask(b.child.id)!.status, 'queued');
 }));
 
+test('a red check while the next landing\'s check runs: the red re-check does not run a second check of the same HEAD', { timeout: 60_000 }, withStore(async (store, dir) => {
+  const first = parked(store, dir, 'first', 'npm test');
+  const next = parked(store, dir, 'next', 'npm test');
+  const tracker = new ApprovalTracker();
+  const { mainCheck, called } = heldChecks();
+  const outs = [await applyApproval(store, first.task.id, { principal: 'operator', tracker, mainCheck })];
+  const c1 = await called(1);
+  outs.push(await applyApproval(store, next.task.id, { principal: 'operator', tracker, mainCheck }));
+  c1.finish(false);
+  // The landing queue's check of the newer HEAD runs; the repo is red at the older one.
+  const c2 = await called(2);
+  assert.equal(c2.head, mergeOf(dir, next.task.id));
+  assert.equal(store.repoRed(dir)!.head, mergeOf(dir, first.task.id));
+  let rechecks = 0;
+  const sched = new Scheduler(store, {
+    tickMs: 5, verifyEnabled: false, maxWorkers: 1,
+    checkMain: async () => { rechecks++; return { ok: false, head: c2.head, cmd: 'npm test', tail: 'boom', firstTail: '' }; },
+  });
+  try {
+    sched['recheckRedRepos']();
+    while (sched['redChecking'].size > 0) await new Promise<void>((r) => setImmediate(r));
+  } finally {
+    await sched.stop();
+  }
+  assert.equal(rechecks, 0, 'the landing queue\'s check covers that HEAD');
+  c2.finish(false);
+  for (const out of outs) await checked(out);
+  assert.equal(store.repoRed(dir)!.head, c2.head, 'red at the newer HEAD, so the next re-check waits for HEAD to move');
+}));
+
 test('shutdown during a coalesced check: the interrupted marker names every covered task and their holds end', { timeout: 60_000 }, withStore(async (store, dir) => {
   const first = parked(store, dir, 'first', 'npm test');
   const a = parked(store, dir, 'a', 'npm test');
