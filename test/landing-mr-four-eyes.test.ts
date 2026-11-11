@@ -173,3 +173,48 @@ test('four-eyes is asked in the merge\'s turn: an approver disabled while anothe
   assert.match(store.getTask(second.id)!.error ?? '', /approved, but not landed: four-eyes: only a signed-in person can approve or land work/);
   assert.equal(pendingMr(second.id), undefined);
 });
+
+test('the repo hold is read in the merge\'s turn: a repo held while another merge into the target runs gets no merge call', async (t) => {
+  const f = await fixture(t);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const first = parked(store, f.repo, 'first');
+  const second = parked(store, f.repo, 'second');
+  useLanding(new Landing([f.map], null), f.home);
+  for (const task of [first, second]) {
+    const out = await approve(store, task.id);
+    assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  }
+  // The first MR's merge call runs until `finish`; the second MR waits its turn behind it.
+  let finish!: () => void;
+  const running = new Promise<void>((r) => { finish = r; });
+  let called!: () => void;
+  const firstCalled = new Promise<void>((r) => { called = r; });
+  useLanding(new (class extends Landing {
+    override forge(m: LandingMapping): Forge {
+      const real = super.forge(m);
+      const merge = real.merge.bind(real);
+      real.merge = async (project, iid, sha) => {
+        if (iid === 1) { called(); await running; }
+        return merge(project, iid, sha);
+      };
+      return real;
+    }
+  })([f.map], null), f.home);
+  let now = Date.now();
+  const poll = (): Promise<void> => pollMergeRequests(store, now += config.mrPollMs, (err) => { throw err; }, postMerge());
+  await pipelinePasses(f, git(f.repo, 'rev-parse', 'first'));
+  const polls = [poll()];
+  await firstCalled;
+  await pipelinePasses(f, git(f.repo, 'rev-parse', 'second'));
+  polls.push(poll());
+  // Long enough for the second poll to read its MR and reach the queue.
+  await new Promise((r) => setTimeout(r, 1000));
+  // As a merge that cannot be confirmed, or a checkout not synced, holds the repo.
+  store.holdLanding(f.repo, first.id, 'held for the test', 0);
+  finish();
+  await Promise.all(polls);
+  assert.equal(merges(f.fake), 1, 'only the first MR got a merge call');
+  assert.equal(store.getTask(second.id)!.status, 'done', 'the second MR waits for land-clear');
+  assert.ok(pendingMr(second.id), 'the second MR is still followed');
+});
