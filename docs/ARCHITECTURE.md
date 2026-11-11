@@ -34,6 +34,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 | `src/assistant/planCheck.ts` | Checks a plan before it is queued. |
 | `src/runners/cliRunners.ts` | Runs the external model CLIs as workers. |
 | `src/backup.ts` | Daily database backup and restore. |
+| `src/landing/mr.ts` | Merge-request landing: opens or reuses the MR at the reviewed commit, polls each open MR, makes the merge call (one turn at a time per target branch, lasting until the merge is confirmed and the checkout synced), sends refused or stale MRs back to the gate, and holds the repo when a merge cannot be confirmed or synced. |
 
 Boundaries:
 
