@@ -270,9 +270,10 @@ async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
 async function decide(store: Store, mr: Entry, forge: Forge, project: string, requirePipeline: boolean): Promise<Step> {
   const seen = await forge.getMr(project, mr.iid);
   if (seen.state === 'merged') return { confirm: seen.mergeCommitSha };
-  if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
-  if (seen.state !== 'opened') return { wait: `the merge request is ${seen.state}` };
+  if (seen.state !== 'opened' && seen.state !== 'closed') return { wait: `the merge request is ${seen.state}` };
+  // An open or closed MR shows that no merge call of Foreman's merged it.
   mr.mergeCalled = false;
+  if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
   if (seen.headSha !== mr.tip) return { gate: `MR head moved after review: !${mr.iid} is at ${seen.headSha}, not ${mr.tip}` };
   const pipeline = seen.pipeline?.sha === mr.tip ? seen.pipeline : null;
   if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
