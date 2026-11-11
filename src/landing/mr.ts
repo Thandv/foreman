@@ -24,7 +24,7 @@ import { checkMrLanding, type PostMergeRun } from './verify.ts';
  * leaves the marker, and the next start holds the repo for the operator (Store.adoptInterruptedLandings).
  */
 
-/** An MR opened for an approval and not merged yet. */
+/** An MR opened for an approval, polled until its merge is synced into the checkout or the repo is held for the operator. */
 export interface PendingMr {
   taskId: string;
   runId: string;
@@ -40,12 +40,6 @@ export interface PendingMr {
   /** The durable landing marker (Store.openLanding) the MR holds open. */
   marker: number;
   openedAt: number;
-  /**
-   * 'open' while it is polled; 'merged' once the forge merged it and the mirror confirmed the merge commit `merged`,
-   * while the checkout is synced to it. The entry is let go once synced, or once the repo is held for the operator.
-   */
-  phase: 'open' | 'merged';
-  merged: string | null;
 }
 
 /** The poller's own state for an entry. */
@@ -197,7 +191,7 @@ export async function openForApproval(
     }
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, checkout: task.repo!, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
-      phase: 'open', merged: null, polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
+      polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
       fourEyes: opts.fourEyes,
     });
     return { merged: false, code: 'mr-opened', reason: `opened !${mr.iid} ${mr.webUrl}`, branch, ...(note ? { note } : {}) };
@@ -224,7 +218,7 @@ type Step = { wait: string } | { gate: string } | { confirm: string | null };
 export function pollMergeRequests(store: Store, now: number, onError: (err: unknown) => void, check: PostMergeRun): Promise<void> {
   const started: Promise<void>[] = [];
   for (const mr of pending.values()) {
-    if (mr.phase !== 'open' || mr.polling || now - mr.polledAt < config.mrPollMs) continue;
+    if (mr.polling || now - mr.polledAt < config.mrPollMs) continue;
     if (left(store, mr)) continue;
     mr.polledAt = now;
     mr.polling = true;
@@ -344,8 +338,6 @@ async function settle(store: Store, mr: Entry, merged: string | null, map: Landi
     store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request !${mr.iid} merged on the forge while the ticket is ${status}` });
   }
   if (merged === null) return hold(store, mr, `merge request !${mr.iid} merged, but the merged commit is not the reviewed commit ${mr.tip}`);
-  mr.phase = 'merged';
-  mr.merged = merged;
   store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merged !${mr.iid} at ${merged}` });
   const unsynced = await withRepoMergeSection(mr.checkout, () => syncCheckout(store, mr, map, merged))
     .catch((err: Error) => `checkout not synced to ${merged}: ${err.message.slice(0, 300)}`);

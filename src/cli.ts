@@ -54,7 +54,8 @@ const USAGE = `foreman — parallel agent mission control
   foreman hold --reason <text>            claim no new work; running work, the gate, reconcile and re-checks go on
                                           (in memory: a daemon restart clears it)
   foreman resume                          lift the hold; the next tick claims new work again
-  foreman land-clear <repo>               release a repo a crash left mid-merge, once you have checked its checkout
+  foreman land-clear <repo>               release a repo a crash left mid-merge, or a merge request left unsynced,
+                                          once you have checked its checkout
   foreman add <title> --prompt <text>     queue a task
         [--kind code|writing|research|general] [--runner echo|shell|claude-code|codex-cli|api]
         [--repo <path>] [--priority N] [--after <id>[,<id>]] [--sensitivity S0|S1|S2]

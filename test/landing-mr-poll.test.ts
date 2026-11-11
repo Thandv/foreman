@@ -317,7 +317,7 @@ test('a forge merge whose confirm fails after the ticket is reopened keeps the h
   const poll = poller(store);
   await poll();
   assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip, 'the forge merged the reviewed commit');
-  assert.equal(pendingMr(a.id)?.phase, 'open', 'still followed');
+  assert.notEqual(pendingMr(a.id), undefined, 'still followed');
   assert.equal(store.isLanding(a.id), true, 'the hold stays');
   assert.equal(landingRows(store), 1, 'the marker stays');
   await poll();
@@ -414,7 +414,7 @@ test('a throwing forge adapter is recorded against the stage, and the tick still
     assert.notEqual(store.getTask(queued.id)!.status, 'queued', 'claimed in the same tick');
     assert.equal(await failed, 'scheduler tick failed in pollMergeRequests: adapter boom');
     assert.equal(sched.tickStageErrors().get('pollMergeRequests'), 1, 'counted against the stage');
-    assert.equal(pendingMr(a.id)!.phase, 'open', 'still pending, polled again next time');
+    assert.notEqual(pendingMr(a.id), undefined, 'still pending, polled again next time');
   } finally {
     await sched.stop();
   }
@@ -470,6 +470,6 @@ test('a merge GitLab refuses while its status is still settling is waited for, n
   });
   await poller(store)();
   assert.equal(store.getTask(a.id)!.status, 'done', 'not bounced');
-  assert.equal(pendingMr(a.id)!.phase, 'open');
+  assert.notEqual(pendingMr(a.id), undefined);
   assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab reports checking'));
 });
