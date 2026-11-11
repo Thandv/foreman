@@ -674,3 +674,37 @@ test('a merge GitLab refuses while its status is still settling is waited for, n
   assert.notEqual(pendingMr(a.id), undefined);
   assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab reports checking'));
 });
+
+test('a merge GitLab refuses while its status reads mergeable is tried once more before the ticket goes back to the gate', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '406 Branch cannot be merged' });
+  });
+  const poll = poller(store);
+  await poll();
+  assert.equal(store.getTask(a.id)!.status, 'done', 'not bounced on the first refusal');
+  assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab refused the merge while reporting mergeable; trying once more'));
+  await poll();
+  atGate(store, a, /GitLab did not merge !1: 406 Branch cannot be merged/);
+});
+
+test('MRs into one target merge one at a time: overlapping merges GitLab would refuse all land, none back at the gate', { timeout: 30_000 }, async (t) => {
+  const f = await fixture(t, { pipeline: 'success', refuseOverlappingMerges: true, recheckAfterMerge: true, checkingMs: 100 });
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const tasks = ['m1', 'm2', 'm3'].map((b) => parked(store, f.repo, b));
+  for (const task of tasks) assert.equal((await approve(store, task.id)).merge.code, 'mr-opened');
+  const poll = poller(store);
+  for (let i = 0; i < 20 && tasks.some((task) => pendingMr(task.id) !== undefined); i++) {
+    await poll();
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  for (const task of tasks) {
+    assert.equal(store.getTask(task.id)!.status, 'done', `${task.id}: ${store.getTask(task.id)!.error}`);
+    assert.ok(!messages(store, task).some((m) => /back to the gate/.test(m)), task.id);
+    assert.equal(pendingMr(task.id), undefined, task.id);
+  }
+  assert.equal(git(f.forge, 'log', '--merges', '--format=%H', 'main').split('\n').length, 3, 'three merge commits');
+});

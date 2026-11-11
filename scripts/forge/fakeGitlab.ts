@@ -32,6 +32,16 @@ export interface FakeGitlabOptions {
    * refreshes an existing MR's head in a background job, so a read just after a push can still show the old commit.
    */
   refreshDelayMs?: number;
+  /**
+   * A merge call that arrives while another merge into the same target branch runs is answered 406 at once, instead
+   * of waiting its turn (default false). Real GitLab can refuse two merges into one target that overlap.
+   */
+  refuseOverlappingMerges?: boolean;
+  /**
+   * After a merge, every other open MR into the same target reads 'unchecked' for checkingMs (default false), as
+   * GitLab rechecks them when the target moves.
+   */
+  recheckAfterMerge?: boolean;
   /** New pipelines: 'success' after pipelineDelayMs, 'failed' at once, or 'manual' (left running). Default 'success'. */
   pipeline?: PipelinePolicy;
   pipelineDelayMs?: number;
@@ -56,6 +66,8 @@ interface MergeRequest {
   state: 'opened' | 'merged' | 'closed'; sha: string; checkingUntil: number; mergeCommitSha: string | null;
   /** A head pushed but not yet taken into `sha` (refreshDelayMs), and when it was first seen. */
   seenHead?: string; seenAt?: number;
+  /** recheckAfterMerge: detailed_merge_status reads 'unchecked' until then. */
+  uncheckedUntil?: number;
 }
 interface Project { id: number; path: string; bare: string; mrs: MergeRequest[] }
 
@@ -88,6 +100,8 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
   let url = '';
   // Merges rewrite a branch, so they run one at a time.
   let mergeChain: Promise<unknown> = Promise.resolve();
+  /** "project\0target" of each merge running (refuseOverlappingMerges). */
+  const merging = new Set<string>();
 
   const pipelineFor = (sha: string): Pipeline => {
     let p = pipelines.get(sha);
@@ -113,6 +127,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
   const mergeStatus = (mr: MergeRequest): string => {
     if (mr.state !== 'opened') return 'not_open';
     if (Date.now() < mr.checkingUntil) return 'checking';
+    if (Date.now() < (mr.uncheckedUntil ?? 0)) return 'unchecked';
     if (!requirePipeline) return 'mergeable';
     const status = pipelineStatus(pipelineFor(mr.sha));
     return status === 'success' ? 'mergeable' : status === 'running' ? 'ci_still_running' : 'ci_must_pass';
@@ -214,14 +229,26 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
       return { id: nextNoteId++, body: text, noteable_type: 'MergeRequest', noteable_iid: mr.iid };
     }
     if (rest.length === 3 && rest[2] === 'merge' && method === 'PUT') {
+      const key = `${project.path}\0${mr.target}`;
+      if (opts.refuseOverlappingMerges) {
+        if (merging.has(key)) throw new HttpError(406, 'Branch cannot be merged: another merge into the target branch is in progress');
+        merging.add(key);
+      }
       const run = async (): Promise<unknown> => {
-        await observe(project, mr);
-        if (mr.state !== 'opened') throw new HttpError(405, 'Method Not Allowed');
-        if (query.has('sha') && query.get('sha') !== mr.sha) throw new HttpError(409, 'SHA does not match HEAD of source branch');
-        if (mergeStatus(mr) !== 'mergeable') throw new HttpError(405, 'Method Not Allowed');
-        mr.mergeCommitSha = await merge(project, mr);
-        mr.state = 'merged';
-        return view(project, mr);
+        try {
+          await observe(project, mr);
+          if (mr.state !== 'opened') throw new HttpError(405, 'Method Not Allowed');
+          if (query.has('sha') && query.get('sha') !== mr.sha) throw new HttpError(409, 'SHA does not match HEAD of source branch');
+          if (mergeStatus(mr) !== 'mergeable') throw new HttpError(405, 'Method Not Allowed');
+          mr.mergeCommitSha = await merge(project, mr);
+          mr.state = 'merged';
+          if (opts.recheckAfterMerge) {
+            for (const other of project.mrs) if (other.state === 'opened' && other.target === mr.target) other.uncheckedUntil = Date.now() + checkingMs;
+          }
+          return view(project, mr);
+        } finally {
+          merging.delete(key);
+        }
       };
       const result = mergeChain.then(run, run);
       mergeChain = result.catch(() => undefined);
