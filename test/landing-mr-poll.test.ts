@@ -5,7 +5,7 @@ import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { config } from '../src/config.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
-import type { Forge } from '../src/landing/forge.ts';
+import { ForgeError, type Forge } from '../src/landing/forge.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
 import { ForgeMirror, MirrorError } from '../src/landing/push.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
@@ -212,6 +212,46 @@ test('a ticket reopened while Foreman\'s merge call is in flight still has the m
   assert.ok(messages(store, a).includes(`merged !1 at ${m}; checkout sync pending`));
   assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
   assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
+});
+
+test('a merge Foreman made whose answer was lost is confirmed after the ticket is reopened, not dropped', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, tip } = await opened(t, f);
+  patch(f, (forge) => {
+    const merge = forge.merge.bind(forge);
+    forge.merge = async (project, iid, sha) => {
+      await merge(project, iid, sha);
+      throw new ForgeError('no answer within 15000 ms');
+    };
+  });
+  const poll = poller(store);
+  await poll();
+  assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip, 'the forge merged the reviewed commit');
+  assert.ok(messages(store, a).includes('merge request !1 waiting: no answer within 15000 ms'));
+  store.setStatus(a.id, 'queued');
+  await poll();
+  const m = git(f.forge, 'rev-parse', 'main');
+  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
+  assert.equal(store.isLanding(a.id), true, 'the hold stays until the checkout is synced');
+  assert.equal(landingRows(store), 0, 'the marker closes once confirmed');
+  assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
+  assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
+});
+
+test('a merge call whose answer was lost and that did not merge is dropped once the MR reads open after a reopen', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    forge.merge = async () => { throw new ForgeError('no answer within 15000 ms'); };
+  });
+  const poll = poller(store);
+  await poll();
+  store.setStatus(a.id, 'queued');
+  await poll();
+  assert.equal(pendingMr(a.id), undefined, 'the entry is dropped');
+  assert.equal(store.isLanding(a.id), false);
+  assert.equal(landingRows(store), 0);
+  assert.ok(messages(store, a).includes('merge request !1 no longer followed: the ticket is queued; no merge made by Foreman'));
 });
 
 test('a forge merge whose confirm fails after the ticket is reopened keeps the hold and the marker until it is confirmed', async (t) => {
