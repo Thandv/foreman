@@ -7,6 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { ApprovalTracker, applyApproval } from '../src/gate.ts';
 import { Landing } from '../src/landing/config.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
 import { pollMergeRequests, useLanding } from '../src/landing/mr.ts';
@@ -60,9 +61,13 @@ const landedRows = (store: Store, taskId: string): number =>
  * A mapped ticket approved into an open MR, then given back to the gate (its MR no longer followed): the state a
  * person who merges the MR on the forge by hand leaves behind. Returns the MR's head, the reviewed commit.
  */
-async function approvedThenBackAtGate(f: Fixture, store: Store, branch: string): Promise<{ taskId: string; tip: string }> {
-  const task = parked(store, f.repo, branch);
-  const out = await approve(store, task.id);
+async function approvedThenBackAtGate(
+  f: Fixture, store: Store, branch: string, people?: { author: string; approver: string },
+): Promise<{ taskId: string; tip: string }> {
+  const task = parked(store, f.repo, branch, people ? { createdBy: people.author } : {});
+  const out = people
+    ? await applyApproval(store, task.id, { principal: people.approver, tracker: new ApprovalTracker() })
+    : await approve(store, task.id);
   assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
   store.setStatus(task.id, 'awaiting-approval', 'given back');
   await pollMergeRequests(store, Date.now(), (err) => { throw err; });
@@ -158,4 +163,19 @@ test('an MR merged with one more commit pushed onto its branch is refused: the h
   assert.match(String(res.json['error']), /this repo lands through its merge request.*not the reviewed tree/);
   assert.equal(landedRows(r.store, taskId), 0);
   assert.equal(r.store.getTask(taskId)!.status, 'awaiting-approval');
+});
+
+test('with auth on, the second person hand-lands a merged MR and is the actor of record', async (t) => {
+  const f = await fixture(t);
+  useLanding(new Landing([f.map], null), f.home);
+  const r = await rig(t);
+  const alice = mint(r.store, 'alice');
+  const bob = mint(r.store, 'bob');
+  const { taskId, tip } = await approvedThenBackAtGate(f, r.store, 'auth', { author: alice.id, approver: bob.id });
+  await mergeOnForge(f, tip);
+
+  const res = await r.landed(taskId, tip, bob.token);
+  assert.equal(res.status, 200, JSON.stringify(res.json));
+  const rows = r.store.decisionsForTask(taskId).filter((d) => d.action === 'landed');
+  assert.deepEqual(rows.map((d) => d.actorId), [bob.id]);
 });
