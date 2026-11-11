@@ -1,6 +1,8 @@
 import './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { config } from '../src/config.ts';
@@ -720,4 +722,33 @@ test('MRs into one target merge one at a time: overlapping merges GitLab would r
   }
   assert.equal(git(f.forge, 'log', '--merges', '--format=%H', 'main').split('\n').length, 3, 'three merge commits');
   assert.equal(most, 1, 'never two merge calls into main at once');
+});
+
+test('an MR GitLab reads as conflict or need_rebase goes back to the gate at once: only a new head can fix it', async (t) => {
+  for (const status of ['conflict', 'need_rebase']) {
+    const f = await fixture(t, { pipeline: 'success' });
+    const { store, a } = await opened(t, f);
+    patch(f, (forge) => {
+      const getMr = forge.getMr.bind(forge);
+      forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), mergeStatus: status });
+    });
+    await poller(store)();
+    assert.equal(merges(f).length, 0, 'no merge call');
+    atGate(store, a, new RegExp(`GitLab reports ${status}: the merge request conflicts with main or needs a rebase; rework it, then approve again`));
+  }
+});
+
+test('the fake reads an MR that no longer merges cleanly into its target as conflict, as GitLab does', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  // Another change into main writes the same new file as the ticket's commit.
+  git(f.repo, 'checkout', '-q', '-b', 'other', 'main');
+  fs.writeFileSync(path.join(f.repo, 'work.txt'), 'other\n');
+  git(f.repo, 'add', 'work.txt');
+  git(f.repo, 'commit', '-qm', 'other writes work.txt');
+  git(f.repo, 'checkout', '-q', 'main');
+  git(f.repo, 'push', '-q', f.forge, 'other:main');
+  await poller(store)();
+  assert.equal(merges(f).length, 0, 'no merge call');
+  atGate(store, a, /GitLab reports conflict/);
 });
