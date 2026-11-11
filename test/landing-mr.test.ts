@@ -309,3 +309,22 @@ test('with auth off the note names the reserved actor and the recorded author', 
     ['Foreman-Approved-By: operator', 'Foreman-Author: operator', `Foreman-Decision: ${out.decision!.id}`],
   ]);
 });
+
+test('the MR title names the task first, so a ticket title GitLab reads as a draft or one too long still opens a ready MR', async (t) => {
+  const f = await fixture(t);
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  for (const [branch, title] of [['drafted', 'Draft: add page'], ['bracketed', '[draft] add page'], ['long', `x${'y'.repeat(300)}\nsecond line`]] as const) {
+    const a = parked(store, f.repo, branch);
+    store.db.prepare('UPDATE tasks SET title = ? WHERE id = ?').run(title, a.id);
+    const out = await approve(store, a.id);
+    assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+    const open = f.fake.requests.filter((r) => r.method === 'POST' && /\/merge_requests$/.test(r.path)).at(-1)!;
+    const sent = (JSON.parse(open.body!) as { title: string }).title;
+    assert.ok(sent.startsWith(`Foreman ${a.id}: `), sent);
+    assert.doesNotMatch(sent, /^\s*(draft:|\[draft\]|\(draft\))/i);
+    assert.ok([...sent].length <= 255, `${[...sent].length} characters`);
+    assert.doesNotMatch(sent, /\n/);
+  }
+});
