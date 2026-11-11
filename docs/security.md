@@ -80,7 +80,8 @@
   minted, and tasks with no recorded creator (from schedules, standing asks, improvements) cannot be approved once
   there are two.
 - The approver of record on a merge request (`FOREMAN_LANDING=mr`) is Foreman's approve decision, not GitLab: GitLab
-  shows the cell's service account, whose token only the daemon holds, and Foreman never calls GitLab's MR approve.
+  shows the user of Foreman's GitLab token, which is in Foreman's secrets directory (readable by an unsandboxed worker,
+  see [The GitLab token](#the-gitlab-token-foreman_landingmr) below), and Foreman never calls GitLab's MR approve.
   Once an approval opens or reuses its MR, Foreman posts one note on it with the reviewed tree and the trailers
   `Foreman-Approved-By: <name> (<principal id>)` (the reserved id, such as `operator`, while auth is off),
   `Foreman-Author: <creator's name>` and `Foreman-Decision: <decision id>`; the decision's `extra` keeps the MR's

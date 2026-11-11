@@ -81,7 +81,7 @@ export function pendingMr(taskId: string): PendingMr | undefined {
 }
 
 /**
- * Who approved an MR landing, as Foreman's approve decision names them. GitLab shows the cell's service account as
+ * Who approved an MR landing, as Foreman's approve decision names them. GitLab shows the user of Foreman's token as
  * whoever merges; this is the person of record.
  */
 export interface ApproverOfRecord {

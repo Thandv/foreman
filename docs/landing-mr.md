@@ -54,7 +54,24 @@ yourself. `--check` answers the pipeline at once and does not pause: the suite r
 
 ## Against a real GitLab
 
-The demo only talks to the fake. To try the real thing, map a throwaway repo and project in `landing.json`, put the token
+The demo only talks to the fake. None of this has been run against a real GitLab yet.
+
+### What the GitLab side needs
+
+- GitLab 15.6 or later: the adapter reads `detailed_merge_status` and refuses an MR without it.
+- A token whose user may create, read, comment on and merge MRs (scope `api`; GitLab has no narrower scope for
+  merging) and push over https (scope `write_repository`, for an https `pushUrl`). A project access token's bot user
+  is the usual choice.
+- That user may merge into the target branch (on a protected branch, Maintainer by default) and push and force-push
+  `foreman/*`. Without merge rights GitLab answers the merge call with 401, and the ticket goes back to the gate with
+  that message.
+- Merge method `merge` (not fast-forward or semi-linear), squash not required, and no merged results pipelines or
+  merge trains. `foreman doctor` FAILs a project that breaks one of these, and an approval there is refused.
+- No required GitLab approval rules: Foreman never approves on GitLab, so such an MR waits for a person to approve it
+  on GitLab, or for `FOREMAN_MR_TIMEOUT_MIN`.
+- `pushUrl` is the same project as `project`, not a fork.
+
+To try it, map a throwaway repo and project in `landing.json`, put the token
 in `<FOREMAN_HOME>/secrets/gitlab-token` (mode 0600), run `foreman doctor`, and sign two people in
 (`foreman token create --host-admin --name <name>`) before approving.
 
