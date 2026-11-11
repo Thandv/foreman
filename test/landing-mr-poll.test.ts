@@ -284,3 +284,59 @@ test('a throwing forge adapter is recorded against the stage, and the tick still
     await sched.stop();
   }
 });
+
+test('a merge commit the target no longer reaches keeps the hold and the marker', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, tip, main } = await opened(t, f);
+  assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).merge('group/app', 1, tip)).merged, true);
+  await new Landing([f.map], null).mirror(f.map, f.home).fetchTarget();
+  git(f.forge, 'update-ref', 'refs/heads/main', main);
+  await poller(store)();
+  assert.equal(pendingMr(a.id)!.phase, 'held', 'the merge commit is in the mirror and its ^2 is the tip, but it is not on the target');
+  assert.ok(messages(store, a).some((m) => /^merge request !1 merged, but the merged commit is not the reviewed commit /.test(m)));
+  assert.equal(store.isLanding(a.id), true);
+  assert.equal(landingRows(store), 1, 'the marker stays');
+});
+
+test('an MR closed on the forge sends the ticket back to the gate', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), state: 'closed' });
+  });
+  await poller(store)();
+  assert.equal(merges(f).length, 0);
+  atGate(store, a, /merge request !1 was closed on the forge/);
+});
+
+test('a mapping that does not require a pipeline merges an MR with none', async (t) => {
+  const f = await fixture(t, { requirePipeline: false });
+  f.map = { ...f.map, requirePipeline: false };
+  const { store, a, tip } = await opened(t, f);
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), pipeline: null });
+  });
+  await poller(store)();
+  assert.deepEqual(merges(f).map((r) => r.query), [{ sha: tip }]);
+  assert.equal(pendingMr(a.id)!.phase, 'merged');
+});
+
+test('a merge GitLab refuses while its status is still settling is waited for, not bounced', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  let reads = 0;
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => {
+      const mr = await getMr(project, iid);
+      return ++reads > 1 ? { ...mr, mergeStatus: 'checking' } : mr;
+    };
+    forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '405 checking' });
+  });
+  await poller(store)();
+  assert.equal(store.getTask(a.id)!.status, 'done', 'not bounced');
+  assert.equal(pendingMr(a.id)!.phase, 'open');
+  assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab reports checking'));
+});
