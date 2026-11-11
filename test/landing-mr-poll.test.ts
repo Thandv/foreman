@@ -189,7 +189,53 @@ test('a ticket reopened while its MR is read is dropped with no merge call', asy
   assert.equal(pendingMr(task.id), undefined, 'the entry is dropped');
   assert.equal(store.isLanding(task.id), false);
   assert.equal(landingRows(store), 0);
-  assert.ok(messages(store, task).includes('merge request !1 no longer followed: the ticket is queued; nothing merged'));
+  assert.ok(messages(store, task).includes('merge request !1 no longer followed: the ticket is queued; no merge made by Foreman'));
+});
+
+test('a ticket reopened while Foreman\'s merge call is in flight still has the merge confirmed, with a warning', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, tip } = await opened(t, f);
+  patch(f, (forge) => {
+    const merge = forge.merge.bind(forge);
+    forge.merge = async (project, iid, sha) => {
+      const out = await merge(project, iid, sha);
+      store.setStatus(a.id, 'queued');
+      return out;
+    };
+  });
+  await poller(store)();
+  const m = git(f.forge, 'rev-parse', 'main');
+  assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip, 'the forge merged the reviewed commit');
+  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
+  assert.equal(store.isLanding(a.id), true, 'the hold stays until the checkout is synced');
+  assert.ok(messages(store, a).includes(`merged !1 at ${m}; checkout sync pending`));
+  assert.ok(messages(store, a).includes('merge request !1 merged on the forge while the ticket is queued'));
+  assert.ok(!messages(store, a).some((msg) => /no longer followed/.test(msg)));
+});
+
+test('stop() waits for a merge call still in flight, so its merge is confirmed before the store closes', { timeout: 20_000 }, async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let entered!: () => void;
+  const inMerge = new Promise<void>((r) => { entered = r; });
+  patch(f, (forge) => {
+    const merge = forge.merge.bind(forge);
+    forge.merge = async (project, iid, sha) => {
+      entered();
+      await gate;
+      return merge(project, iid, sha);
+    };
+  });
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
+  await sched.pulse();
+  await inMerge;
+  const stopped = sched.stop();
+  release();
+  await stopped;
+  assert.match(messages(store, a).find((m) => m.startsWith('merged !1 at ')) ?? '', /checkout sync pending$/, 'merged before stop() returned');
+  assert.equal(landingRows(store), 0, 'the marker closed');
 });
 
 test('an MR not merged within FOREMAN_MR_TIMEOUT_MIN sends the ticket back to the gate', async (t) => {
@@ -232,6 +278,7 @@ test('a throwing forge adapter is recorded against the stage, and the tick still
     await sched.pulse();
     assert.notEqual(store.getTask(queued.id)!.status, 'queued', 'claimed in the same tick');
     assert.equal(await failed, 'scheduler tick failed in pollMergeRequests: adapter boom');
+    assert.equal(sched.tickStageErrors().get('pollMergeRequests'), 1, 'counted against the stage');
     assert.equal(pendingMr(a.id)!.phase, 'open', 'still pending, polled again next time');
   } finally {
     await sched.stop();
