@@ -73,6 +73,8 @@ The demo only talks to the fake. None of this has been run against a real GitLab
   that message.
 - Merge method `merge` (not fast-forward or semi-linear), squash not required, and no merged results pipelines or
   merge trains. `foreman doctor` FAILs a project that breaks one of these, and an approval there is refused.
+- With `requirePipeline` off the project may have CI/CD switched off: GitLab then leaves `head_pipeline` out of the
+  MR, and Foreman reads that as no pipeline. Not checked on an instance.
 - No required GitLab approval rules: Foreman never approves on GitLab, so such an MR waits for a person to approve it
   on GitLab, or for `FOREMAN_MR_TIMEOUT_MIN`.
 - `pushUrl` is the same project as `project`, not a fork.

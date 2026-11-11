@@ -51,7 +51,8 @@ function commit(o: Obj, key: string, of: string): string {
 }
 
 function pipeline(v: unknown): MrPipeline | null {
-  if (v === null) return null;
+  // GitLab leaves head_pipeline out when the token's user may not read pipelines (CI/CD off): no pipeline.
+  if (v === null || v === undefined) return null;
   const p = object(v, 'head_pipeline');
   return { sha: commit(p, 'sha', 'head_pipeline'), status: text(p, 'status', 'head_pipeline'), webUrl: text(p, 'web_url', 'head_pipeline') };
 }
