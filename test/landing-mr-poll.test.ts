@@ -752,3 +752,32 @@ test('the fake reads an MR that no longer merges cleanly into its target as conf
   assert.equal(merges(f).length, 0, 'no merge call');
   atGate(store, a, /GitLab reports conflict/);
 });
+
+test('a merge GitLab answers 200 with the MR still open is tried once more, then goes back to the gate with GitLab\'s merge_error', async (t) => {
+  const f = await fixture(t, { pipeline: 'success', failMerges: 'opened' });
+  const { store, a, main } = await opened(t, f);
+  const poll = poller(store);
+  for (let i = 0; i < 5; i++) await poll();
+  assert.equal(merges(f).length, 2, 'one call, and one more');
+  assert.equal(git(f.forge, 'rev-parse', 'main'), main, 'nothing merged');
+  atGate(store, a, /GitLab did not merge !1: pre-receive hook declined the merge commit/);
+});
+
+test('merge calls GitLab answers 500 while the MR still reads open go back to the gate after three', async (t) => {
+  const f = await fixture(t, { pipeline: 'success', failMerges: 'server-error' });
+  const { store, a } = await opened(t, f);
+  const poll = poller(store);
+  for (let i = 0; i < 6; i++) await poll();
+  assert.equal(merges(f).length, 3);
+  atGate(store, a, /merge request !1 still reads open after 3 merge calls GitLab did not answer with a result; last: GitLab PUT .*: 500 500 Internal Server Error/);
+});
+
+test('a merge call GitLab answered 500 does not stop FOREMAN_MR_TIMEOUT_MIN once the MR reads open again', async (t) => {
+  const f = await fixture(t, { pipeline: 'success', failMerges: 'server-error' });
+  const { store, a } = await opened(t, f);
+  const poll = poller(store);
+  await poll();
+  await poll(Date.now() + config.mrTimeoutMin * 60_000 + 1);
+  assert.equal(merges(f).length, 1, 'no merge call after the timeout');
+  atGate(store, a, /not merged within FOREMAN_MR_TIMEOUT_MIN \(120 min\); last: GitLab PUT .*: 500 500 Internal Server Error/);
+});

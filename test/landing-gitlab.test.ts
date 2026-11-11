@@ -257,3 +257,13 @@ test('the base URL must be https, or http on a loopback host, with no credential
   assert.doesNotThrow(() => new GitlabForge({ baseUrl: 'https://gitlab.example.com/gitlab/' }));
   assert.doesNotThrow(() => new GitlabForge({ baseUrl: 'http://[::1]:8080' }));
 });
+
+test('a merge GitLab answers 200 with the MR still open is not-mergeable, with GitLab\'s merge_error', async () => {
+  await withFake({ pipeline: 'success', failMerges: 'opened' }, async (s, f) => {
+    const head = f.push('foreman/t1', 'b.txt');
+    const forge = new GitlabForge({ baseUrl: s.url });
+    const opened = await forge.openMr('group/app', NEW_MR);
+    assert.deepEqual(await forge.merge('group/app', opened.iid, head), { merged: false, reason: 'not-mergeable', detail: 'pre-receive hook declined the merge commit' });
+    assert.equal((await forge.getMr('group/app', opened.iid)).state, 'opened');
+  });
+});

@@ -42,6 +42,12 @@ export interface FakeGitlabOptions {
    * GitLab rechecks them when the target moves.
    */
   recheckAfterMerge?: boolean;
+  /**
+   * A merge call on a mergeable MR does not merge (default: it merges). 'opened': answered 200 with the MR still open
+   * and `merge_error` set, as GitLab does when its merge service fails (a hook rejects the merge commit, for example).
+   * 'server-error': answered 500.
+   */
+  failMerges?: 'opened' | 'server-error';
   /** New pipelines: 'success' after pipelineDelayMs, 'failed' at once, or 'manual' (left running). Default 'success'. */
   pipeline?: PipelinePolicy;
   pipelineDelayMs?: number;
@@ -70,6 +76,8 @@ interface MergeRequest {
   uncheckedUntil?: number;
   /** The head does not merge cleanly into the target, as of the last look: detailed_merge_status reads 'conflict'. */
   conflict?: boolean;
+  /** GitLab's merge_error: why the last merge failed (failMerges 'opened'). */
+  mergeError?: string;
 }
 interface Project { id: number; path: string; bare: string; mrs: MergeRequest[] }
 
@@ -147,6 +155,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
       detailed_merge_status: mergeStatus(mr),
       head_pipeline: { id: pl.id, sha: pl.sha, status: pipelineStatus(pl), web_url: `${url}/${project.path}/-/pipelines/${pl.id}` },
       merge_commit_sha: mr.mergeCommitSha,
+      merge_error: mr.mergeError ?? null,
     };
   };
 
@@ -245,6 +254,11 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
           if (mr.state !== 'opened') throw new HttpError(405, 'Method Not Allowed');
           if (query.has('sha') && query.get('sha') !== mr.sha) throw new HttpError(409, 'SHA does not match HEAD of source branch');
           if (mergeStatus(mr) !== 'mergeable') throw new HttpError(405, 'Method Not Allowed');
+          if (opts.failMerges === 'server-error') throw new HttpError(500, '500 Internal Server Error');
+          if (opts.failMerges === 'opened') {
+            mr.mergeError = 'pre-receive hook declined the merge commit';
+            return view(project, mr);
+          }
           mr.mergeCommitSha = await merge(project, mr);
           mr.state = 'merged';
           if (opts.recheckAfterMerge) {
