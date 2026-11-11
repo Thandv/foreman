@@ -22,7 +22,7 @@ async function demo(...args: string[]): Promise<{ stdout: string; tmp: string }>
   return { stdout, tmp };
 }
 
-test('--check prints the steps of all three passes, including the refused self-approval, and leaves nothing behind', async () => {
+test('--check prints the steps of all three passes, including the refused self-approval and the main check run at the merge commit, and leaves nothing behind', async () => {
   const { stdout, tmp } = await demo();
   const lines = stdout.split('\n');
   const at = (re: RegExp): number => {
@@ -32,7 +32,7 @@ test('--check prints the steps of all three passes, including the refused self-a
   };
   const order = [
     /^pass 1: /, /^ {2}1\. alice approves her own ticket \S+: refused \(403\)/, /^ {2}2\. bob approves \S+: mr-opened, !1 head [0-9a-f]{7} is the reviewed commit/,
-    /^ {2}3\. pipeline success: merged !1 at [0-9a-f]{7}, checkout synced, main check green, dependent \S+ released/,
+    /^ {2}3\. pipeline success: merged !1 at ([0-9a-f]{7}), checkout synced, main check green at \1, dependent \S+ released/,
     /^pass 2: /, /^ {2}1\. bob approves \S+: mr-opened, !2 /, /^ {2}2\. pipeline failed: \S+ is back at the gate \(awaiting-approval\)/,
     /^pass 3: /, /^ {2}1\. bob approves \S+: mr-opened, !3 /, /^ {2}2\. head moved to [0-9a-f]{7} and its pipeline passed: the merge at the reviewed sha was refused \(409\)/,
     /^ {2}3\. \S+ is back at the gate \(awaiting-approval\)/,
