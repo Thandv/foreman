@@ -191,8 +191,10 @@ anything and writes nothing in the real `.git`.
 - **Excluded, and why:** `refs/heads`, `refs/remotes`, `refs/tags` and `refs/stash` are your own work (commits,
   branches, tags, stashes). `refs/bisect` and `refs/prefetch` are created by your own `git bisect` and
   `git maintenance` and hold no code that runs. `info/refs` is rewritten by `git gc`. Foreman's own git writes (`worktree add` and
-  `prune`, `ORIG_HEAD`/`MERGE_HEAD`, the `foreman-main-*` worktrees, deleting its own branches) fall in
-  `worktrees/`, `refs/heads` or top-level files, outside the set. Every other ref is flagged.
+  `prune`, `ORIG_HEAD`/`MERGE_HEAD`, the `foreman-main-*` worktrees, deleting its own branches, and the forge
+  mirror's `refs/foreman/forge/target` and `refs/foreman/forge/imported`, which point at commits and are never read
+  back) fall in `worktrees/`, `refs/heads`, `refs/foreman/forge/` or top-level files, outside the set. Every other ref
+  is flagged, the rest of `refs/foreman/` included.
 - **When:** the baseline is taken when a jail is created (and when a repair round reuses one), and stored at
   `<home>/artifacts/<runId>/git-tripwire.json` (mode 0600, written to a temp file, then renamed): outside the
   jail, and not in the database, so it survives a restart and event pruning. It is compared at collection (a

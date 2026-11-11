@@ -7,10 +7,13 @@
 // it from the refs; a symlink is hashed by its target, never followed), and the
 // refs git lists logically with a pinned `git for-each-ref` (so packed-refs counts), except refs/heads, refs/remotes,
 // refs/tags and refs/stash, which are the operator's work, and refs/bisect and refs/prefetch, which the operator's own
-// `git bisect` and `git maintenance` create and which hold no code that runs. A ref anywhere else (refs/replace,
-// refs/notes, ...) is flagged.
+// `git bisect` and `git maintenance` create and which hold no code that runs, and refs/foreman/forge/, where the forge
+// mirror (landing/push.ts) points FORGE_TARGET_REF and IMPORTED_REF at commits; nothing reads those back, and a ref
+// that names a commit runs no code. A ref anywhere else (refs/replace, refs/notes, the rest of refs/foreman, ...) is
+// flagged.
 // Foreman's own git writes (worktree add/prune, ORIG_HEAD/MERGE_HEAD, foreman-main-* worktrees, branch -D of its own
-// branches) land in worktrees/, refs/heads or top-level files, none of which is in the set.
+// branches, the forge mirror's refs) land in worktrees/, refs/heads, refs/foreman/forge/ or top-level files, none of
+// which is in the set.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -37,6 +40,8 @@ export interface TripwireBaseline {
 export type TripwireVerdict = { ok: true; note: string | null } | { ok: false; reason: string };
 
 const OPERATOR_REFS = /^refs\/(heads|remotes|tags|stash|bisect|prefetch)(\/|$)/;
+/** The forge mirror's own refs in the task repo (landing/push.ts FORGE_TARGET_REF, IMPORTED_REF). */
+const FORGE_REFS = 'refs/foreman/forge/';
 
 export function baselinePath(runId: string): string {
   return path.join(config.artifactRoot, runId, 'git-tripwire.json');
@@ -81,7 +86,7 @@ async function takeSnapshot(gitDir: string, repo: string, pinnedGit: GitRun): Pr
     if (!line) continue;
     const at = line.lastIndexOf(' ');
     const name = line.slice(0, at);
-    if (!OPERATOR_REFS.test(name)) refs[name] = line.slice(at + 1);
+    if (!OPERATOR_REFS.test(name) && !name.startsWith(FORGE_REFS)) refs[name] = line.slice(at + 1);
   }
   return { files, refs };
 }
