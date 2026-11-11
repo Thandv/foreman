@@ -138,7 +138,10 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's
      message), the hold ends and the row is deleted. The MR gets one note, `Not merged by Foreman:
      <reason>`, saying it is no longer approved in Foreman (a note the forge refuses is a
-     `warning`), and stays open, so approving again reuses it.
+     `warning`), and stays open, so approving again reuses it. After a failed or canceled
+     pipeline, retry the pipeline in GitLab (or rework the ticket) first: approving again pushes
+     the same reviewed commit, which starts no pipeline, so it reads the same failed one and
+     returns at once. Foreman makes no call to retry a pipeline.
    - A merge status of `conflict` or `need_rebase` (another merge into the target came first): the
      ticket goes back to the gate at once, as above, with `rework it, then approve again`. Only a new
      commit on the MR clears either, and a head that is not the reviewed commit is never merged.
