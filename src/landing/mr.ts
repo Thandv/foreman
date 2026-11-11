@@ -251,7 +251,35 @@ export function pollMergeRequests(store: Store, now: number, onError: (err: unkn
     mr.polling = true;
     started.push(pollOne(store, mr, now, check).catch(onError).finally(() => { mr.polling = false; }));
   }
-  return Promise.all(started).then(() => undefined);
+  // The forge calls of MRs let go (release) start by the time every poll ends.
+  return Promise.all(started).then(() => Promise.all(releasing)).then(() => undefined);
+}
+
+/** Statuses a ticket does not come back from to land this MR: its MR is closed when it is let go. */
+const GONE_FOR_GOOD: ReadonlySet<string> = new Set(['rejected', 'canceled', 'failed', 'gone']);
+
+/** The forge calls (release) of MRs let go that have not ended yet. */
+const releasing = new Set<Promise<void>>();
+
+/**
+ * An MR Foreman no longer follows gets one note saying so, so the earlier 'Approved in Foreman' note is not read as
+ * standing, and is closed when its ticket is gone for good. A note or close the forge refuses is a warning. Not awaited
+ * by the caller; pollMergeRequests waits for it.
+ */
+function release(store: Store, mr: Entry, note: string, close: boolean): void {
+  const map = active?.landing.mappings.find((m) => m.repo === mr.repo);
+  if (!active || !map) return;
+  const forge = active.landing.forge(map);
+  const done = (async () => {
+    try {
+      await forge.addNote(map.project, mr.iid, note);
+      if (close) await forge.closeMr(map.project, mr.iid);
+    } catch (err) {
+      if (!(err instanceof ForgeError)) throw err;
+      store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request !${mr.iid} not marked as no longer approved${close ? ' and closed' : ''}: ${err.message}` });
+    }
+  })().catch(() => undefined).finally(() => releasing.delete(done));
+  releasing.add(done);
 }
 
 /**
@@ -268,6 +296,8 @@ function left(store: Store, mr: Entry): boolean {
   store.endLanding(mr.taskId);
   store.closeLanding(mr.marker);
   store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merge request !${mr.iid} no longer followed: the ticket is ${status}; no merge made by Foreman` });
+  const close = GONE_FOR_GOOD.has(status);
+  release(store, mr, `No longer approved in Foreman: the ticket is ${status}. Foreman will not merge this request${close ? ', and closes it' : ''}.`, close);
   return true;
 }
 
@@ -289,9 +319,9 @@ async function pollOne(store: Store, mr: Entry, now: number, check: PostMergeRun
   }
   if ('confirm' in step) return settle(store, mr, step.confirm, map, check);
   if (left(store, mr)) return;
-  if ('gate' in step) return backToGate(store, mr, step.gate);
+  if ('gate' in step) return backToGate(store, mr, step.gate, forge, map.project);
   if (!mr.forgeMerged && !mr.mergeCalled && now - mr.openedAt >= config.mrTimeoutMin * 60_000) {
-    return backToGate(store, mr, `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${step.wait}`);
+    return backToGate(store, mr, `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${step.wait}`, forge, map.project);
   }
   if (step.wait === mr.waiting) return;
   mr.waiting = step.wait;
@@ -326,7 +356,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
   if (left(store, mr)) return { wait: 'the ticket left done' };
   // left() saw the ticket `done`, so it exists.
   const refused = await mr.fourEyes(store.getTask(mr.taskId)!);
-  if (refused !== null) return refuseMerge(store, mr, forge, project, `four-eyes: ${refused}`);
+  if (refused !== null) return { gate: `four-eyes: ${refused}` };
   // Or while four-eyes was asked (it awaits a git diff): nothing awaits between this check and the merge call.
   if (left(store, mr)) return { wait: 'the ticket left done' };
   mr.mergeCalled = true;
@@ -344,17 +374,6 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
     if (TRANSIENT_MERGE_STATUS.has(now)) return { wait: `GitLab reports ${now}` };
   }
   return { gate: `GitLab did not merge !${mr.iid}: ${out.detail}` };
-}
-
-/** No merge call: the MR gets one note saying why (a note the forge refuses is a warning), and the ticket goes back to the gate. */
-async function refuseMerge(store: Store, mr: Entry, forge: Forge, project: string, reason: string): Promise<Step> {
-  try {
-    await forge.addNote(project, mr.iid, `Not merged by Foreman: ${reason}. The ticket is back at the gate in Foreman.`);
-  } catch (err) {
-    if (!(err instanceof ForgeError)) throw err;
-    store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request note giving why !${mr.iid} was not merged not posted: ${err.message}` });
-  }
-  return { gate: reason };
 }
 
 function pipelineWait(mr: Mr): string {
@@ -409,11 +428,20 @@ function hold(store: Store, mr: Entry, reason: string): void {
   store.holdLanding(mr.checkout, mr.taskId, reason, mr.marker);
 }
 
-/** The MR will not merge as reviewed: the ticket goes back to awaiting-approval with the reason, and is let go. */
-function backToGate(store: Store, mr: Entry, reason: string): void {
+/**
+ * The MR will not merge as reviewed: the ticket goes back to awaiting-approval with the reason, and is let go. The MR
+ * gets one note saying why (a note the forge refuses is a warning) and stays open, so approving again reuses it.
+ */
+async function backToGate(store: Store, mr: Entry, reason: string, forge: Forge, project: string): Promise<void> {
   pending.delete(mr.taskId);
   store.setStatus(mr.taskId, 'awaiting-approval', store.withCoreGuard(mr.taskId, `approved, but not landed: ${reason} — resolve it, then approve again`));
   store.endLanding(mr.taskId);
   store.closeLanding(mr.marker);
   store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merge request !${mr.iid} back to the gate: ${reason}` });
+  try {
+    await forge.addNote(project, mr.iid, `Not merged by Foreman: ${reason}. The ticket is back at the gate in Foreman, so this request is no longer approved there.`);
+  } catch (err) {
+    if (!(err instanceof ForgeError)) throw err;
+    store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request note giving why !${mr.iid} was not merged not posted: ${err.message}` });
+  }
 }

@@ -18,13 +18,17 @@ right before the merge call.
 | State | Meaning | How it ends |
 |---|---|---|
 | `done`, MR open | Approved; the MR is polled every `FOREMAN_MR_POLL_MS`; its dependents stay `blocked` | the pipeline passes and the MR merges, or one of the next two |
-| back at the gate (`awaiting-approval`) | The pipeline failed, the head is not the reviewed commit, the MR was retargeted or set to squash, a person closed the MR, GitLab refused the merge, or the MR timed out | approve again |
+| back at the gate (`awaiting-approval`) | The pipeline failed, the head is not the reviewed commit, the MR was retargeted or set to squash, a person closed the MR, GitLab refused the merge, or the MR timed out. The MR gets a `Not merged by Foreman` note and stays open | approve again (the MR is reused) |
 | merged, checkout synced | The merge commit is confirmed on the target branch and the checkout is fast-forwarded to it | the post-merge check is green and the dependents are released |
 | repo held | A merge could not be confirmed or the checkout could not take it | `foreman land-clear <repo>` after you have looked |
 
 A daemon restart while an MR is open also holds the repo, and sends the ticket back to the gate: nothing follows the MR
 after a restart. Run `foreman land-clear <repo>`, then approve again (the open MR is reused), or, if GitLab merged it at
-the reviewed commit meanwhile, record it with `foreman landed <id> --commit <sha>`. The MR itself stays on GitLab.
+the reviewed commit meanwhile, record it with `foreman landed <id> --commit <sha>`. The MR itself stays on GitLab, with
+no note.
+
+A ticket that leaves `done` while its MR is open (reopened, rejected, canceled) is no longer followed: its MR gets a
+`No longer approved in Foreman` note, and is closed when the ticket is rejected, canceled, failed or deleted.
 A repo already held because GitLab merged the MR but the checkout could not take it stays held after a restart, and
 its ticket stays done: sync the checkout by hand, then `foreman land-clear <repo>`.
 
@@ -61,7 +65,7 @@ The demo only talks to the fake. None of this has been run against a real GitLab
 ### What the GitLab side needs
 
 - GitLab 15.6 or later: the adapter reads `detailed_merge_status` and refuses an MR without it.
-- A token whose user may create, read, comment on and merge MRs (scope `api`; GitLab has no narrower scope for
+- A token whose user may create, read, comment on, close and merge MRs (scope `api`; GitLab has no narrower scope for
   merging) and push over https (scope `write_repository`, for an https `pushUrl`). A project access token's bot user
   is the usual choice.
 - That user may merge into the target branch (on a protected branch, Maintainer by default) and push and force-push
@@ -87,3 +91,6 @@ token's user may push and force-push to.
 - Held repo: look at the checkout (`git status`, is it on the target branch and clean), fast-forward it by hand if
   GitLab merged, then `foreman land-clear <repo>`.
 - A ticket whose MR was merged on GitLab at the reviewed tree can be recorded with `foreman landed <id> --commit <sha>` ([commands](commands.md)).
+- An MR Foreman no longer follows but did not close (its ticket went back to the gate, was reopened, or the daemon
+  restarted) stays open on GitLab, and anyone with merge rights there can still merge it; Foreman would not check it.
+  Close it by hand if the ticket will not be approved again.

@@ -121,14 +121,18 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    for the forge. Each change of state is one event on the ticket.
    - The ticket left `done` (a person reopened, rejected or archived it): the MR is no longer
      followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
-     by Foreman`). After a merge call that got no answer (a timeout), the MR is read first: it is
+     by Foreman`). The MR gets one note, `No longer approved in Foreman: the ticket is <status>`,
+     and is closed on the forge when the ticket is `rejected`, `canceled`, `failed` or deleted; a
+     note or close the forge refuses is a `warning`. After a merge call that got no answer (a timeout), the MR is read first: it is
      dropped only if it still reads open; merged, it is settled as below.
    - The MR's head is not the reviewed commit, its target branch is not the mapped one or it is
      set to squash (someone edited it on GitLab), its pipeline for that commit `failed` or was
      `canceled`, a person closed it, or GitLab refuses the merge call itself (401 or 403, or a
      refusal while the status reads something other than a transient word such as `checking`):
      the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's
-     message), the hold ends and the row is deleted.
+     message), the hold ends and the row is deleted. The MR gets one note, `Not merged by Foreman:
+     <reason>`, saying it is no longer approved in Foreman (a note the forge refuses is a
+     `warning`), and stays open, so approving again reuses it.
    - No pipeline yet, one for another commit, one still running (with `requirePipeline`; without
      it no pipeline is needed), or a merge status other than `mergeable`: it waits, and no merge
      call is made. That includes the lasting words as well as the transient ones: `not_approved`
@@ -144,9 +148,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    - Pipeline `success` for the reviewed commit and `mergeable`: four-eyes (`docs/security.md`) is
      asked again for the approve decision's actor, then one merge call at the reviewed sha, which
      GitLab refuses if the head has moved. If four-eyes now refuses (the approver was disabled while
-     the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made:
-     the MR gets one note saying why (a note the forge refuses is a `warning`), and the ticket goes
-     back to `awaiting-approval` with the reason.
+     the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made,
+     and the ticket goes back to `awaiting-approval` with the reason and that note, as above.
    - The repo is held (below, or a crash mid-merge): it waits, with no merge call, until
      `foreman land-clear <repo>`.
    - Merged (by Foreman, or by a person in GitLab): the mirror fetches the target branch and

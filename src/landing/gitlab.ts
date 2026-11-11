@@ -191,8 +191,13 @@ export class GitlabForge implements Forge {
     if (typeof note['id'] !== 'number') throw unexpected('note.id', 'a number');
   }
 
+  async closeMr(projectRef: string, iid: number): Promise<void> {
+    checkIid(iid);
+    await this.#ok('PUT', projectRef, `/merge_requests/${iid}`, { state_event: 'close' });
+  }
+
   /** A 2xx reply's JSON, or a ForgeError naming the status and GitLab's message. */
-  async #ok(method: 'GET' | 'POST', projectRef: string, path: string, body?: Obj): Promise<unknown> {
+  async #ok(method: 'GET' | 'POST' | 'PUT', projectRef: string, path: string, body?: Obj): Promise<unknown> {
     return this.#json(method, path, await this.#request(method, projectRef, path, body));
   }
 
