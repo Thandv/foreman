@@ -1,10 +1,11 @@
 # Landing comparison: method
 
-`node scripts/bench/landing.ts --out comparisons/landing` produced `raw.json` here, at commit 9b217ab (this branch, clean
-for `src/` and `scripts/`). How the script works is in [docs/capacity.md](../../docs/capacity.md). The comparison against
-the commit before the landing work (3a6712a) is the harness scenario `landing-burst`, which runs the same
-`scripts/bench/landingRun.ts` against 3a6712a, the branch with `FOREMAN_POSTMERGE_MODE=per-merge` and the branch at its
-defaults; its `result.json` is kept with the comparison harness, not in this repository.
+`node scripts/bench/landing.ts --out comparisons/landing` produced the `burst` and `steady` cells of `raw.json` here, at
+commit 9b217ab (this branch, clean for `src/` and `scripts/`). The `mr` cells were rerun alone (`--scenarios mr`) at
+63c7c94, after the git tripwire stopped flagging Foreman's own `refs/foreman/forge/` refs. How the script works is in
+[docs/capacity.md](../../docs/capacity.md). The comparison against the commit before the landing work (3a6712a) is the
+harness scenario `landing-burst`, which runs the same `scripts/bench/landingRun.ts` against 3a6712a, the branch with
+`FOREMAN_POSTMERGE_MODE=per-merge` and the branch at its defaults; its `result.json` is kept with the comparison harness, not in this repository.
 
 Machine class: an 8-core Apple M2 laptop with 16 GB of memory, macOS 14, Node 26, a few other processes running (load
 average 2 to 3 while it ran). Compressed time: the 15-minute suite takes 900 ms.
@@ -21,19 +22,23 @@ tickets in one repo, parked at the gate, then approved through the API:
   `FOREMAN_POSTMERGE_MODE=per-merge`. **after**: `targeted` and `coalesced`.
 - The suite is a command that waits 900 ms and logs when it ended and which ticket files its checkout held. Suite runs per
   landed ticket count its log lines (each ticket's own check, post-merge checks, re-runs) over the tickets that landed;
-  the workers' wrapper runs are counted apart. The bench now leaves out the own checks of tickets that did not land
-  (`unlandedOwnChecks`); `raw.json` and the harness `result.json` were written before that and count them, which only
-  changes the cells with tickets not landed: the `mr` cells (21 stored, 2 without them) and the harness's 3a6712a cell
+  the workers' wrapper runs are counted apart. The bench leaves out the own checks of tickets that did not land
+  (`unlandedOwnChecks`). The `burst` and `steady` cells were run before it did, but every ticket in them landed, so
+  their figures are unchanged; their `unlandedOwnChecks` (0) and `culpritLanded` (true) were filled in from that, not
+  measured. The harness `result.json` was also written before it and counts them, which changes its 3a6712a cell only
   (2.47 stored, 32 runs over 15 landed = 2.13 without the 5 conflicted tickets' own checks).
 - The last ticket's change is bad and turns the suite red in a post-merge checkout only.
 
 ## Read these caveats first
 
-1. **The `mr` cells measure a refusal, not a landing.** One merge request lands; the other 19 approvals are refused by
-   the git tripwire ("ref refs/foreman/forge/target was created"): the first merge request creates that ref in the real
-   repo, and every run that began before it is then not approvable. So the `mr` suite-runs-per-landed figure (21) is 20 own
-   checks over one landing and says nothing about coalescing. Merge requests cannot be burst-approved today; this is a
-   finding, not something this ticket changes.
+1. **The `mr` cells land all 20 merge requests.** The first run of these cells landed one and refused the other 19 at
+   the git tripwire ("ref refs/foreman/forge/target was created"): the first merge request's mirror copy created that
+   ref in the real repo, and every run that began before it was then not approvable. The tripwire now leaves
+   `refs/foreman/forge/` out (Foreman's own refs, never read back), and the rerun lands 20 of 20 under both modes:
+   2.05 suite runs per landed ticket under `per-merge` and 1.2 under `coalesced`. Approve to merged (p50 about 6.3 s)
+   and merged to verified (p50 8.9 s and 5.9 s) are longer than the plain burst's, because each landing waits for the
+   fake pipeline (1.5 s) and the target fetch; under `coalesced` one check covered up to 10 merges, so its red names
+   the culprit among 10 tickets.
 2. **Coalescing helps in proportion to overlap.** In the burst the checks overlap and the post-merge checks coalesce: 2.05
    to 1.45 suite runs per landed ticket. In the steady run a check ends before the next merge, so there is little to
    share: 2.05 to 1.9, and merged-to-verified is longer under `coalesced` (about 1.5 s against 1.0 s) because a merge that

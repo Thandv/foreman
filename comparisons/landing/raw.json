@@ -5,6 +5,7 @@
     "tickets": 20,
     "landed": 20,
     "suiteRuns": 41,
+    "unlandedOwnChecks": 0,
     "suiteRunsPerLanded": 2.05,
     "workerLeasesPerLanded": 1,
     "landingsPerHour": 6781,
@@ -20,6 +21,7 @@
     "unverified": 0,
     "red": {
       "culprit": "t_6cda7fab21",
+      "culpritLanded": true,
       "named": [
         "t_6cda7fab21"
       ],
@@ -33,6 +35,7 @@
     "tickets": 20,
     "landed": 20,
     "suiteRuns": 29,
+    "unlandedOwnChecks": 0,
     "suiteRunsPerLanded": 1.45,
     "workerLeasesPerLanded": 0,
     "landingsPerHour": 8061,
@@ -48,6 +51,7 @@
     "unverified": 0,
     "red": {
       "culprit": "t_a95620e848",
+      "culpritLanded": true,
       "named": [
         "t_a95620e848"
       ],
@@ -61,6 +65,7 @@
     "tickets": 20,
     "landed": 20,
     "suiteRuns": 41,
+    "unlandedOwnChecks": 0,
     "suiteRunsPerLanded": 2.05,
     "workerLeasesPerLanded": 1,
     "landingsPerHour": 4025,
@@ -76,6 +81,7 @@
     "unverified": 0,
     "red": {
       "culprit": "t_0fae324d06",
+      "culpritLanded": true,
       "named": [
         "t_0fae324d06"
       ],
@@ -89,6 +95,7 @@
     "tickets": 20,
     "landed": 20,
     "suiteRuns": 38,
+    "unlandedOwnChecks": 0,
     "suiteRunsPerLanded": 1.9,
     "workerLeasesPerLanded": 0,
     "landingsPerHour": 3874,
@@ -104,6 +111,7 @@
     "unverified": 0,
     "red": {
       "culprit": "t_373a065ac0",
+      "culpritLanded": true,
       "named": [
         "t_373a065ac0"
       ],
@@ -115,102 +123,29 @@
     "scenario": "mr",
     "mode": "before",
     "tickets": 20,
-    "landed": 1,
-    "suiteRuns": 21,
-    "suiteRunsPerLanded": 21,
-    "workerLeasesPerLanded": 20,
-    "landingsPerHour": 1089,
+    "landed": 20,
+    "suiteRuns": 41,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 2.05,
+    "workerLeasesPerLanded": 1,
+    "landingsPerHour": 3526,
     "approveToMergedMs": {
-      "p50": 2142,
-      "p95": 2142
+      "p50": 6268,
+      "p95": 10476
     },
     "mergedToVerifiedMs": {
-      "p50": 1164,
-      "p95": 1164
+      "p50": 8862,
+      "p95": 9143
     },
-    "notLanded": [
-      {
-        "id": "t_e06fd25068",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_779e43396f",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_2d7a428bc9",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_1802667702",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_e5121c693c",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_4ac45b024b",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_2e4af25c82",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_d7a19a1693",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_5af7770d09",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_686896eb45",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_45de2a5992",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_9a4679424a",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_805384d409",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_bc1642de72",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_bae5f517bc",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_63dbe0c4ac",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_443f22b17a",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_51b794ebd0",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_16b2a00662",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      }
-    ],
+    "notLanded": [],
     "unverified": 0,
     "red": {
-      "culprit": "t_16b2a00662",
-      "named": [],
-      "attributed": false
+      "culprit": "t_4e6a4969a4",
+      "culpritLanded": true,
+      "named": [
+        "t_4e6a4969a4"
+      ],
+      "attributed": true
     },
     "errors": []
   },
@@ -218,102 +153,38 @@
     "scenario": "mr",
     "mode": "after",
     "tickets": 20,
-    "landed": 1,
-    "suiteRuns": 21,
-    "suiteRunsPerLanded": 21,
+    "landed": 20,
+    "suiteRuns": 24,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 1.2,
     "workerLeasesPerLanded": 0,
-    "landingsPerHour": 1037,
+    "landingsPerHour": 5285,
     "approveToMergedMs": {
-      "p50": 2329,
-      "p95": 2329
+      "p50": 6250,
+      "p95": 10407
     },
     "mergedToVerifiedMs": {
-      "p50": 1144,
-      "p95": 1144
+      "p50": 5869,
+      "p95": 9153
     },
-    "notLanded": [
-      {
-        "id": "t_1596fa6862",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_6e0ce3bdcf",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_7e0c7741ab",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_2906f57904",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_886dcadadb",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_c6feb06fe6",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_f15a05f786",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_ec0e968f2b",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_bf2f1d5d26",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_83d9cd1c2b",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_9d21f3d46e",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_aa138efa1e",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_bcddd2fec8",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_ad9330fee0",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_cff435fce8",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_fb6ed8f562",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_2718815b77",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_f31fe6030b",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      },
-      {
-        "id": "t_9e1f2de223",
-        "why": "merge: git tripwire: the real repo's git directory changed since this run began: ref refs/foreman/forge/target was created. Nothing was restored. Look at it, th"
-      }
-    ],
+    "notLanded": [],
     "unverified": 0,
     "red": {
-      "culprit": "t_9e1f2de223",
-      "named": [],
-      "attributed": false
+      "culprit": "t_c631f911ed",
+      "culpritLanded": true,
+      "named": [
+        "t_ae274f8658",
+        "t_aabe09c76d",
+        "t_07742b3050",
+        "t_df4a201706",
+        "t_61ab0fd7db",
+        "t_0f1ce45903",
+        "t_0d66e215d0",
+        "t_08001b4eb1",
+        "t_b4c652a85a",
+        "t_c631f911ed"
+      ],
+      "attributed": true
     },
     "errors": []
   }

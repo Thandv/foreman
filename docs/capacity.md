@@ -125,8 +125,10 @@ Landing, 20 tickets, a 900 ms suite (the 15-minute suite at 1000x), one bad chan
 | burst | after | 20/20 | 1.45 | 0 | 8,061 | 3,071/5,798 | 1,434/1,841 |
 | steady | before | 20/20 | 2.05 | 1 | 4,025 | 383/387 | 1,016/1,020 |
 | steady | after | 20/20 | 1.9 | 0 | 3,874 | 380/390 | 1,534/1,994 |
+| mr | before | 20/20 | 2.05 | 1 | 3,526 | 6,268/10,476 | 8,862/9,143 |
+| mr | after | 20/20 | 1.2 | 0 | 5,285 | 6,250/10,407 | 5,869/9,153 |
 
-The same burst through the comparison harness, against the commit before the landing work: 3a6712a landed 15 of 20 (its overlapping approvals conflict: there is no per-repo merge section). Its stored figure of 2.47 suite runs per landed ticket is 37 runs over 15, and 5 of the 37 are the own checks of the tickets that conflicted; without them it is 32 over 15, 2.13. The bad last ticket was one of the 5, so 3a6712a's run has no red to attribute. The branch landed 20 of 20, at 2.05 under `per-merge` and 1.45 under `coalesced`, against the target of 2.3 or fewer. The `mr` scenario lands one merge request and refuses the other 19 at the git tripwire (the first merge request creates `refs/foreman/forge/target`), so it has no suite-run figure worth reading (the stored 21 counts the 19 refused tickets' own checks; without them it is 2 for its one landing).
+The same burst through the comparison harness, against the commit before the landing work: 3a6712a landed 15 of 20 (its overlapping approvals conflict: there is no per-repo merge section). Its stored figure of 2.47 suite runs per landed ticket is 37 runs over 15, and 5 of the 37 are the own checks of the tickets that conflicted; without them it is 32 over 15, 2.13. The bad last ticket was one of the 5, so 3a6712a's run has no red to attribute. The branch landed 20 of 20, at 2.05 under `per-merge` and 1.45 under `coalesced`, against the target of 2.3 or fewer. The `mr` scenario lands 20 of 20 merge requests (its first run landed one: the git tripwire refused the other 19 because the first merge request created `refs/foreman/forge/target`, a ref the tripwire now leaves out); each landing waits for the fake pipeline, so its approve-to-merged and merged-to-verified times are longer than the plain burst's.
 
 What they say:
 
