@@ -182,9 +182,13 @@ export function pollMergeRequests(store: Store, now: number, onError: (err: unkn
   return Promise.all(started).then(() => undefined);
 }
 
-/** Drops `mr` when its ticket is no longer `done`, or a later approval replaced it; true when it did. */
+/**
+ * Drops `mr` when its ticket is no longer `done`, or a later approval replaced it; true when it did. An MR the forge
+ * has merged is kept whatever the ticket's status, so its merge is confirmed and settled before its marker closes.
+ */
 function left(store: Store, mr: Entry): boolean {
   if (pending.get(mr.taskId) !== mr) return true;
+  if (mr.forgeMerged) return false;
   const status = store.getTask(mr.taskId)?.status ?? 'gone';
   if (status === 'done') return false;
   pending.delete(mr.taskId);

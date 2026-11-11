@@ -129,7 +129,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      warning that the merged commit is not the reviewed commit; the next start holds the repo
      for the operator.
      A merge made on the forge is settled this way even when the ticket left `done` meanwhile
-     (a person reopened it during the merge call), with a warning naming its status.
+     (a person reopened it during the merge call), with a warning naming its status; a confirm
+     that fails (a mirror failure) is retried at the next poll, with the hold and the row kept.
 
 ### A dependent waiting on a canceled ticket
 
