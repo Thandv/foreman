@@ -3,7 +3,7 @@
 //   - importable: `startFakeGitlab({ projects: { 'group/app': '/path/to/bare.git' }, token })`
 //   - runnable:   `node scripts/forge/fakeGitlab.ts --project group/app=/path/to/bare.git [--port N]
 //                  [--checking-ms N] [--pipeline success|failed|manual] [--pipeline-delay-ms N]`, token in FAKE_GITLAB_TOKEN.
-// A project id is the URL-encoded path ("group%2Fapp"), as GitLab accepts. Every request is recorded (method, path, query,
+// A project id is the URL-encoded path ("group%2Fapp"), as GitLab accepts. An MR can be closed (PUT state_event=close). Every request is recorded (method, path, query,
 // body, never headers) in `requests`. A head sha gets one pipeline; POST /__fake/pipelines/:sha {status} flips it.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -53,7 +53,7 @@ export interface FakeGitlab {
 interface Pipeline { id: number; sha: string; createdAt: number; status?: PipelineStatus }
 interface MergeRequest {
   iid: number; source: string; target: string; title: string; description: string; squash: boolean; removeSource: boolean;
-  state: 'opened' | 'merged'; sha: string; checkingUntil: number; mergeCommitSha: string | null;
+  state: 'opened' | 'merged' | 'closed'; sha: string; checkingUntil: number; mergeCommitSha: string | null;
   /** A head pushed but not yet taken into `sha` (refreshDelayMs), and when it was first seen. */
   seenHead?: string; seenAt?: number;
 }
@@ -102,7 +102,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
    * taken into the MR's `sha` only refreshDelayMs after it was first seen.
    */
   const observe = async (project: Project, mr: MergeRequest): Promise<void> => {
-    if (mr.state === 'merged') return;
+    if (mr.state !== 'opened') return;
     const head = await git(project.bare, 'rev-parse', `refs/heads/${mr.source}`);
     if (head !== mr.sha) {
       if (head !== mr.seenHead) { mr.seenHead = head; mr.seenAt = Date.now(); }
@@ -111,7 +111,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     pipelineFor(mr.sha);
   };
   const mergeStatus = (mr: MergeRequest): string => {
-    if (mr.state === 'merged') return 'not_open';
+    if (mr.state !== 'opened') return 'not_open';
     if (Date.now() < mr.checkingUntil) return 'checking';
     if (!requirePipeline) return 'mergeable';
     const status = pipelineStatus(pipelineFor(mr.sha));
@@ -200,6 +200,12 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     if (!mr) throw new HttpError(404, '404 Merge Request Not Found');
     if (rest.length === 2 && method === 'GET') {
       await observe(project, mr);
+      return view(project, mr);
+    }
+    if (rest.length === 2 && method === 'PUT') {
+      // Only closing is modelled: PUT /merge_requests/:iid with state_event=close.
+      if (body['state_event'] !== 'close') throw new HttpError(400, 'only state_event=close is supported by the fake');
+      if (mr.state === 'opened') mr.state = 'closed';
       return view(project, mr);
     }
     if (rest.length === 3 && rest[2] === 'notes' && method === 'POST') {

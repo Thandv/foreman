@@ -163,6 +163,37 @@ test('a failed pipeline sends the ticket back to the gate with its status and UR
   atGate(store, a, /the pipeline of !1 failed: http:\/\/127\.0\.0\.1:\d+\/group\/app\/-\/pipelines\/\d+/);
 });
 
+const noteBodies = (f: Fixture): string[] =>
+  f.fake.requests.filter((r) => r.method === 'POST' && /\/notes$/.test(r.path)).map((r) => (JSON.parse(r.body!) as { body: string }).body);
+
+test('an MR sent back to the gate gets one note saying it is no longer approved, and stays open for the next approval', async (t) => {
+  const f = await fixture(t, { pipeline: 'failed' });
+  const { store, a } = await opened(t, f);
+  const before = noteBodies(f).length;
+  await poller(store)();
+  atGate(store, a, /the pipeline of !1 failed/);
+  const posted = noteBodies(f).slice(before);
+  assert.equal(posted.length, 1, JSON.stringify(posted));
+  assert.match(posted[0]!, /^Not merged by Foreman: the pipeline of !1 failed: .*no longer approved/s);
+  assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).getMr('group/app', 1)).state, 'opened');
+});
+
+test('an MR whose ticket is rejected or canceled is closed on the forge with a note; one whose ticket is reopened only gets the note', async (t) => {
+  for (const [status, state] of [['rejected', 'closed'], ['canceled', 'closed'], ['queued', 'opened']] as const) {
+    const f = await fixture(t);
+    const { store, a } = await opened(t, f);
+    const before = noteBodies(f).length;
+    store.setStatus(a.id, status);
+    await poller(store)();
+    assert.equal(pendingMr(a.id), undefined);
+    const posted = noteBodies(f).slice(before);
+    assert.equal(posted.length, 1, `${status}: ${JSON.stringify(posted)}`);
+    assert.match(posted[0]!, new RegExp(`^No longer approved in Foreman: the ticket is ${status}`));
+    assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).getMr('group/app', 1)).state, state, status);
+    assert.equal(merges(f).length, 0);
+  }
+});
+
 test('an MR merged by a person on the forge is confirmed the same way', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a, tip } = await opened(t, f);
