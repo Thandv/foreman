@@ -199,6 +199,17 @@ test('a 401 on merge is refused: GitLab answers it when the token may not merge 
   });
 });
 
+test('findOpenMr asks for the target branch and leaves out an MR from another project (a fork)', async () => {
+  let query = '';
+  await withStub((req, res) => {
+    query = new URL(req.url ?? '/', 'http://stub.invalid').search;
+    res.writeHead(200).end(JSON.stringify([{ iid: 1, source_project_id: 9, target_project_id: 1 }]));
+  }, async (url) => {
+    assert.equal(await new GitlabForge({ baseUrl: url }).findOpenMr('group/app', 'foreman/t1', 'main'), null);
+    assert.match(query, /target_branch=main/);
+  });
+});
+
 test('a server that never answers is cut at the timeout', async () => {
   await withStub(() => undefined, async (url) => {
     await assert.rejects(new GitlabForge({ baseUrl: url, timeoutMs: 50 }).project('group/app'), (e: Error) => e instanceof ForgeError && /no answer within 50 ms/.test(e.message));

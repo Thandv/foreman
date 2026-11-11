@@ -430,6 +430,62 @@ test('a merge GitLab refuses while its status reads a lasting word sends the tic
   atGate(store, a, /GitLab did not merge !1: 405 Method Not Allowed/);
 });
 
+/** Opens an MR on the fake as another GitLab user could: from foreman/<task id> into `target`, with `squash`. */
+async function strayMr(f: Fixture, taskId: string, target: string, squash: boolean): Promise<void> {
+  if (target !== 'main') git(f.forge, 'branch', target, 'main');
+  git(f.forge, 'branch', `foreman/${taskId}`, 'main');
+  const res = await fetch(`${f.fake.url}/api/v4/projects/group%2Fapp/merge_requests`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ source_branch: `foreman/${taskId}`, target_branch: target, title: 'stray', squash }),
+  });
+  assert.equal(res.status, 200, await res.text());
+}
+
+test('an open MR from foreman/<id> into another branch is not reused: the approval lands into the mapped target only', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'work');
+  const tip = git(f.repo, 'rev-parse', 'work');
+  await strayMr(f, a.id, 'release', true);
+  const release = git(f.forge, 'rev-parse', 'release');
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  assert.equal(pendingMr(a.id)?.iid, 2, 'its own MR, not the stray one');
+  await poller(store)();
+  assert.equal(git(f.forge, 'rev-parse', 'release'), release, 'the other branch is untouched');
+  assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip);
+  synced(store, f, a);
+});
+
+test('an open MR from foreman/<id> into the target that is set to squash is refused at approval', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'work');
+  await strayMr(f, a.id, 'main', true);
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-refused');
+  assert.match(out.merge.reason, /!1 is set to squash/);
+  assert.equal(merges(f).length, 0);
+  assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
+});
+
+test('an MR whose target branch is changed on GitLab after approval goes back to the gate with no merge call', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), targetBranch: 'release' });
+  });
+  await poller(store)();
+  assert.equal(merges(f).length, 0);
+  atGate(store, a, /!1 targets release, not main/);
+});
+
 test('a throwing forge adapter is recorded against the stage, and the tick still dispatches', { timeout: 20_000 }, async (t) => {
   const f = await fixture(t);
   const { store, a } = await opened(t, f);
