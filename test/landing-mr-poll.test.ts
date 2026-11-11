@@ -178,12 +178,15 @@ test('an MR sent back to the gate gets one note saying it is no longer approved,
   assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).getMr('group/app', 1)).state, 'opened');
 });
 
-test('an MR whose ticket is rejected or canceled is closed on the forge with a note; one whose ticket is reopened only gets the note', async (t) => {
-  for (const [status, state] of [['rejected', 'closed'], ['canceled', 'closed'], ['queued', 'opened']] as const) {
+test('an MR whose ticket is rejected, canceled, failed or deleted is closed on the forge with a note; one whose ticket is reopened only gets the note', async (t) => {
+  for (const [status, state] of [['rejected', 'closed'], ['canceled', 'closed'], ['failed', 'closed'], ['gone', 'closed'], ['queued', 'opened']] as const) {
     const f = await fixture(t);
-    const { store, a } = await opened(t, f);
+    const { store, a, child } = await opened(t, f);
     const before = noteBodies(f).length;
-    store.setStatus(a.id, status);
+    if (status === 'gone') {
+      store.deleteTask(child.id);
+      store.deleteTask(a.id);
+    } else store.setStatus(a.id, status);
     await poller(store)();
     assert.equal(pendingMr(a.id), undefined);
     const posted = noteBodies(f).slice(before);
@@ -696,6 +699,15 @@ test('MRs into one target merge one at a time: overlapping merges GitLab would r
   t.after(() => store.close());
   const tasks = ['m1', 'm2', 'm3'].map((b) => parked(store, f.repo, b));
   for (const task of tasks) assert.equal((await approve(store, task.id)).merge.code, 'mr-opened');
+  let inFlight = 0;
+  let most = 0;
+  patch(f, (forge) => {
+    const merge = forge.merge.bind(forge);
+    forge.merge = async (project, iid, sha) => {
+      most = Math.max(most, ++inFlight);
+      try { return await merge(project, iid, sha); } finally { inFlight--; }
+    };
+  });
   const poll = poller(store);
   for (let i = 0; i < 20 && tasks.some((task) => pendingMr(task.id) !== undefined); i++) {
     await poll();
@@ -707,4 +719,5 @@ test('MRs into one target merge one at a time: overlapping merges GitLab would r
     assert.equal(pendingMr(task.id), undefined, task.id);
   }
   assert.equal(git(f.forge, 'log', '--merges', '--format=%H', 'main').split('\n').length, 3, 'three merge commits');
+  assert.equal(most, 1, 'never two merge calls into main at once');
 });

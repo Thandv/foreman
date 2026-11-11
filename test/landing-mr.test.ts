@@ -167,6 +167,8 @@ test('an MR whose head is not the reviewed commit is refused and the ticket retu
   const out = await approve(store, a.id);
   assert.equal(out.merge.code, 'mr-refused', out.merge.reason);
   assert.match(out.merge.reason, new RegExp(`is ${git(f.repo, 'rev-parse', 'main')}, not the reviewed commit ${tip}`));
+  // Only a reused MR's head is read again (GitLab refreshes it in the background); a new one is refused on the first read.
+  assert.equal(f.fake.requests.filter((r) => r.method === 'GET' && /\/merge_requests\/\d+$/.test(r.path)).length, 1, 'one read of the new MR');
   assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
   assert.equal(store.isLanding(a.id), false, 'the hold ended');
   assert.equal(landingRows(store), 0, 'the marker closed');
