@@ -9,7 +9,7 @@ import { startFakeGitlab, type FakeGitlab } from '../scripts/forge/fakeGitlab.ts
 import { Store } from '../src/queue.ts';
 import { ApprovalTracker, applyApproval, FourEyesRefused } from '../src/gate.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
-import type { Forge, NewMr } from '../src/landing/forge.ts';
+import { ForgeError, type Forge, type NewMr } from '../src/landing/forge.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
 import { pendingMrs, useLanding } from '../src/landing/mr.ts';
 import type { Principal, Task } from '../src/types.ts';
@@ -307,4 +307,37 @@ test('an approval refused by four-eyes makes no forge call', async (t) => {
   await assert.rejects(applyApproval(store, a.id, { principal: alice.id, tracker: new ApprovalTracker() }), FourEyesRefused);
   assert.equal(f.fake.requests.length, 0, 'the forge recorded no request');
   assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
+});
+
+test('a note the forge refuses is a warning on the ticket; the MR stays open and pending', async (t) => {
+  const f = await fixture(t);
+  class NoNotes extends Landing {
+    override forge(m: LandingMapping): Forge {
+      const real = super.forge(m);
+      real.addNote = () => Promise.reject(new ForgeError('GitLab POST notes: 500 down'));
+      return real;
+    }
+  }
+  useLanding(new NoNotes([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'unnoted');
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  assert.equal(store.getTask(a.id)!.status, 'done');
+  assert.ok(pendingMrs().some((p) => p.taskId === a.id));
+  assert.ok(store.eventsForTask(a.id).some((e) => e.type === 'warning' && e.message === 'merge request note naming the approver not posted: GitLab POST notes: 500 down'));
+});
+
+test('with auth off the note names the reserved actor and the recorded author', async (t) => {
+  const f = await fixture(t);
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'solo', { createdBy: 'operator' });
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  assert.deepEqual(notePosts(f.fake).map((n) => n.body.split('\n').slice(2)), [
+    ['Foreman-Approved-By: operator', 'Foreman-Author: operator', `Foreman-Decision: ${out.decision!.id}`],
+  ]);
 });

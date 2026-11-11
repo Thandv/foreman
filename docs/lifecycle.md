@@ -96,7 +96,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, or an MR
    head that is not the reviewed commit is `mr-refused`: the ticket goes back to
    `awaiting-approval` with the reason, the hold ends and the row is deleted; approving again
-   writes a second decision and reuses the MR still open. Only those steps run in the section, so
+   writes a second decision and reuses the MR still open. Each approval that opens or reuses an MR
+   then posts one note on it naming the approver of record, the ticket's author and the decision
+   id, and the decision keeps the MR's iid ([security](security.md)). Only those steps run in the section, so
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
    section for at most about four forge calls of 15 s each, plus the mirror's git. A change to
    Foreman itself always lands by the local merge. Nothing merges an MR yet: the ticket stays held

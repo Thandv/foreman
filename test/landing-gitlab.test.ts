@@ -102,6 +102,19 @@ test('openMr sends squash=false and remove_source_branch=true; merge sends the r
   });
 });
 
+test('addNote posts the body as a note on the merge request', async () => {
+  await withFake({}, async (s, f) => {
+    f.push('foreman/t1', 'b.txt');
+    const forge = new GitlabForge({ baseUrl: s.url });
+    const opened = await forge.openMr('group/app', NEW_MR);
+    await forge.addNote('group/app', opened.iid, 'Foreman-Decision: d1');
+    const post = s.requests.at(-1)!;
+    assert.equal(post.path, `/api/v4/projects/group%2Fapp/merge_requests/${opened.iid}/notes`);
+    assert.deepEqual(JSON.parse(post.body!), { body: 'Foreman-Decision: d1' });
+    await assert.rejects(forge.addNote('group/app', 99, 'x'), (e: unknown) => e instanceof ForgeError && e.status === 404);
+  });
+});
+
 test('merge with a stale sha is head-moved and leaves the target branch unchanged', async () => {
   await withFake({}, async (s, f) => {
     const stale = f.push('foreman/t1', 'b.txt');

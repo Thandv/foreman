@@ -8,7 +8,8 @@ import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
 import { landingRefusal, mergeApproved, type MergeCode, type MergeResult } from './merge.ts';
 import { withRepoMergeSection } from './landing/queue.ts';
-import { mrLandingFor, openForApproval } from './landing/mr.ts';
+import { ForgeError } from './landing/forge.ts';
+import { mrLandingFor, noteApproval, openForApproval, pendingMr } from './landing/mr.ts';
 import { NOTHING_TO_CHANGE_CLOSED, personPark } from './verify/gateOutcome.ts';
 import { extractJson } from './models.ts';
 import { cloudFallback, localOnly } from './localOnly.ts';
@@ -441,7 +442,33 @@ async function approveNow(store: Store, taskId: string, opts: ApproveOpts, track
   }
   // The ledger's own record of this decision: written once, when the merge has settled. What the post-merge
   // check finds is never added to it; the check records it as events and the red-repo marker (checkLanding).
-  return { ...(await recordApproval(store, opts, before, run, { task, merge, registration })), ...(postMerge ? { postMerge } : {}) };
+  const recorded = await recordApproval(store, opts, before, run, { task, merge, registration });
+  if (merge.code === 'mr-opened') await noteApproverOfRecord(store, task, recorded.decision ?? null);
+  return { ...recorded, ...(postMerge ? { postMerge } : {}) };
+}
+
+/**
+ * Names the approver of record on the MR an approval opened (landing/mr.ts noteApproval): the approve decision's
+ * actor, the ticket's author and the decision id. The decision row is the record; a note that cannot be posted is a
+ * warning on the ticket, and the MR stays open.
+ */
+async function noteApproverOfRecord(store: Store, task: Task, decision: Decision | null): Promise<void> {
+  let missing: string | null = 'its approve decision was not recorded';
+  if (decision?.actorId) {
+    const approver = store.livePrincipal(decision.actorId);
+    try {
+      await noteApproval(task.id, {
+        approver: approver ? `${approver.name} (${approver.id})` : decision.actorId,
+        author: task.createdBy === null ? 'unknown' : store.livePrincipal(task.createdBy)?.name ?? task.createdBy,
+        decisionId: decision.id,
+      });
+      missing = null;
+    } catch (err) {
+      if (!(err instanceof ForgeError)) throw err;
+      missing = err.message;
+    }
+  }
+  if (missing) store.record({ taskId: task.id, type: 'warning', message: `merge request note naming the approver not posted: ${missing}` });
 }
 
 /**
@@ -644,6 +671,9 @@ async function recordApproval(
     : null;
   const stated = person && typeof opts.corrected === 'boolean' ? opts.corrected : null;
   const byTrees = asIs && landedTree !== null && reviewedTree !== null && landedTree !== reviewedTree;
+  // Said and overruled by the trees: kept, so the statement is not lost. An opened MR: its iid.
+  const mr = result.merge.code === 'mr-opened' ? pendingMr(before.id) : undefined;
+  const extra = byTrees && stated !== null ? { stated: stated ? 'corrected' : 'clean' } : mr ? { mrIid: mr.iid } : null;
   const decision = store.noteDecision({
     taskId: before.id,
     runId: ruled?.id ?? null,
@@ -660,8 +690,7 @@ async function recordApproval(
     corrected: byTrees ? true : stated,
     correctedSource: byTrees ? 'trees' : stated === null ? null : 'operator',
     reviewSource: person ? opts.reviewSource ?? null : null,
-    // Said and overruled by the trees: kept, so the statement is not lost.
-    extra: byTrees && stated !== null ? { stated: stated ? 'corrected' : 'clean' } : null,
+    extra,
   });
   return { ...result, decision };
 }

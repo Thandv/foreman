@@ -74,6 +74,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
   const pipelines = new Map<string, Pipeline>();
   const requests: FakeGitlab['requests'] = [];
   let nextPipelineId = 1;
+  let nextNoteId = 1;
   let url = '';
   // Merges rewrite a branch, so they run one at a time.
   let mergeChain: Promise<unknown> = Promise.resolve();
@@ -182,6 +183,11 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     if (rest.length === 2 && method === 'GET') {
       await observe(project, mr);
       return view(project, mr);
+    }
+    if (rest.length === 3 && rest[2] === 'notes' && method === 'POST') {
+      const text = body['body'];
+      if (typeof text !== 'string' || text === '') throw new HttpError(400, 'body is missing');
+      return { id: nextNoteId++, body: text, noteable_type: 'MergeRequest', noteable_iid: mr.iid };
     }
     if (rest.length === 3 && rest[2] === 'merge' && method === 'PUT') {
       const run = async (): Promise<unknown> => {

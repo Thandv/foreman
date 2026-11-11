@@ -86,6 +86,18 @@ test('opening a merge request returns its iid and the source branch head; the li
   });
 });
 
+test('a note posted on a merge request gets an id; one with no body is 400', async () => {
+  await withServer({}, async (s, f) => {
+    f.commitOn('feat', 'b.txt');
+    const mr = await open(s, 'feat');
+    const post = (body: unknown) => fetch(api(s, `/merge_requests/${mr.iid}/notes`), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const ok = await post({ body: 'hello' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { id: 1, body: 'hello', noteable_type: 'MergeRequest', noteable_iid: mr.iid });
+    assert.equal((await post({})).status, 400);
+  });
+});
+
 test('pushing to the source branch changes sha on the next GET', async () => {
   await withServer({}, async (s, f) => {
     const first = f.commitOn('feat', 'b.txt');

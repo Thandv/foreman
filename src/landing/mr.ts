@@ -27,6 +27,8 @@ export interface PendingMr {
   iid: number;
   /** The reviewed commit the MR's head is. */
   tip: string;
+  /** Its tree, the reviewed tree. */
+  tree: string;
   /** The durable landing marker (Store.openLanding) the MR holds open. */
   marker: number;
   openedAt: number;
@@ -42,6 +44,40 @@ export function useLanding(landing: Landing | null, home: string): void {
 
 export function pendingMrs(): PendingMr[] {
   return [...pending.values()];
+}
+
+/** The MR pending for `taskId`, if any. */
+export function pendingMr(taskId: string): PendingMr | undefined {
+  return pending.get(taskId);
+}
+
+/**
+ * Who approved an MR landing, as Foreman's approve decision names them. GitLab shows the cell's service account as
+ * whoever merges; this is the person of record.
+ */
+export interface ApproverOfRecord {
+  /** The decision's actor: '<name> (<principal id>)', or a reserved actor id such as 'operator'. */
+  approver: string;
+  /** Who created the ticket: a principal's name, else the id it records, else 'unknown'. */
+  author: string;
+  decisionId: string;
+}
+
+/**
+ * Posts the approver of record on the task's pending MR as one note: the reviewed tree and the Foreman-Approved-By,
+ * Foreman-Author and Foreman-Decision trailers. A forge failure is a ForgeError.
+ */
+export async function noteApproval(taskId: string, record: ApproverOfRecord): Promise<void> {
+  const mr = pending.get(taskId);
+  const map = mr && active?.landing.mappings.find((m) => m.repo === mr.repo);
+  if (!active || !mr || !map) throw new Error(`no merge request is pending for ${taskId}`);
+  await active.landing.forge(map).addNote(map.project, mr.iid, [
+    `Approved in Foreman at reviewed tree ${mr.tree}.`,
+    '',
+    `Foreman-Approved-By: ${record.approver}`,
+    `Foreman-Author: ${record.author}`,
+    `Foreman-Decision: ${record.decisionId}`,
+  ].join('\n'));
 }
 
 /**
@@ -89,7 +125,7 @@ export async function openForApproval(
     if (mr.headSha !== tip) {
       return { merged: false, code: 'mr-refused', reason: `the head of !${mr.iid} is ${mr.headSha}, not the reviewed commit ${tip}`, branch };
     }
-    pending.set(task.id, { taskId: task.id, runId: run!.id, repo: map.repo, iid: mr.iid, tip, marker: opts.marker, openedAt: Date.now() });
+    pending.set(task.id, { taskId: task.id, runId: run!.id, repo: map.repo, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now() });
     return { merged: false, code: 'mr-opened', reason: `opened !${mr.iid} ${mr.webUrl}`, branch, ...(note ? { note } : {}) };
   } catch (err) {
     if (!(err instanceof ForgeError) && !(err instanceof MirrorError)) throw err;

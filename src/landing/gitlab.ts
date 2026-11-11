@@ -158,6 +158,12 @@ export class GitlabForge implements Forge {
     return { merged: true, mergeCommitSha: merged.mergeCommitSha };
   }
 
+  async addNote(projectRef: string, iid: number, body: string): Promise<void> {
+    checkIid(iid);
+    const note = object(await this.#ok('POST', projectRef, `/merge_requests/${iid}/notes`, { body }), 'note');
+    if (typeof note['id'] !== 'number') throw unexpected('note.id', 'a number');
+  }
+
   /** A 2xx reply's JSON, or a ForgeError naming the status and GitLab's message. */
   async #ok(method: 'GET' | 'POST', projectRef: string, path: string, body?: Obj): Promise<unknown> {
     return this.#json(method, path, await this.#request(method, projectRef, path, body));

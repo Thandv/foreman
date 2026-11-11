@@ -59,6 +59,8 @@ export interface Forge {
   getMr(projectRef: string, iid: number): Promise<Mr>;
   /** Merges only if the source branch head is still `sha`. */
   merge(projectRef: string, iid: number, sha: string): Promise<MergeOutcome>;
+  /** Posts `body` as a comment on the MR. */
+  addNote(projectRef: string, iid: number, body: string): Promise<void>;
 }
 
 /** A forge call that failed or answered something unexpected. `status` is the HTTP status when there was one. */
