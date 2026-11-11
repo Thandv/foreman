@@ -76,6 +76,12 @@ The demo only talks to the fake. None of this has been run against a real GitLab
 - No required GitLab approval rules: Foreman never approves on GitLab, so such an MR waits for a person to approve it
   on GitLab, or for `FOREMAN_MR_TIMEOUT_MIN`.
 - `pushUrl` is the same project as `project`, not a fork.
+- No Git LFS in the repo: Foreman's git runs with filters off and pushes objects it copied itself, so it never uploads
+  an LFS object. GitLab refuses a push that adds an LFS pointer without its object, and a file meant for LFS is pushed
+  as a plain file.
+- No push rules that reject unsigned commits or check the committer or author: Foreman's commits are not signed, and
+  carry the git identity they were made with, not the token's user. Either refuses the push, and the approval is
+  `mr-refused` (`merge request not opened: git push for the forge mirror of <repo> failed: ...`).
 
 To try it, map a throwaway repo and project in `landing.json`, put the token
 in `<FOREMAN_HOME>/secrets/gitlab-token` (mode 0600), run `foreman doctor`, and sign two people in
