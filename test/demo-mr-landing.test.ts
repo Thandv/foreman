@@ -34,7 +34,7 @@ test('--check prints the steps of all three passes, including the refused self-a
     /^pass 1: /, /^ {2}1\. alice approves her own ticket \S+: refused \(403\)/, /^ {2}2\. bob approves \S+: mr-opened, !1 head [0-9a-f]{7} is the reviewed commit/,
     /^ {2}3\. pipeline success: merged !1 at [0-9a-f]{7}, checkout synced, main check green, dependent \S+ released/,
     /^pass 2: /, /^ {2}1\. bob approves \S+: mr-opened, !2 /, /^ {2}2\. pipeline failed: \S+ is back at the gate \(awaiting-approval\)/,
-    /^pass 3: /, /^ {2}1\. bob approves \S+: mr-opened, !3 /, /^ {2}2\. head moved to [0-9a-f]{7}: the merge at the reviewed sha was refused \(409\)/,
+    /^pass 3: /, /^ {2}1\. bob approves \S+: mr-opened, !3 /, /^ {2}2\. head moved to [0-9a-f]{7} and its pipeline passed: the merge at the reviewed sha was refused \(409\)/,
     /^ {2}3\. \S+ is back at the gate \(awaiting-approval\)/,
   ].map(at);
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'the steps come in order');
