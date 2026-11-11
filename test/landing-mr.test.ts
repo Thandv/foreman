@@ -315,7 +315,7 @@ test('the MR title names the task first, so a ticket title GitLab reads as a dra
   useLanding(new Landing([f.map], null), f.home);
   const store = new Store(':memory:');
   t.after(() => store.close());
-  for (const [branch, title] of [['drafted', 'Draft: add page'], ['bracketed', '[draft] add page'], ['long', `x${'y'.repeat(300)}\nsecond line`]] as const) {
+  for (const [branch, title] of [['drafted', 'Draft: add page'], ['bracketed', '[draft] add page'], ['long', `x${'y'.repeat(300)}\nsecond line`], ['lines', 'add page\n\n  and its test\t']] as const) {
     const a = parked(store, f.repo, branch);
     store.db.prepare('UPDATE tasks SET title = ? WHERE id = ?').run(title, a.id);
     const out = await approve(store, a.id);
@@ -326,5 +326,6 @@ test('the MR title names the task first, so a ticket title GitLab reads as a dra
     assert.doesNotMatch(sent, /^\s*(draft:|\[draft\]|\(draft\))/i);
     assert.ok([...sent].length <= 255, `${[...sent].length} characters`);
     assert.doesNotMatch(sent, /\n/);
+    if (branch === 'lines') assert.equal(sent, `Foreman ${a.id}: add page and its test`);
   }
 });
