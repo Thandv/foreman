@@ -114,13 +114,17 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      by Foreman`). After a merge call that got no answer (a timeout), the MR is read first: it is
      dropped only if it still reads open; merged, it is settled as below.
    - The MR's head is not the reviewed commit, its pipeline for that commit `failed` or was
-     `canceled`, a person closed it, or GitLab refuses the merge for a lasting reason (required
-     approvals, branch protection): the ticket goes back to `awaiting-approval` with the reason
-     (the pipeline's URL, or GitLab's message), the hold ends and the row is deleted.
+     `canceled`, a person closed it, or GitLab refuses the merge call itself (401 or 403, or a
+     refusal while the status reads something other than a transient word such as `checking`):
+     the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's
+     message), the hold ends and the row is deleted.
    - No pipeline yet, one for another commit, one still running (with `requirePipeline`; without
-     it no pipeline is needed), or a merge status other than `mergeable` (`checking`,
-     `ci_still_running`, ...): it waits. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened
-     does waiting give up and send the ticket back to the gate. A forge or mirror failure while
+     it no pipeline is needed), or a merge status other than `mergeable`: it waits, and no merge
+     call is made. That includes the lasting words as well as the transient ones: `not_approved`
+     (required GitLab approvals), `draft_status`, `discussions_not_resolved`, `conflict` and
+     `need_rebase` wait like `checking` or `ci_still_running`, so a person can still fix them on
+     GitLab. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened does waiting give up and send
+     the ticket back to the gate, with the last status as the reason. A forge or mirror failure while
      polling is waited out the same way, except that a merge call that got no answer, or a server
      error (5xx), is first read back: the timeout applies only once a read shows the MR still open.
      A merge call GitLab answers with another 4xx is a definite answer that nothing merged, and the

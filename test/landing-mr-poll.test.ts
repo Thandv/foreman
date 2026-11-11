@@ -398,7 +398,23 @@ test('a merge call GitLab answers with an HTTP error (401) is not taken for a lo
   atGate(store, a, /not merged within FOREMAN_MR_TIMEOUT_MIN \(120 min\); last: GitLab PUT \/merge_requests\/1\/merge: 401/);
 });
 
-test('a merge GitLab refuses for a lasting reason sends the ticket back to the gate with its message', async (t) => {
+test('an MR GitLab reads as not_approved from the first read is waited out, with no merge call, until FOREMAN_MR_TIMEOUT_MIN', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), mergeStatus: 'not_approved' });
+  });
+  const poll = poller(store);
+  await poll();
+  assert.equal(store.getTask(a.id)!.status, 'done', 'waited, not bounced');
+  assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab reports not_approved'));
+  await poll(Date.now() + config.mrTimeoutMin * 60_000 + 1);
+  assert.equal(merges(f).length, 0, 'no merge call');
+  atGate(store, a, /not merged within FOREMAN_MR_TIMEOUT_MIN \(120 min\); last: GitLab reports not_approved/);
+});
+
+test('a merge GitLab refuses while its status reads a lasting word sends the ticket back to the gate with GitLab\'s message', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a } = await opened(t, f);
   let reads = 0;
@@ -406,12 +422,12 @@ test('a merge GitLab refuses for a lasting reason sends the ticket back to the g
     const getMr = forge.getMr.bind(forge);
     forge.getMr = async (project, iid) => {
       const mr = await getMr(project, iid);
-      return ++reads > 1 ? { ...mr, mergeStatus: 'not_approved' } : mr;
+      return ++reads > 1 ? { ...mr, mergeStatus: 'conflict' } : mr;
     };
-    forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '405 approvals are required' });
+    forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '405 Method Not Allowed' });
   });
   await poller(store)();
-  atGate(store, a, /GitLab did not merge !1: 405 approvals are required/);
+  atGate(store, a, /GitLab did not merge !1: 405 Method Not Allowed/);
 });
 
 test('a throwing forge adapter is recorded against the stage, and the tick still dispatches', { timeout: 20_000 }, async (t) => {
