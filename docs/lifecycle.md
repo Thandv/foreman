@@ -121,7 +121,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      it no pipeline is needed), or a merge status other than `mergeable` (`checking`,
      `ci_still_running`, ...): it waits. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened
      does waiting give up and send the ticket back to the gate. A forge or mirror failure while
-     polling is waited out the same way.
+     polling is waited out the same way, except that a merge call that got no answer is first read
+     back: the timeout applies only once a read shows the MR still open.
    - Pipeline `success` for the reviewed commit and `mergeable`: one merge call at the reviewed sha,
      which GitLab refuses if the head has moved.
    - Merged (by Foreman, or by a person in GitLab): the mirror fetches the target branch and

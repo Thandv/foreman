@@ -255,7 +255,7 @@ async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
   if ('confirm' in step) return settle(store, mr, step.confirm);
   if (left(store, mr)) return;
   if ('gate' in step) return backToGate(store, mr, step.gate);
-  if (!mr.forgeMerged && now - mr.openedAt >= config.mrTimeoutMin * 60_000) {
+  if (!mr.forgeMerged && !mr.mergeCalled && now - mr.openedAt >= config.mrTimeoutMin * 60_000) {
     return backToGate(store, mr, `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${step.wait}`);
   }
   if (step.wait === mr.waiting) return;
