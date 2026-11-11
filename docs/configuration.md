@@ -198,7 +198,8 @@ output list each mapping and `token: set` or `token: unset`. `foreman doctor` as
 prints a FAIL line when its merge method is not `merge` or it requires squash (landing is confirmed by the merge
 commit's second parent being the reviewed commit), when merged results pipelines or merge trains are on (the pipeline
 gate reads the pipeline of the source branch head), or when the project cannot be read (no default branch, unknown
-project, refused token). Each approval checks the same settings and refuses with the reason. Doctor calls
+project, refused token). It does not check the token's scopes, expiry or push and merge rights. Each approval
+checks the same settings and refuses with the reason. Doctor calls
 the network only for a real GitLab in the file. Commits reach `pushUrl` only through a Foreman-owned mirror under
 `<FOREMAN_HOME>/forge/`, never by a fetch or push in the repo itself (see
 [The forge mirror](security.md#the-forge-mirror-srclandingpushts)). The repo path is matched against the checkout's top
