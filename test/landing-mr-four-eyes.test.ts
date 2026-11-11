@@ -126,3 +126,50 @@ test('a ticket that leaves done while four-eyes is asked again gets no merge cal
   assert.equal(store.isLanding(a.id), false);
   assert.equal(landingRows(store), 0);
 });
+
+test('four-eyes is asked in the merge\'s turn: an approver disabled while another merge into the target runs gets no merge call', async (t) => {
+  const f = await fixture(t);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const alice = human(store, 'alice');
+  const bob = human(store, 'bob');
+  const first = parked(store, f.repo, 'first', { createdBy: alice.id });
+  const second = parked(store, f.repo, 'second', { createdBy: alice.id });
+  useLanding(new Landing([f.map], null), f.home);
+  for (const task of [first, second]) {
+    const out = await applyApproval(store, task.id, { principal: bob.id, tracker: new ApprovalTracker() });
+    assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  }
+  // The first MR's merge call runs until `finish`; the second MR waits its turn behind it.
+  let finish!: () => void;
+  const running = new Promise<void>((r) => { finish = r; });
+  let called!: () => void;
+  const firstCalled = new Promise<void>((r) => { called = r; });
+  useLanding(new (class extends Landing {
+    override forge(m: LandingMapping): Forge {
+      const real = super.forge(m);
+      const merge = real.merge.bind(real);
+      real.merge = async (project, iid, sha) => {
+        if (iid === 1) { called(); await running; }
+        return merge(project, iid, sha);
+      };
+      return real;
+    }
+  })([f.map], null), f.home);
+  let now = Date.now();
+  const poll = (): Promise<void> => pollMergeRequests(store, now += config.mrPollMs, (err) => { throw err; }, postMerge());
+  await pipelinePasses(f, git(f.repo, 'rev-parse', 'first'));
+  const polls = [poll()];
+  await firstCalled;
+  await pipelinePasses(f, git(f.repo, 'rev-parse', 'second'));
+  polls.push(poll());
+  // Long enough for the second poll to read its MR and reach the queue.
+  await new Promise((r) => setTimeout(r, 1000));
+  store.disablePrincipal(bob.id);
+  finish();
+  await Promise.all(polls);
+  assert.equal(merges(f.fake), 1, 'only the first MR got a merge call');
+  assert.equal(store.getTask(second.id)!.status, 'awaiting-approval');
+  assert.match(store.getTask(second.id)!.error ?? '', /approved, but not landed: four-eyes: only a signed-in person can approve or land work/);
+  assert.equal(pendingMr(second.id), undefined);
+});
