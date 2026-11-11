@@ -194,7 +194,7 @@ export async function openForApproval(
     const opened = reused ?? await forge.openMr(map.project, {
       sourceBranch,
       targetBranch: map.targetBranch,
-      title: task.title,
+      title: mrTitle(task),
       // A reused MR keeps its description: the tree is named in each approval's note instead.
       description: `Foreman task ${task.id}\n\nThe reviewed tree is in the latest Foreman approval note.`,
     });
@@ -219,6 +219,14 @@ export async function openForApproval(
     if (!(err instanceof ForgeError) && !(err instanceof MirrorError)) throw err;
     return { merged: false, code: 'mr-refused', reason: `merge request not opened: ${err.message}`, branch };
   }
+}
+
+/**
+ * The MR title: one line of at most 255 characters (GitLab refuses a longer one), led by the task id, so a ticket title
+ * such as "Draft: ..." does not make GitLab open the MR as a draft, which never merges.
+ */
+function mrTitle(task: Task): string {
+  return [...`Foreman ${task.id}: ${task.title.replace(/\s+/g, ' ').trim()}`].slice(0, 255).join('');
 }
 
 /**

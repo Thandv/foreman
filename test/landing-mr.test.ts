@@ -222,7 +222,7 @@ test('the MR an approval opens names the task in its description and points to t
   assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
   const open = f.fake.requests.find((r) => r.method === 'POST' && /\/merge_requests$/.test(r.path))!;
   assert.deepEqual(JSON.parse(open.body!), {
-    source_branch: `foreman/${a.id}`, target_branch: 'main', title: 'described',
+    source_branch: `foreman/${a.id}`, target_branch: 'main', title: `Foreman ${a.id}: described`,
     // A reused MR keeps its description, so it names no tree that a later approval would make stale.
     description: `Foreman task ${a.id}\n\nThe reviewed tree is in the latest Foreman approval note.`,
     remove_source_branch: true, squash: false,

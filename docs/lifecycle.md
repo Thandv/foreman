@@ -106,7 +106,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    then posts one note on it naming the reviewed tree, the approver of record, the ticket's author
    and the decision id, and the decision keeps the MR's iid ([security](security.md)). The MR's
    description names the task and points to the latest such note, since a reused MR keeps the
-   description it was opened with. Only those steps run in the section, so
+   description it was opened with. Its title is `Foreman <task id>: <ticket title>`, on one line and
+   cut to GitLab's 255 characters; led by the task id, a ticket title such as `Draft: ...` does not
+   make GitLab open a draft MR, which would never merge. Only those steps run in the section, so
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
    section for at most about five forge calls of 15 s each, plus the mirror's git (and those
    30 s when a reused MR's head lags). A change to
