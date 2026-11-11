@@ -108,7 +108,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    each open MR at most every `FOREMAN_MR_POLL_MS`, one call at a time per MR; the tick never waits
    for the forge. Each change of state is one event on the ticket.
    - The ticket left `done` (a person reopened, rejected or archived it): the MR is no longer
-     followed, the hold ends and the row is deleted. No merge call is made for it.
+     followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
+     by Foreman`).
    - The MR's head is not the reviewed commit, its pipeline for that commit `failed` or was
      `canceled`, a person closed it, or GitLab refuses the merge for a lasting reason (required
      approvals, branch protection): the ticket goes back to `awaiting-approval` with the reason
@@ -127,6 +128,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      dependents stay `blocked` and the epic open. Not confirmed, the hold and the row stay, with a
      warning that the merged commit is not the reviewed commit; the next start holds the repo
      for the operator.
+     A merge made on the forge is settled this way even when the ticket left `done` meanwhile
+     (a person reopened it during the merge call), with a warning naming its status.
 
 ### A dependent waiting on a canceled ticket
 

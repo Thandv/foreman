@@ -166,7 +166,8 @@ type Step = { wait: string } | { gate: string } | { confirm: string | null };
 /**
  * The tick stage: each open MR not polled in the last FOREMAN_MR_POLL_MS is polled, one call at a time per MR, and
  * the tick does not wait for it. A ticket that left `done` (a person reopened, rejected or archived it) is dropped
- * here, before any call: its hold ends and its marker closes. A poll that throws something other than a forge or
+ * here, before any call: its hold ends and its marker closes. Once the forge has merged, the merge is confirmed and
+ * settled whatever the ticket's status, so the marker is never closed on a merge left unrecorded. A poll that throws something other than a forge or
  * mirror failure goes to `onError` and the MR is polled again next time. Resolves when the polls started here end.
  */
 export function pollMergeRequests(store: Store, now: number, onError: (err: unknown) => void): Promise<void> {
@@ -189,7 +190,7 @@ function left(store: Store, mr: Entry): boolean {
   pending.delete(mr.taskId);
   store.endLanding(mr.taskId);
   store.closeLanding(mr.marker);
-  store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merge request !${mr.iid} no longer followed: the ticket is ${status}; nothing merged` });
+  store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merge request !${mr.iid} no longer followed: the ticket is ${status}; no merge made by Foreman` });
   return true;
 }
 
@@ -201,7 +202,7 @@ async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
   try {
     step = await decide(store, mr, forge, map.project, map.requirePipeline);
     if ('confirm' in step) mr.forgeMerged = true;
-    if ('confirm' in step && step.confirm !== null && !left(store, mr)) {
+    if ('confirm' in step && step.confirm !== null) {
       const ok = await active.landing.mirror(map, active.home).confirmMerge(step.confirm, mr.tip);
       if (!ok) step = { confirm: null };
     }
@@ -209,8 +210,8 @@ async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
     if (!(err instanceof ForgeError) && !(err instanceof MirrorError)) throw err;
     step = { wait: err.message };
   }
-  if (left(store, mr)) return;
   if ('confirm' in step) return settle(store, mr, step.confirm);
+  if (left(store, mr)) return;
   if ('gate' in step) return backToGate(store, mr, step.gate);
   if (!mr.forgeMerged && now - mr.openedAt >= config.mrTimeoutMin * 60_000) {
     return backToGate(store, mr, `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${step.wait}`);
@@ -256,9 +257,13 @@ function pipelineWait(mr: Mr): string {
 /**
  * A merged MR: confirmed (`merged` is the merge commit, on the target with the reviewed commit as its second parent),
  * its marker closes and it waits for the checkout sync with the landing hold on; not confirmed (null), the hold and
- * the marker stay, so the next start holds the repo for the operator.
+ * the marker stay, so the next start holds the repo for the operator. A ticket that left `done` meanwhile is warned of.
  */
 function settle(store: Store, mr: Entry, merged: string | null): void {
+  const status = store.getTask(mr.taskId)?.status ?? 'gone';
+  if (status !== 'done') {
+    store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request !${mr.iid} merged on the forge while the ticket is ${status}` });
+  }
   if (merged === null) {
     mr.phase = 'held';
     store.record({

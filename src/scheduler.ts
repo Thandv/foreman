@@ -983,7 +983,7 @@ export class Scheduler {
     // A provisional re-check is a review in flight; it was aborted above and
     // must settle before the store it writes to is closed.
     if (this.recheckInFlight) await this.recheckInFlight.catch(() => {});
-    await Promise.allSettled([...this.probes]);
+    await Promise.allSettled([...this.probes, ...this.mrPolls]);
     // Aborting SIGTERMs each child's group (and proc.ts escalates to SIGKILL);
     // anything still recorded belongs to a run that never settled its row.
     // Kill it now rather than leave an orphan behind a clean shutdown.
@@ -1057,6 +1057,12 @@ export class Scheduler {
     process.stderr.write(`${line}\n`);
   }
 
+  /** A stage's failure, recorded and counted; also an off-tick failure of work a stage started (MR polls). */
+  private stageFailed(name: TickStage, err: unknown): void {
+    this.stageErrorCounts.set(name, (this.stageErrorCounts.get(name) ?? 0) + 1);
+    this.noteTickError(err, name);
+  }
+
   /**
    * One tick stage, contained and timed: its throw is recorded (naming the stage) and counted, and the tick goes on
    * to the next stage. Returns the stage's result, or undefined when it threw.
@@ -1066,8 +1072,7 @@ export class Scheduler {
     try {
       return run();
     } catch (err) {
-      this.stageErrorCounts.set(name, (this.stageErrorCounts.get(name) ?? 0) + 1);
-      this.noteTickError(err, name);
+      this.stageFailed(name, err);
       return undefined;
     } finally {
       this.stageMs.set(name, performance.now() - start);
@@ -2584,9 +2589,14 @@ export class Scheduler {
     }
   }
 
+  /** MR polls in flight; stop() settles them before the store closes. */
+  private readonly mrPolls = new Set<Promise<void>>();
+
   /** Polls the open merge requests (landing/mr.ts); the tick does not wait for the forge. */
   private pollMergeRequests(): void {
-    void pollMergeRequests(this.store, this.now(), (err) => this.noteTickError(err, 'pollMergeRequests'));
+    const poll = pollMergeRequests(this.store, this.now(), (err) => this.stageFailed('pollMergeRequests', err));
+    this.mrPolls.add(poll);
+    void poll.finally(() => this.mrPolls.delete(poll));
   }
 
   private redCheckAt = 0;
