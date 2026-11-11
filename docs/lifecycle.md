@@ -121,8 +121,11 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      it no pipeline is needed), or a merge status other than `mergeable` (`checking`,
      `ci_still_running`, ...): it waits. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened
      does waiting give up and send the ticket back to the gate. A forge or mirror failure while
-     polling is waited out the same way, except that a merge call that got no answer is first read
-     back: the timeout applies only once a read shows the MR still open.
+     polling is waited out the same way, except that a merge call that got no answer, or a server
+     error (5xx), is first read back: the timeout applies only once a read shows the MR still open.
+     A merge call GitLab answers with another 4xx is a definite answer that nothing merged, and the
+     timeout applies to it as to any wait. GitLab answers 401 or 403 when the token may not merge
+     into the target branch: that is a refusal, and the ticket goes back to the gate at once.
    - Pipeline `success` for the reviewed commit and `mergeable`: four-eyes (`docs/security.md`) is
      asked again for the approve decision's actor, then one merge call at the reviewed sha, which
      GitLab refuses if the head has moved. If four-eyes now refuses (the approver was disabled while

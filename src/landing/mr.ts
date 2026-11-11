@@ -299,7 +299,12 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   // Or while four-eyes was asked (it awaits a git diff): nothing awaits between this check and the merge call.
   if (left(store, mr)) return { wait: 'the ticket left done' };
   mr.mergeCalled = true;
-  const out = await forge.merge(project, mr.iid, mr.tip);
+  const out = await forge.merge(project, mr.iid, mr.tip).catch((err: unknown) => {
+    // A 4xx is GitLab's answer that nothing merged, so the timeout applies again; no answer, or a server error, may
+    // hide a merge, and keeps the MR until a read shows it open.
+    if (err instanceof ForgeError && err.status !== null && err.status >= 400 && err.status < 500) mr.mergeCalled = false;
+    throw err;
+  });
   mr.mergeCalled = false;
   if (out.merged) return { confirm: out.mergeCommitSha };
   if (out.reason === 'head-moved') return { gate: `MR head moved after review: ${out.detail}` };

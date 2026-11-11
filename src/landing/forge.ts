@@ -44,7 +44,8 @@ export interface NewMr {
 /**
  * head-moved: the source branch is no longer the sha asked for, so nothing was
  * merged. not-mergeable: the host will not merge it now (pipeline, conflicts,
- * a transient check). refused: the host does not allow this caller to merge.
+ * a transient check). refused: the host does not allow this caller to merge
+ * (GitLab: 401 or 403).
  */
 export type MergeOutcome =
   | { merged: true; mergeCommitSha: string }

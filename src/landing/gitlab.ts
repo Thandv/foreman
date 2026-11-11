@@ -152,7 +152,8 @@ export class GitlabForge implements Forge {
     const detail = (): string => this.#redact(this.#message(reply));
     if (reply.status === 409) return { merged: false, reason: 'head-moved', detail: detail() };
     if (reply.status === 405 || reply.status === 406 || reply.status === 422) return { merged: false, reason: 'not-mergeable', detail: detail() };
-    if (reply.status === 403) return { merged: false, reason: 'refused', detail: detail() };
+    // 401 is GitLab's answer when the caller may not merge into the target branch (merge_requests.rb `unauthorized!`).
+    if (reply.status === 401 || reply.status === 403) return { merged: false, reason: 'refused', detail: detail() };
     const merged = readMr(this.#json('PUT', path, reply));
     if (merged.state !== 'merged' || merged.mergeCommitSha === null) throw new ForgeError(`GitLab answered the merge of !${iid} with state ${merged.state} and no merge commit`);
     return { merged: true, mergeCommitSha: merged.mergeCommitSha };
