@@ -287,3 +287,18 @@ test('a merge GitLab answers 200 with the MR still open is not-mergeable, with G
     assert.equal((await forge.getMr('group/app', opened.iid)).state, 'opened');
   });
 });
+
+test('an MR with head_pipeline null or absent has no pipeline: GitLab leaves the key out when the token may not read pipelines', async () => {
+  const mr = {
+    iid: 1, state: 'opened', sha: SHA, target_branch: 'main', squash: false, source_project_id: 7, target_project_id: 7,
+    detailed_merge_status: 'mergeable', merge_commit_sha: null, web_url: 'http://gitlab.test/group/app/-/merge_requests/1',
+  };
+  for (const body of [mr, { ...mr, head_pipeline: null }]) {
+    await withStub((_req, res) => res.writeHead(200).end(JSON.stringify(body)), async (url) => {
+      assert.equal((await new GitlabForge({ baseUrl: url }).getMr('group/app', 1)).pipeline, null);
+    });
+  }
+  await withStub((_req, res) => res.writeHead(200).end(JSON.stringify({ ...mr, head_pipeline: 'running' })), async (url) => {
+    await assert.rejects(new GitlabForge({ baseUrl: url }).getMr('group/app', 1), /unexpected head_pipeline/);
+  });
+});
