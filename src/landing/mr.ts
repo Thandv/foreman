@@ -284,6 +284,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   if (left(store, mr)) return { wait: 'the ticket left done' };
   mr.mergeCalled = true;
   const out = await forge.merge(project, mr.iid, mr.tip);
+  mr.mergeCalled = false;
   if (out.merged) return { confirm: out.mergeCommitSha };
   if (out.reason === 'head-moved') return { gate: `MR head moved after review: ${out.detail}` };
   if (out.reason === 'not-mergeable') {
