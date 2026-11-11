@@ -67,6 +67,11 @@
   person who can use a service token could create a ticket as the service and approve it as themselves.
   A change to protected paths always needs that second person, even while only one human exists: Foreman's
   `PROTECTED_PATHS` in Foreman's own repo, and in any repo the human-only paths and the repo's `gate.humanPaths`.
+  The built-in human-only paths (`HUMAN_ONLY_PATHS` in `src/gate.ts`) are `package.json`, `package-lock.json`, `Makefile`, `*.sh`,
+  `scripts/`, CI definitions (`.github/`, `.gitlab/` and `.gitlab-ci.yml`, which defines the pipeline that gates a
+  merge request), `.gitattributes`, `.gitmodules`, and any path segment starting with security, auth, trust, sandbox
+  or crypto. A pipeline file under another name, or one pulled in with `include:` from elsewhere, is not covered:
+  add it to `gate.humanPaths`.
   The change is the run's work from its base commit to the reviewed tree (the `--as-is` tree when one is named),
   and for `landed` the named commit against its first parent; a change git cannot list counts as protected. With
   auth on, `landed` is also refused (409) unless it records the ticket's own merge request merged on the forge at the

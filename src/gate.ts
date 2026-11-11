@@ -964,16 +964,17 @@ function taskClasses(task: Task): Set<string> {
 
 /**
  * Paths whose change a person approves, whatever else is in the diff: what a
- * repo installs and runs (manifests, shell, build and CI scripts), how git
+ * repo installs and runs (manifests, shell, build and CI scripts, including
+ * GitLab's .gitlab-ci.yml, which defines the pipeline that gates an MR), how git
  * itself treats the tree, and anything named for a security boundary. Matched
  * on the path alone, case-blind, at any depth — a nested package.json or a
  * scripts/ directory inside a package runs just as readily as the root one.
  */
 export const HUMAN_ONLY_PATHS: readonly RegExp[] = [
-  /(^|\/)(package\.json|package-lock\.json|Makefile|\.gitattributes|\.gitmodules)$/i,
+  /(^|\/)(package\.json|package-lock\.json|Makefile|\.gitattributes|\.gitmodules|\.gitlab-ci\.ya?ml)$/i,
   /\.sh$/i,
   // The directory, or an entry of that very name (a symlink standing in for it).
-  /(^|\/)(scripts|\.github)(\/|$)/i,
+  /(^|\/)(scripts|\.github|\.gitlab)(\/|$)/i,
   // Any segment, directory or file, that starts with one of these words.
   /(^|\/)(security|auth|trust|sandbox|crypto)/i,
 ];
