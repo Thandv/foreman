@@ -13,6 +13,7 @@ import { pinnedGit } from '../src/gitExec.ts';
 import { createJail } from '../src/isolate.ts';
 import { createServer } from '../src/server.ts';
 import { baselinePath, checkRepo, recordBaseline } from '../src/gitTripwire.ts';
+import { FORGE_TARGET_REF, ForgeMirror, IMPORTED_REF } from '../src/landing/push.ts';
 import type { Task } from '../src/types.ts';
 
 const git = (cwd: string, ...a: string[]): string => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
@@ -308,4 +309,38 @@ test('a repo run with no baseline is held at collection, but not refused at land
   assert.equal(held.ok, false);
   assert.match((held as { reason: string }).reason, /no baseline/);
   assert.deepEqual(await checkRepo(dir, 'r_none', { requireBaseline: false, git: pinnedGit }), { ok: true, note: null });
+});
+
+test('the forge mirror\'s refs/foreman/forge/ refs in the real repo are not flagged', async () => {
+  const dir = repo();
+  const forge = path.join(scratchDir('foreman-tripwire-forge-'), 'app.git');
+  git(path.dirname(forge), 'init', '-q', '--bare', '-b', 'main', forge);
+  git(dir, 'push', '-q', forge, 'main:refs/heads/main');
+  await recordBaseline(dir, 'r_forge', pinnedGit);
+  const mirror = new ForgeMirror(scratchDir('foreman-tripwire-home-'), {
+    repo: dir, mode: 'mr', forge: 'gitlab', baseUrl: 'http://127.0.0.1:9', project: 'group/app', pushUrl: forge,
+    targetBranch: 'main', requirePipeline: true,
+  }, null);
+  const target = await mirror.fetchTarget();
+  await mirror.importCommit(target);
+  assert.equal(git(dir, 'rev-parse', FORGE_TARGET_REF), target);
+  assert.equal(git(dir, 'rev-parse', IMPORTED_REF), target);
+  const v = await checkRepo(dir, 'r_forge', { requireBaseline: true, git: pinnedGit });
+  assert.deepEqual(v, { ok: true, note: null });
+});
+
+test('refs elsewhere under refs/foreman/ are still flagged: the exclusion is exactly refs/foreman/forge/', async () => {
+  const dir = repo();
+  await recordBaseline(dir, 'r_foreman_other', pinnedGit);
+  git(dir, 'update-ref', 'refs/foreman/other', 'HEAD');
+  git(dir, 'update-ref', 'refs/foreman/forgex/a', 'HEAD');
+  git(dir, 'update-ref', 'refs/foreman/forge', 'HEAD~1'); // the name itself, no slash after it
+  const replaced = git(dir, 'rev-parse', 'HEAD~1');
+  git(dir, 'replace', replaced, 'HEAD');
+  const v = await checkRepo(dir, 'r_foreman_other', { requireBaseline: true, git: pinnedGit });
+  assert.equal(v.ok, false);
+  const reason = (v as { reason: string }).reason;
+  for (const ref of ['refs/foreman/other', 'refs/foreman/forgex/a', 'refs/foreman/forge', `refs/replace/${replaced}`]) {
+    assert.ok(reason.includes(`ref ${ref} was created`), `${ref} is flagged: ${reason}`);
+  }
 });
