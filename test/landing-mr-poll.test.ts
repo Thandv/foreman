@@ -322,6 +322,29 @@ test('an MR not merged within FOREMAN_MR_TIMEOUT_MIN sends the ticket back to th
   atGate(store, a, /not merged within FOREMAN_MR_TIMEOUT_MIN \(120 min\); last: pipeline running/);
 });
 
+test('a merge call whose answer was lost at FOREMAN_MR_TIMEOUT_MIN is read back, not sent to the gate', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, tip } = await opened(t, f);
+  patch(f, (forge) => {
+    const merge = forge.merge.bind(forge);
+    forge.merge = async (project, iid, sha) => {
+      await merge(project, iid, sha);
+      throw new ForgeError('no answer within 15000 ms');
+    };
+  });
+  const poll = poller(store);
+  await poll(Date.now() + config.mrTimeoutMin * 60_000 + 1);
+  assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip, 'the forge merged the reviewed commit');
+  assert.equal(store.getTask(a.id)!.status, 'done');
+  assert.equal(landingRows(store), 1, 'the marker stays open');
+  assert.equal(store.isLanding(a.id), true);
+  await poll();
+  const m = git(f.forge, 'rev-parse', 'main');
+  assert.deepEqual({ phase: pendingMr(a.id)?.phase, merged: pendingMr(a.id)?.merged }, { phase: 'merged', merged: m });
+  assert.equal(store.getTask(a.id)!.status, 'done');
+  assert.equal(landingRows(store), 0, 'the marker closes once confirmed');
+});
+
 test('a merge GitLab refuses for a lasting reason sends the ticket back to the gate with its message', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a } = await opened(t, f);
