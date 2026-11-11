@@ -258,13 +258,16 @@ test('with one human, an unprotected change is approved and a protected one is r
 
   const security = parkedChange(t, store, 'src/security/x.ts', alice.id);
   await assert.rejects(applyApproval(store, security.task.id, { principal: alice.id }), /touches src\/security\/x\.ts/);
+  // GitLab's CI definition is the pipeline that gates an MR landing: the ticket must not approve its own gate.
+  const pipeline = parkedChange(t, store, '.gitlab-ci.yml', alice.id);
+  await assert.rejects(applyApproval(store, pipeline.task.id, { principal: alice.id }), /touches \.gitlab-ci\.yml/);
   const listed = parkedChange(t, store, 'vendor/keys.txt', alice.id);
   store.setSetting('gate.humanPaths', JSON.stringify({ [listed.repo]: ['vendor/'] }));
   await assert.rejects(applyApproval(store, listed.task.id, { principal: alice.id }), /touches vendor\/keys\.txt/);
   // Foreman's own repo: a PROTECTED_PATHS entry that is not a human-only path elsewhere.
   const self = parkedChange(t, store, 'src/gate.ts', alice.id);
   await assert.rejects(applyApproval(store, self.task.id, { principal: alice.id, selfRoot: self.repo }), /touches src\/gate\.ts/);
-  for (const refused of [named, security, listed, self]) {
+  for (const refused of [named, security, pipeline, listed, self]) {
     assert.deepEqual(decisions(store, refused.task.id), []);
     assert.equal(store.getTask(refused.task.id)!.status, 'awaiting-approval');
   }
