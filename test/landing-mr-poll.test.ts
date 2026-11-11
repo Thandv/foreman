@@ -486,6 +486,25 @@ test('an MR whose target branch is changed on GitLab after approval goes back to
   atGate(store, a, /!1 targets release, not main/);
 });
 
+test('an approval in a project that requires squash or runs merge trains is refused before anything is pushed', async (t) => {
+  for (const [projectExtra, why] of [
+    [{ squash_option: 'always' }, /squash_option always/],
+    [{ merge_trains_enabled: true }, /merge trains are on/],
+    [{ merge_pipelines_enabled: true }, /merged results pipelines are on/],
+  ] as const) {
+    const f = await fixture(t, { pipeline: 'success', projectExtra });
+    useLanding(new Landing([f.map], null), f.home);
+    const store = new Store(':memory:');
+    t.after(() => store.close());
+    const a = parked(store, f.repo, 'work');
+    const out = await approve(store, a.id);
+    assert.equal(out.merge.code, 'mr-refused');
+    assert.match(out.merge.reason, why);
+    assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
+    assert.throws(() => git(f.forge, 'rev-parse', '--verify', `refs/heads/foreman/${a.id}`), 'nothing pushed');
+  }
+});
+
 test('a throwing forge adapter is recorded against the stage, and the tick still dispatches', { timeout: 20_000 }, async (t) => {
   const f = await fixture(t);
   const { store, a } = await opened(t, f);

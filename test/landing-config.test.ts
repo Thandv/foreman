@@ -118,6 +118,25 @@ test('doctor against the fake: merge_method merge is ok, ff is a FAIL, an unknow
   }
 });
 
+test('doctor FAILs a project that requires squash, or runs merged results pipelines or merge trains', async () => {
+  const bare = scratchDir('landing-config-bare-');
+  execFileSync('git', ['init', '--bare', '-b', 'main'], { cwd: bare });
+  const cases: Array<[Record<string, unknown>, string]> = [
+    [{ squash_option: 'always' }, 'squash_option always; MR landing needs a merge commit, so squash must not be required'],
+    [{ merge_pipelines_enabled: true }, 'merged results pipelines are on; MR landing does not support them'],
+    [{ merge_trains_enabled: true }, 'merge trains are on; MR landing does not support them'],
+  ];
+  for (const [projectExtra, why] of cases) {
+    const fake = await startFakeGitlab({ projects: { 'group/app': bare }, token: TOKEN, projectExtra });
+    try {
+      const landing = loadLanding(home({ landing: { '/repo/app': mapping({ baseUrl: fake.url }) }, token: TOKEN }), 'mr')!;
+      assert.deepEqual(await landingDoctorLines(landing), [`landing /repo/app (group/app): FAIL ${why}`]);
+    } finally {
+      await fake.close();
+    }
+  }
+});
+
 test('config --effective with FOREMAN_LANDING=mr and a landing.json shows each mapping and token: set, never the token', () => {
   const h = home({ landing: { '/repo/app': mapping() }, token: TOKEN });
   const r = spawnSync(process.execPath, [CLI, 'config', '--effective'], { env: { ...process.env, FOREMAN_HOME: h, FOREMAN_LANDING: 'mr' }, encoding: 'utf8' });
