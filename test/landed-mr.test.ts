@@ -4,6 +4,8 @@ import './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { Landing } from '../src/landing/config.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
@@ -132,4 +134,28 @@ test('an MR merged at the reviewed tree is recorded once, and a commit other tha
   const again = await r.landed(taskId, tip);
   assert.equal(again.status, 409, JSON.stringify(again.json));
   assert.equal(landedRows(r.store, taskId), 1);
+});
+
+test('an MR merged with one more commit pushed onto its branch is refused: the head is not the reviewed tree', async (t) => {
+  const f = await fixture(t);
+  useLanding(new Landing([f.map], null), f.home);
+  const r = await rig(t);
+  const { taskId, tip } = await approvedThenBackAtGate(f, r.store, 'pushed');
+  // Someone pushes an unreviewed commit onto the MR's source branch on the forge; the MR merges with it as its head.
+  const source = git(f.forge, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/foreman/');
+  assert.match(source, /^foreman\/\S+$/);
+  git(f.repo, 'checkout', '-q', '--detach', tip);
+  fs.writeFileSync(path.join(f.repo, 'unreviewed.txt'), 'y\n');
+  git(f.repo, 'add', 'unreviewed.txt');
+  git(f.repo, 'commit', '-qm', 'unreviewed');
+  const head = git(f.repo, 'rev-parse', 'HEAD');
+  git(f.repo, 'push', '-q', f.forge, `HEAD:refs/heads/${source}`);
+  git(f.repo, 'checkout', '-q', 'main');
+  await mergeOnForge(f, head);
+
+  const res = await r.landed(taskId, head);
+  assert.equal(res.status, 409, JSON.stringify(res.json));
+  assert.match(String(res.json['error']), /this repo lands through its merge request.*not the reviewed tree/);
+  assert.equal(landedRows(r.store, taskId), 0);
+  assert.equal(r.store.getTask(taskId)!.status, 'awaiting-approval');
 });
