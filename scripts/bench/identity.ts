@@ -6,15 +6,14 @@
 // Usage: node scripts/bench/identity.ts [--base <checkout>] [--branch <checkout>] [--requests 200] [--out <dir>] [--json]
 // Writes raw.json, summary.md and demo-transcript.txt to --out (default comparisons/identity). Not part of npm run verify;
 // comparisons/identity/method.md says how to read the numbers.
-import { scratch, options, count } from './env.ts';
+import { options, count } from './env.ts';
+import { call, mint, forgeFixture, parked } from './api.ts';
 import { startDaemon, openFeed, type Daemon, type Feed } from './daemon.ts';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFakeGitlab } from '../forge/fakeGitlab.ts';
 import { percentile } from '../../src/latency.ts';
-import { ensureHostSecret, HOST_SECRET_HEADER } from '../../src/security/hostSecret.ts';
 
 interface Row { daemon: 'base' | 'branch'; auth: 'off' | 'bearer'; op: string; samples: number; p50Ms: number; p95Ms: number }
 interface Landing { mode: 'single-principal' | 'four-eyes'; approveToMergedMs: number }
@@ -22,25 +21,8 @@ interface Refusal { status: number; error: string }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WARMUP = 5;
-/** How long a ticket may take to park, or an MR to merge, before the bench gives up. */
+/** How long an MR may take to merge before the bench gives up. */
 const WAIT_MS = 60_000;
-
-async function call(d: Daemon, method: string, urlPath: string, o: { body?: unknown; token?: string; headers?: Record<string, string> } = {}): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`${d.url}${urlPath}`, {
-    method,
-    headers: { 'content-type': 'application/json', ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...o.headers },
-    ...(o.body === undefined ? {} : { body: JSON.stringify(o.body) }),
-  });
-  const text = await res.text();
-  return { status: res.status, json: text ? (JSON.parse(text) as Record<string, unknown>) : {} };
-}
-
-/** The first mint latches auth on. `d` is on this machine, so the host-admin secret is read from its home as the CLI does. */
-async function mint(d: Daemon, name: string): Promise<string> {
-  const res = await call(d, 'POST', '/api/tokens', { body: { name }, headers: { [HOST_SECRET_HEADER]: ensureHostSecret(d.home) } });
-  if (res.status !== 201) throw new Error(`mint ${name} on ${d.name}: ${res.status} ${JSON.stringify(res.json)}`);
-  return res.json['token'] as string;
-}
 
 const round = (n: number): number => Math.round(n * 100) / 100;
 
@@ -73,39 +55,6 @@ async function measure(daemon: Row['daemon'], checkout: string, auth: Row['auth'
     return await timed(d, daemon, auth, auth === 'bearer' ? await mint(d, 'alice') : undefined, n);
   } finally {
     await d.stop();
-  }
-}
-
-function git(cwd: string, ...args: string[]): void {
-  execFileSync('git', args, { cwd, stdio: 'ignore' });
-}
-
-/** A repo with a commit on main, and the forge's bare project that has the same main. */
-function forgeFixture(): { repo: string; bare: string } {
-  const repo = scratch('repo');
-  const bare = path.join(scratch('forge'), 'app.git');
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'config', 'user.email', 'bench@example.invalid');
-  git(repo, 'config', 'user.name', 'Bench');
-  fs.writeFileSync(path.join(repo, 'README.md'), 'bench\n');
-  git(repo, 'add', 'README.md');
-  git(repo, 'commit', '-qm', 'base');
-  git(path.dirname(bare), 'init', '-q', '--bare', '-b', 'main', bare);
-  git(repo, 'push', '-q', bare, 'main:refs/heads/main');
-  return { repo, bare };
-}
-
-/** A shell ticket by `token`'s principal that writes one file in `repo`, once it is parked at the gate: its id. */
-async function parked(d: Daemon, token: string, repo: string, name: string): Promise<string> {
-  const made = await call(d, 'POST', '/api/tasks', { token, body: { title: `${name}'s change`, prompt: `printf 'x\\n' > ${name}.txt`, runner: 'shell', kind: 'code', repo } });
-  const id = made.json['id'] as string;
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const tasks = (await call(d, 'GET', '/api/state', { token })).json['tasks'] as Array<{ id: string; status: string }>;
-    const status = tasks.find((t) => t.id === id)?.status;
-    if (status === 'awaiting-approval') return id;
-    if (Date.now() > deadline) throw new Error(`${id} did not park at the gate: it is ${status}`);
-    await new Promise((r) => setTimeout(r, 100));
   }
 }
 

@@ -39,7 +39,7 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-/** Starts the daemon of `checkout`; `files` are written under its home first, `env` is added to its environment. */
+/** Starts the daemon of `checkout`; `files` are written under its home first (mode 0600, as a secret needs), `env` is added to its environment. */
 export async function startDaemon(
   name: string,
   checkout: string,
@@ -48,7 +48,10 @@ export async function startDaemon(
   const home = scratch(`${name}-home`);
   const port = await freePort();
   assertIsolated(home, port);
-  for (const [file, text] of Object.entries(opts.files ?? {})) fs.writeFileSync(path.join(home, file), text);
+  for (const [file, text] of Object.entries(opts.files ?? {})) {
+    fs.mkdirSync(path.dirname(path.join(home, file)), { recursive: true });
+    fs.writeFileSync(path.join(home, file), text, { mode: 0o600 });
+  }
   const log: string[] = [];
   const child = spawn(process.execPath, [path.join(checkout, 'src', 'cli.ts'), 'serve'], {
     cwd: checkout,

@@ -18,6 +18,11 @@ process.on('exit', () => {
 // Ctrl-C or a kill exits through the handler above too, so a stopped bench leaves no temp dirs behind.
 for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) process.on(sig, () => process.exit(code));
 
+/** Stops the exit handler removing the temp dirs and returns them: for a script whose operator asked to keep them. */
+export function keepScratch(): string[] {
+  return made.splice(0);
+}
+
 /** A fresh temp dir, removed when the bench exits. */
 export function scratch(prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `foreman-bench-${prefix}-`)));
