@@ -2,7 +2,7 @@
 
 Scope: how fast Foreman's ledger and pipeline are, measured by two benchmarks, and the first numbers they gave. For a contributor changing the queue, the scheduler or the gate, and for an operator sizing a backlog. How the parts fit together is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Neither benchmark is part of `npm run verify` (they take minutes); verify typechecks them, and `test/bench.test.ts` runs each at its smallest size. Both run from a clean checkout with no network: each makes its own temp `FOREMAN_HOME`, clears every `FOREMAN_*` variable the shell exported, turns the OS sandbox off (it is a per-command wrapper whose cost depends on the platform), and removes everything it made when it exits, Ctrl-C included. Neither starts or calls a daemon. Pass `--json` for machine-readable output.
+Neither benchmark is part of `npm run verify` (they take minutes); verify typechecks them, and `test/bench.test.ts` runs each at its smallest size. Both run from a clean checkout with no network: each makes its own temp `FOREMAN_HOME`, clears every `FOREMAN_*` variable the shell exported, turns the OS sandbox off (it is a per-command wrapper whose cost depends on the platform), and removes everything it made when it exits, Ctrl-C included. Neither starts or calls a daemon. Pass `--json` for machine-readable output. A third script, [identity](#identity-scriptsbenchidentityts), does start daemons, and is described apart.
 
 ## Ledger: `scripts/bench/ledger.ts`
 
@@ -38,6 +38,16 @@ It reports, per run, from the ledger:
 | gate/review calls | owner-gate calls (a batch is one) and reviewer calls the fake model answered |
 
 A ticket counts as landed once the owner gate has logged its approval, the approval's decision row records that it merged, and the ticket's landing has settled. The post-merge check can end the landing hold before the approval's decision row and the gate's verdict are written (both wait on git after the merge), so the bench waits for the verdict rather than for the hold. Tickets get the default two attempts, so a transient failure retries as it would in production. A ticket that does not land is listed under `unlanded` in `--json` output, with its status, the gate's marker and the end of its last events (a failed git command's message ends with git's error).
+
+## Identity: `scripts/bench/identity.ts`
+
+```
+node scripts/bench/identity.ts [--base <checkout>] [--branch <checkout>] [--requests 200] [--out <dir>] [--json]
+```
+
+What bearer-token auth costs per request, and what four-eyes landing adds. Unlike the two above it starts daemons: `foreman serve` from a checkout (`--branch`, default this one; `--base`, a checkout of the commit before identity existed, optional), each in its own temp `FOREMAN_HOME`, on a free loopback port, with the OS sandbox off and the model server pointed at a dead port. It refuses a home that is the operator's `~/.foreman` or inside it, and the default port 4100. It writes `raw.json`, `summary.md` and `demo-transcript.txt` to `--out` (default `comparisons/identity`) and prints the summary, or the raw results with `--json`.
+
+Two results are kept apart. **A, comparable:** p50 and p95 of `GET /api/state` and `POST /api/tasks` (a ticket for a person's desk, which never runs) on a fresh daemon of the base with no auth, of the branch with no auth, and of the branch with a bearer. **B, a new capability, branch only:** approve to merged through the local fake GitLab (`scripts/forge/fakeGitlab.ts`) with one principal and with four-eyes, from the approving call to Foreman's "merged" event, with the person's wait left out, and a transcript of the four-eyes demo. B has nothing to compare with and is not a speed-up. `comparisons/identity/method.md` says how to read both.
 
 ## First numbers
 

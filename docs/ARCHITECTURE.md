@@ -187,7 +187,7 @@ Not every entry exists on a fresh install: the module that uses a path creates i
 
 ## Capacity
 
-`scripts/bench/ledger.ts` times the ledger's hot paths (`reconcileBlocked`, `claimable`, the board snapshot, `record`) at 1k, 10k and 100k tasks; `scripts/bench/pipeline.ts` runs an epic end to end with fake workers, suite and model, with gate batching on and off. Neither is part of `npm run verify`. What they measure and the first numbers are in [capacity.md](capacity.md).
+`scripts/bench/ledger.ts` times the ledger's hot paths (`reconcileBlocked`, `claimable`, the board snapshot, `record`) at 1k, 10k and 100k tasks; `scripts/bench/pipeline.ts` runs an epic end to end with fake workers, suite and model, with gate batching on and off; `scripts/bench/identity.ts` starts throwaway daemons to time the bearer-token overhead and the four-eyes landing. None is part of `npm run verify`. What they measure and the first numbers are in [capacity.md](capacity.md).
 
 ## Protected paths
 
