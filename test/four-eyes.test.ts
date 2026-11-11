@@ -177,6 +177,28 @@ test('with two humans, a ticket whose author is unknown is refused, with the rea
   assert.ok(r.store.eventsForTask(task.id).some((e) => /^four-eyes: the author/.test(e.message)));
 });
 
+test('with two humans, a ticket created by a service principal or a reserved actor is refused like one with no author', async (t) => {
+  const r = await rig(t);
+  const alice = mint(r.store, 'alice');
+  const bob = mint(r.store, 'bob');
+  const ci = mint(r.store, 'ci', 'service');
+  // A person who can use the service token creates as the service, then approves as themselves.
+  for (const createdBy of [ci.principal.id, 'operator']) {
+    const task = parked(r.store, createdBy);
+    const res = await r.call('POST', `/api/tasks/${task.id}/approve`, {}, alice.token);
+    assert.equal(res.status, 403, `${createdBy}: ${JSON.stringify(res.json)}`);
+    assert.match(String(res.json['error']), /not a person/);
+    assert.deepEqual(decisions(r.store, task.id), []);
+    assert.equal(r.store.getTask(task.id)!.status, 'awaiting-approval');
+  }
+  // A creator who is a person, since disabled, is still a known other person.
+  const carol = mint(r.store, 'carol');
+  const task = parked(r.store, carol.principal.id);
+  r.store.disablePrincipal(carol.principal.id);
+  const res = await r.call('POST', `/api/tasks/${task.id}/approve`, {}, bob.token);
+  assert.equal(res.status, 200, JSON.stringify(res.json));
+});
+
 test('a service principal and the owner model cannot approve once auth is on', async (t) => {
   const r = await rig(t);
   const bot = mint(r.store, 'ci-bot', 'service');
