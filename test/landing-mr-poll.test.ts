@@ -529,6 +529,47 @@ test('a daemon restart with an MR open sends the ticket back to the gate; land-c
   assert.equal(store.getTask(child.id)!.status, 'blocked', 'not released onto a main without the change');
 });
 
+test('a daemon restart after GitLab merged the MR but the checkout was held keeps the ticket done', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  useLanding(new Landing([f.map], null), f.home);
+  const dbPath = `${f.home}/foreman.db`;
+  const before = new Store(dbPath);
+  const a = parked(before, f.repo, 'work');
+  const child = before.addTask({ title: 'child', prompt: 'p', runner: 'echo', repo: f.repo, deps: [a.id] });
+  assert.equal((await approve(before, a.id)).merge.code, 'mr-opened');
+  git(f.repo, 'checkout', '-q', '-b', 'elsewhere');
+  await poller(before)();
+  const m = git(f.forge, 'rev-parse', 'main');
+  held(before, f, a, /^land-held\(.*\): merge request !1 merged at [0-9a-f]+, but checkout not on main/);
+  before.close();
+  useLanding(null, f.home);
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(dbPath);
+  t.after(() => store.close());
+  store.adoptInterruptedLandings();
+  assert.equal(store.getTask(a.id)!.status, 'done', 'merged on GitLab: not sent back to the gate');
+  assert.ok(!messages(store, a).some((msg) => /back to the gate: the daemon restarted/.test(msg)));
+  assert.equal(store.landInterrupted(f.repo)?.taskId, a.id, 'the repo is still held for a look');
+  // The operator syncs the checkout by hand and clears the hold, as the land-held warning says.
+  git(f.repo, 'checkout', '-q', 'main');
+  git(f.repo, 'merge', '--ff-only', '--quiet', m);
+  assert.ok(store.clearLandInterrupted(f.repo));
+  store.reconcileBlocked();
+  assert.equal(store.getTask(child.id)!.status, 'queued');
+});
+
+test('an MR that reads as from another project (a fork) goes back to the gate with no merge call', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), sourceProjectId: 99 });
+  });
+  await poller(store)();
+  assert.equal(merges(f).length, 0);
+  atGate(store, a, /!1 is from another project \(a fork\)/);
+});
+
 test('a throwing forge adapter is recorded against the stage, and the tick still dispatches', { timeout: 20_000 }, async (t) => {
   const f = await fixture(t);
   const { store, a } = await opened(t, f);
