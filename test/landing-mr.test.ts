@@ -1,78 +1,24 @@
-import { scratchDir } from './env.ts';
-import test, { type TestContext } from 'node:test';
+import './env.ts';
+import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startFakeGitlab, type FakeGitlab } from '../scripts/forge/fakeGitlab.ts';
+import type { FakeGitlab } from '../scripts/forge/fakeGitlab.ts';
 import { Store } from '../src/queue.ts';
 import { ApprovalTracker, applyApproval, FourEyesRefused } from '../src/gate.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
 import { ForgeError, type Forge, type NewMr } from '../src/landing/forge.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
 import { pendingMrs, useLanding } from '../src/landing/mr.ts';
-import type { Principal, Task } from '../src/types.ts';
+import type { Principal } from '../src/types.ts';
+import { approve, fixture, git, landingRows, parked } from './helpers/landingMr.ts';
 
 // Approving a ticket whose repo lands by merge request (src/landing/mr.ts) pushes the reviewed commit to
 // foreman/<task id> through the Foreman-owned mirror and opens a GitLab MR on the local fake; nothing merges into the
 // checkout, and the ticket's landing hold stays on until the MR merges (LD-MR7a/7b).
 
 const TOKEN = 'glpat-mr-test-Hk27';
-
-const git = (cwd: string, ...a: string[]): string =>
-  execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.test', ...a], { cwd, encoding: 'utf8' }).trim();
-
-interface Fixture {
-  home: string;
-  /** The forge's bare repo: the fake GitLab's project and the pushUrl. */
-  forge: string;
-  /** The operator's checkout: main as the forge has it. */
-  repo: string;
-  fake: FakeGitlab;
-  map: LandingMapping;
-}
-
-async function fixture(t: TestContext, opts: { token?: string } = {}): Promise<Fixture> {
-  const home = scratchDir('landing-mr-home-');
-  const forge = path.join(scratchDir('landing-mr-forge-'), 'app.git');
-  git(path.dirname(forge), 'init', '-q', '--bare', '-b', 'main', forge);
-  const repo = fs.realpathSync(scratchDir('landing-mr-repo-'));
-  git(repo, 'init', '-q', '-b', 'main');
-  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-qm', 'base');
-  git(repo, 'push', '-q', forge, 'main:refs/heads/main');
-  const fake = await startFakeGitlab({ projects: { 'group/app': forge }, pipeline: 'manual', ...(opts.token ? { token: opts.token } : {}) });
-  t.after(() => fake.close());
-  t.after(() => useLanding(null, home));
-  const map: LandingMapping = {
-    repo, mode: 'mr', forge: 'gitlab', baseUrl: fake.url, project: 'group/app', pushUrl: forge, targetBranch: 'main', requirePipeline: true,
-  };
-  return { home, forge, repo, fake, map };
-}
-
-/** A ticket parked at the gate whose run left `branch` carrying a file of its own, reviewed at that commit's tree. */
-function parked(store: Store, repo: string, branch: string, extra: { parentId?: string; createdBy?: string } = {}): Task {
-  git(repo, 'checkout', '-q', '-b', branch);
-  fs.writeFileSync(path.join(repo, `${branch}.txt`), 'x\n');
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-qm', branch);
-  git(repo, 'checkout', '-q', 'main');
-  const task = store.addTask({ title: branch, prompt: 'p', kind: 'code', runner: 'echo', repo, ...extra });
-  const run = store.startRun(task.id);
-  store.setRunMeta(run.id, { branch, worktreePath: null, reviewedTree: git(repo, 'rev-parse', `${branch}^{tree}`) });
-  store.addVerdict({ runId: run.id, taskId: task.id, verdict: 'pass', disagreement: false, council: [] });
-  store.endRun(run.id, 'succeeded', { exitCode: 0, summary: 'ok' });
-  store.setStatus(task.id, 'awaiting-approval');
-  return task;
-}
-
-const approve = (store: Store, taskId: string, selfRoot?: string) =>
-  applyApproval(store, taskId, { principal: 'operator', tracker: new ApprovalTracker(), ...(selfRoot ? { selfRoot } : {}) });
-
-const landingRows = (store: Store): number =>
-  Number((store.db.prepare('SELECT count(*) AS n FROM landings').get() as { n: number }).n);
 
 const decisions = (store: Store, taskId: string): Array<{ action: string; merged: number }> =>
   (store.db.prepare("SELECT action, merged FROM decisions WHERE task_id = ? AND action = 'approve' ORDER BY rowid").all(taskId) as Array<{ action: string; merged: number }>)
