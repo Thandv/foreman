@@ -139,12 +139,14 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      message), the hold ends and the row is deleted. The MR gets one note, `Not merged by Foreman:
      <reason>`, saying it is no longer approved in Foreman (a note the forge refuses is a
      `warning`), and stays open, so approving again reuses it.
+   - A merge status of `conflict` or `need_rebase` (another merge into the target came first): the
+     ticket goes back to the gate at once, as above, with `rework it, then approve again`. Only a new
+     commit on the MR clears either, and a head that is not the reviewed commit is never merged.
    - No pipeline yet, one for another commit, one still running (with `requirePipeline`; without
-     it no pipeline is needed), or a merge status other than `mergeable`: it waits, and no merge
-     call is made. That includes the lasting words as well as the transient ones: `not_approved`
-     (required GitLab approvals), `draft_status`, `discussions_not_resolved`, `conflict` and
-     `need_rebase` wait like `checking` or `ci_still_running`, so a person can still fix them on
-     GitLab. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened does waiting give up and send
+     it no pipeline is needed), or another merge status other than `mergeable`: it waits, and no
+     merge call is made. That includes the lasting words as well as the transient ones:
+     `not_approved` (required GitLab approvals), `draft_status` and `discussions_not_resolved` wait
+     like `checking` or `ci_still_running`, so a person can still fix them on GitLab. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened does waiting give up and send
      the ticket back to the gate, with the last status as the reason. A forge or mirror failure while
      polling is waited out the same way, except that a merge call that got no answer, or a server
      error (5xx), is first read back: the timeout applies only once a read shows the MR still open.

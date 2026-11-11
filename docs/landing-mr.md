@@ -18,7 +18,7 @@ right before the merge call.
 | State | Meaning | How it ends |
 |---|---|---|
 | `done`, MR open | Approved; the MR is polled every `FOREMAN_MR_POLL_MS`; its dependents stay `blocked` | the pipeline passes and the MR merges, or one of the next two |
-| back at the gate (`awaiting-approval`) | The pipeline failed, the head is not the reviewed commit, the MR was retargeted or set to squash, a person closed the MR, GitLab refused the merge, or the MR timed out. The MR gets a `Not merged by Foreman` note and stays open | approve again (the MR is reused) |
+| back at the gate (`awaiting-approval`) | The pipeline failed, the head is not the reviewed commit, the MR was retargeted or set to squash, it conflicts with the target (GitLab reports `conflict` or `need_rebase`), a person closed the MR, GitLab refused the merge, or the MR timed out. The MR gets a `Not merged by Foreman` note and stays open | approve again (the MR is reused) |
 | merged, checkout synced | The merge commit is confirmed on the target branch and the checkout is fast-forwarded to it | the post-merge check is green and the dependents are released |
 | repo held | A merge could not be confirmed or the checkout could not take it | `foreman land-clear <repo>` after you have looked |
 

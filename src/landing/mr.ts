@@ -243,6 +243,9 @@ function notAsOpened(mr: Mr, map: LandingMapping): string | null {
 /** GitLab detailed_merge_status words that change by themselves: a merge refused while one reads is retried. */
 const TRANSIENT_MERGE_STATUS: ReadonlySet<string> = new Set(['checking', 'unchecked', 'ci_still_running', 'preparing', 'approvals_syncing']);
 
+/** detailed_merge_status words only a new head can clear; the new head is not the reviewed commit, so waiting is no use. */
+const NEEDS_NEW_HEAD: ReadonlySet<string> = new Set(['conflict', 'need_rebase']);
+
 /** What one poll of an open MR decided. */
 type Step = { wait: string } | { gate: string } | { confirm: string | null };
 
@@ -362,6 +365,9 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
     return { gate: `the pipeline of !${mr.iid} ${pipeline.status}: ${pipeline.webUrl}` };
   }
   if (requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
+  if (NEEDS_NEW_HEAD.has(seen.mergeStatus)) {
+    return { gate: `GitLab reports ${seen.mergeStatus}: the merge request conflicts with ${map.targetBranch} or needs a rebase; rework it, then approve again` };
+  }
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
   // Merges into one target branch go one at a time: GitLab can refuse two that overlap. The ticket, the repo hold and
   // four-eyes are read in the merge's turn, so waiting behind another merge does not stretch the recheck's age.

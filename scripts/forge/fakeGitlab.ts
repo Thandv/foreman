@@ -68,6 +68,8 @@ interface MergeRequest {
   seenHead?: string; seenAt?: number;
   /** recheckAfterMerge: detailed_merge_status reads 'unchecked' until then. */
   uncheckedUntil?: number;
+  /** The head does not merge cleanly into the target, as of the last look: detailed_merge_status reads 'conflict'. */
+  conflict?: boolean;
 }
 interface Project { id: number; path: string; bare: string; mrs: MergeRequest[] }
 
@@ -122,12 +124,15 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
       if (head !== mr.seenHead) { mr.seenHead = head; mr.seenAt = Date.now(); }
       if (Date.now() - mr.seenAt! >= refreshDelayMs) { mr.sha = head; mr.checkingUntil = Date.now() + checkingMs; }
     }
+    // git merge-tree exits 1 when the two do not merge cleanly.
+    mr.conflict = await git(project.bare, 'merge-tree', '--write-tree', `refs/heads/${mr.target}`, mr.sha).then(() => false, (e: { code?: unknown }) => e.code === 1);
     pipelineFor(mr.sha);
   };
   const mergeStatus = (mr: MergeRequest): string => {
     if (mr.state !== 'opened') return 'not_open';
     if (Date.now() < mr.checkingUntil) return 'checking';
     if (Date.now() < (mr.uncheckedUntil ?? 0)) return 'unchecked';
+    if (mr.conflict) return 'conflict';
     if (!requirePipeline) return 'mergeable';
     const status = pipelineStatus(pipelineFor(mr.sha));
     return status === 'success' ? 'mergeable' : status === 'running' ? 'ci_still_running' : 'ci_must_pass';

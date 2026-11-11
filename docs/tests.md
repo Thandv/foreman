@@ -19,7 +19,8 @@ onto it; a new failure on an unused binding after the rebase is expected, not a 
 `scripts/forge/fakeGitlab.ts` is a local fake GitLab for the merge-request landing tests and the demo: a `node:http`
 server (no dependencies, no network) over real bare repos, serving the REST v4 subset Foreman uses (project, merge
 requests, notes, merge by `sha`) with GitLab's field names and status codes: 409 on a stale `sha`, 405 while
-`detailed_merge_status` is `checking` or the pipeline is not green, 401 without the token. Import `startFakeGitlab`
+`detailed_merge_status` is `checking` or the pipeline is not green, 401 without the token. An MR whose head
+no longer merges cleanly into its target (`git merge-tree`) reads `conflict`, as on GitLab. Import `startFakeGitlab`
 in a test, or run it with `node scripts/forge/fakeGitlab.ts --project group/app=<bare repo>` (token in
 `FAKE_GITLAB_TOKEN`, never printed or logged). `mergeMethod` sets the `merge_method` the project reports (default
 `merge`), for doctor's check. `POST /__fake/pipelines/:sha {status}` flips a pipeline. Its
