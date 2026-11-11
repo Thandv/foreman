@@ -170,6 +170,8 @@ pull, ls-remote, remote) runs in a task repo. Each repo in `landing.json` gets a
 pushing the reviewed commit to `refs/heads/foreman/<taskId>` (no other ref can be named) and the `ls-remote` that must
 then report exactly that commit all run there. Commits cross between the task repo and the mirror as an object pack
 (`pack-objects` into `index-pack --strict`, which resolve no URL), checked with `cat-file -e` before a ref is set.
+A merged MR is confirmed there too: after a fresh fetch of the target branch, the forge's merge commit must be on it
+and have the reviewed commit as its second parent.
 
 ## The git tripwire (`src/gitTripwire.ts`)
 

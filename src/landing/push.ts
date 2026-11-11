@@ -79,11 +79,35 @@ export class ForgeMirror {
   async fetchTarget(): Promise<string> {
     await this.#ensure();
     const have = await this.#shared();
-    const { pushUrl, targetBranch } = this.#map;
-    await this.#git(this.dir, ['fetch', '--quiet', '--no-tags', pushUrl, `+refs/heads/${targetBranch}:${MIRROR_TARGET}`], this.#auth);
-    const target = (await this.#git(this.dir, ['rev-parse', '--verify', `${MIRROR_TARGET}^{commit}`])).trim();
+    const target = await this.#fetchTarget();
     await this.#copy(this.dir, this.#map.repo, target, FORGE_TARGET_REF, have);
     return target;
+  }
+
+  /**
+   * Whether the forge's merge commit `merge` landed the reviewed commit `tip`, asked of the mirror only: after a fresh
+   * fetch of the target branch, `merge` is on it and its second parent is `tip`.
+   */
+  async confirmMerge(merge: string, tip: string): Promise<boolean> {
+    commitSha(merge);
+    commitSha(tip);
+    await this.#ensure();
+    const target = await this.#fetchTarget();
+    if ((await this.#commit(this.dir, merge)) === null) return false;
+    try {
+      await pinnedGit(this.dir, ['merge-base', '--is-ancestor', merge, target]);
+    } catch (err) {
+      if ((err as { code?: unknown }).code === 1) return false;
+      throw this.#failed(['merge-base'], err);
+    }
+    return (await this.#commit(this.dir, `${merge}^2`)) === tip;
+  }
+
+  /** Fetches the target branch into the mirror at MIRROR_TARGET; its commit. */
+  async #fetchTarget(): Promise<string> {
+    const { pushUrl, targetBranch } = this.#map;
+    await this.#git(this.dir, ['fetch', '--quiet', '--no-tags', pushUrl, `+refs/heads/${targetBranch}:${MIRROR_TARGET}`], this.#auth);
+    return (await this.#git(this.dir, ['rev-parse', '--verify', `${MIRROR_TARGET}^{commit}`])).trim();
   }
 
   /**

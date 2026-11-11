@@ -171,6 +171,8 @@ export const config = {
   landing: landingMode(),
   /** How often an open merge request is polled, in ms (FOREMAN_LANDING=mr). */
   mrPollMs: int('FOREMAN_MR_POLL_MS', 10_000),
+  /** Minutes after it was opened that an MR still not merged sends its ticket back to the gate (FOREMAN_LANDING=mr). */
+  mrTimeoutMin: int('FOREMAN_MR_TIMEOUT_MIN', 120),
   /** Automatic repair rounds for a gap found before review (map, scope); apart from maxRepairs. */
   preReviewRepairs: int('FOREMAN_PRE_REVIEW_REPAIRS', 2),
   /**
@@ -332,6 +334,7 @@ const KNOB_ENV: Record<keyof Config, string | null> = {
   postMergeMode: 'FOREMAN_POSTMERGE_MODE',
   landing: 'FOREMAN_LANDING',
   mrPollMs: 'FOREMAN_MR_POLL_MS',
+  mrTimeoutMin: 'FOREMAN_MR_TIMEOUT_MIN',
   limitBackoffMs: 'FOREMAN_LIMIT_BACKOFF_MS',
   slotWaitCreditMs: 'FOREMAN_SLOT_WAIT_CREDIT_MS',
   workerSuite: 'FOREMAN_WORKER_SUITE',

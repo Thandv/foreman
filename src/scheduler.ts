@@ -19,6 +19,7 @@ import {
 import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
 import { pinnedGit } from './gitExec.ts';
 import { checkRepo, recordBaseline } from './gitTripwire.ts';
+import { pollMergeRequests } from './landing/mr.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
 import { factDrift } from './prose/linecheck.ts';
@@ -163,7 +164,7 @@ const TICK_ERROR_QUIET_MS = 5 * 60_000;
 /** The stages of one tick, each contained on its own, in the order a tick runs them. */
 export const TICK_STAGES = [
   'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates',
-  'reconcileBlocked', 'reconcileLostRuns', 'dispatchGate', 'dispatch',
+  'reconcileBlocked', 'reconcileLostRuns', 'pollMergeRequests', 'dispatchGate', 'dispatch',
   'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
 ] as const;
 export type TickStage = (typeof TICK_STAGES)[number];
@@ -1089,6 +1090,8 @@ export class Scheduler {
       this.stage('runDueGates', () => this.runDueGates());
       this.stage('reconcileBlocked', () => this.store.reconcileBlocked());
       this.stage('reconcileLostRuns', () => this.reconcileLostRuns());
+      // Before the dispatch gate: an open MR is polled even while every worker slot is taken.
+      this.stage('pollMergeRequests', () => this.pollMergeRequests());
       // A gate that throws defers dispatch and the idle-time stages after it, as a gate that says no does.
       const free = this.stage('dispatchGate', () => this.dispatchSlots());
       if (free === undefined || free === null) return;
@@ -2579,6 +2582,11 @@ export class Scheduler {
     } catch (err) {
       emit(`shadow verdict not recorded: ${(err as Error).message.slice(0, 200)}`);
     }
+  }
+
+  /** Polls the open merge requests (landing/mr.ts); the tick does not wait for the forge. */
+  private pollMergeRequests(): void {
+    void pollMergeRequests(this.store, this.now(), (err) => this.noteTickError(err, 'pollMergeRequests'));
   }
 
   private redCheckAt = 0;

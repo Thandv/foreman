@@ -167,12 +167,12 @@ test('the tick runs its stages in a fixed order', async () => {
   for (const name of ['runDueSchedules', 'reconcileBlocked']) spy(store, name);
   spy(store, 'claimable', 'dispatch');
   spy(sched, 'dispatchSlots', 'dispatchGate');
-  for (const name of ['runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileLostRuns', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos']) spy(sched, name);
+  for (const name of ['runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileLostRuns', 'pollMergeRequests', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos']) spy(sched, name);
   try {
     await sched.tick();
     assert.deepEqual(order, [
       'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates', 'reconcileBlocked',
-      'reconcileLostRuns', 'dispatchGate', 'dispatch', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
+      'reconcileLostRuns', 'pollMergeRequests', 'dispatchGate', 'dispatch', 'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
     ]);
     assert.deepEqual(order, [...TICK_STAGES], 'TICK_STAGES names the stages in the order the tick runs them');
   } finally {

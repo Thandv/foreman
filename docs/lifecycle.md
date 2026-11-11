@@ -101,9 +101,32 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    id, and the decision keeps the MR's iid ([security](security.md)). Only those steps run in the section, so
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
    section for at most about four forge calls of 15 s each, plus the mirror's git. A change to
-   Foreman itself always lands by the local merge. Nothing merges an MR yet: the ticket stays held
-   until it does. A daemon that stops with an MR open leaves its `landings` row, so the next start
-   holds the repo until `foreman land-clear <repo>`.
+   Foreman itself always lands by the local merge. A daemon that stops with an MR open leaves its
+   `landings` row, so the next start holds the repo until `foreman land-clear <repo>`.
+
+   **Merging the MR.** A tick stage, before the dispatch gate so a full machine still polls, reads
+   each open MR at most every `FOREMAN_MR_POLL_MS`, one call at a time per MR; the tick never waits
+   for the forge. Each change of state is one event on the ticket.
+   - The ticket left `done` (a person reopened, rejected or archived it): the MR is no longer
+     followed, the hold ends and the row is deleted. No merge call is made for it.
+   - The MR's head is not the reviewed commit, its pipeline for that commit `failed` or was
+     `canceled`, a person closed it, or GitLab refuses the merge for a lasting reason (required
+     approvals, branch protection): the ticket goes back to `awaiting-approval` with the reason
+     (the pipeline's URL, or GitLab's message), the hold ends and the row is deleted.
+   - No pipeline yet, one for another commit, one still running (with `requirePipeline`; without
+     it no pipeline is needed), or a merge status other than `mergeable` (`checking`,
+     `ci_still_running`, ...): it waits. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened
+     does waiting give up and send the ticket back to the gate. A forge or mirror failure while
+     polling is waited out the same way.
+   - Pipeline `success` for the reviewed commit and `mergeable`: one merge call at the reviewed sha,
+     which GitLab refuses if the head has moved.
+   - Merged (by Foreman, or by a person in GitLab): the mirror fetches the target branch and
+     confirms the merge commit is on it with the reviewed commit as its second parent. Confirmed,
+     the row is deleted and the ticket's event reads `merged !<iid> at <sha>; checkout sync
+     pending`. The landing hold stays on: the checkout is not synced to the merge yet, so the
+     dependents stay `blocked` and the epic open. Not confirmed, the hold and the row stay, with a
+     warning that the merged commit is not the reviewed commit; the next start holds the repo
+     for the operator.
 
 ### A dependent waiting on a canceled ticket
 
