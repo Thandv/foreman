@@ -156,11 +156,15 @@ export async function handLandingRefusal(store: Store, task: Task, commit: strin
   return null;
 }
 
+/** How long an approval that reuses an open MR waits for its head to read the pushed commit before refusing. */
+const REUSED_HEAD_WAIT_MS = 30_000;
+
 /**
  * The merge step of an approval in a mapped repo, inside the repo's merge section: check the project's merge settings
  * (projectRefusal), fetch the target branch, run every
  * landing check against it (prepareLandingCommit; a refusal comes back exactly as the local merge gives it), push the
- * checked commit, then find or open the MR and confirm its head is that commit. 'mr-opened' puts the MR in the pending
+ * checked commit, then find or open the MR and confirm its head is that commit (a reused MR's head is read again for up
+ * to REUSED_HEAD_WAIT_MS, as GitLab refreshes it after a push in the background). 'mr-opened' puts the MR in the pending
  * table with `marker`; a forge or mirror failure is 'mr-refused', with the reason. Nothing merges here.
  */
 export async function openForApproval(
@@ -183,13 +187,19 @@ export async function openForApproval(
     const { tip, tipTree, note } = landing;
     await mirror.pushReviewed(tip, task.id);
     const sourceBranch = forgeBranch(task.id).slice('refs/heads/'.length);
-    const opened = await forge.findOpenMr(map.project, sourceBranch, map.targetBranch) ?? await forge.openMr(map.project, {
+    const reused = await forge.findOpenMr(map.project, sourceBranch, map.targetBranch);
+    const opened = reused ?? await forge.openMr(map.project, {
       sourceBranch,
       targetBranch: map.targetBranch,
       title: task.title,
       description: `Foreman task ${task.id}\n\nReviewed tree ${tipTree}`,
     });
-    const mr = await forge.getMr(map.project, opened.iid);
+    let mr = await forge.getMr(map.project, opened.iid);
+    // GitLab takes a push into an MR that was already open in a background job, so its head can lag for a while.
+    for (const until = Date.now() + REUSED_HEAD_WAIT_MS; reused && mr.headSha !== tip && Date.now() < until;) {
+      await new Promise((r) => setTimeout(r, 500));
+      mr = await forge.getMr(map.project, opened.iid);
+    }
     if (mr.headSha !== tip) {
       return { merged: false, code: 'mr-refused', reason: `the head of !${mr.iid} is ${mr.headSha}, not the reviewed commit ${tip}`, branch };
     }

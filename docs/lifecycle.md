@@ -91,7 +91,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    against that commit (a refusal is the same code and reason as for a local merge, and work changed
    after review is refused before anything is pushed), pushes the checked commit to
    `foreman/<task id>`, finds the open merge request from that branch or opens one, and confirms
-   the MR's head is that commit. The answer is `mr-opened` (`opened !<iid> <url>`). The ticket is
+   the MR's head is that commit (GitLab takes a push into an MR that was already open in a
+   background job, so a reused MR's head is read again every 0.5 s for up to 30 s before the
+   approval is refused). The answer is `mr-opened` (`opened !<iid> <url>`). The ticket is
    `done`, but its landing hold and its `landings` row stay: its dependents stay `blocked` and its
    epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, an MR
    head that is not the reviewed commit, or a project whose settings MR landing does not support
@@ -104,7 +106,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    then posts one note on it naming the approver of record, the ticket's author and the decision
    id, and the decision keeps the MR's iid ([security](security.md)). Only those steps run in the section, so
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
-   section for at most about five forge calls of 15 s each, plus the mirror's git. A change to
+   section for at most about five forge calls of 15 s each, plus the mirror's git (and those
+   30 s when a reused MR's head lags). A change to
    Foreman itself always lands by the local merge. A daemon that stops with an MR open leaves its
    `landings` row, so the next start holds the repo until `foreman land-clear <repo>`, and sends the
    `done` ticket back to `awaiting-approval` (nothing follows the MR after a restart): approving
