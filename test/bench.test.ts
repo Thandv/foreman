@@ -152,6 +152,23 @@ test('the landing bench reads suite runs per landed ticket, merged-to-verified a
   assert.deepEqual(namedInRed(['status: merged']), []);
 });
 
+test('the landing bench lands a burst under before and after, counts the suite runs from the suite\'s own log and attributes the red', async () => {
+  const out = scratchDir('foreman-bench-landing-out-');
+  const cells = await bench('landing.ts', ['--scenarios', 'burst', '--tickets', '3', '--suite-ms', '100', '--out', out]) as Array<{
+    scenario: string; mode: string; tickets: number; landed: number; suiteRunsPerLanded: number; unverified: number;
+    red: { culprit: string; named: string[]; attributed: boolean }; errors: string[];
+  }>;
+  assert.deepEqual(cells.map((c) => `${c.scenario}/${c.mode}`), ['burst/before', 'burst/after']);
+  for (const c of cells) {
+    assert.deepEqual(c.errors, []);
+    assert.equal(c.landed, 3, `${c.mode}: every ticket landed`);
+    assert.ok(c.suiteRunsPerLanded >= 1, `${c.mode}: ${c.suiteRunsPerLanded} suite runs per landed ticket`);
+    assert.equal(c.unverified, 0);
+    assert.ok(c.red.attributed && c.red.named.length >= 1, `${c.mode}: the red names the last ticket: ${JSON.stringify(c.red)}`);
+  }
+  assert.deepEqual(fs.readdirSync(out), ['raw.json']);
+});
+
 test('the identity bench refuses a home that is the operator\'s ~/.foreman or sits under it, and the live daemon\'s port', () => {
   const live = path.join(os.homedir(), '.foreman');
   assert.throws(() => assertIsolated(live, 40_000), /~\/\.foreman/);

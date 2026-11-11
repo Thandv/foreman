@@ -37,3 +37,32 @@ export function whyNotLanded(store: Store, id: string): { id: string; status: st
     events: store.eventsForTask(id).slice(-5).map((e) => `${e.type}: ${e.message.slice(-300)}`),
   };
 }
+
+/** `n` counted events per landed ticket, to two places; 0 when nothing landed. */
+export const perLanded = (n: number, landed: number): number => (landed ? Math.round((n / landed) * 100) / 100 : 0);
+
+/** One run of a bench's fake suite: when it ended, and which ticket files its checkout held. */
+export interface SuiteRun { endedAt: number; files: string[] }
+
+/** The fake suite's log: one `<epoch ms> <file>,<file>…` line per run, written as the run ends. */
+export function parseSuiteLog(text: string): SuiteRun[] {
+  return text.split('\n').filter((l) => l !== '').map((l) => {
+    const [at = '', files = ''] = l.split(' ');
+    return { endedAt: Number(at), files: files.split(',').filter((f) => f !== '') };
+  });
+}
+
+/**
+ * How long after `mergedAt` a post-merge check first covered the ticket that wrote `file`: the first suite run to end
+ * at or after the merge in a checkout that held the file. A ticket's own check holds the file too, but ends before the
+ * merge. Undefined while no check has covered it.
+ */
+export function mergedToVerifiedMs(runs: SuiteRun[], file: string, mergedAt: number): number | undefined {
+  const ends = runs.filter((r) => r.endedAt >= mergedAt && r.files.includes(file)).map((r) => r.endedAt);
+  return ends.length ? Math.min(...ends) - mergedAt : undefined;
+}
+
+/** The task ids a red-main event names ("MAIN IS RED after merging a, b (cmd): …", src/landing/verify.ts), over `messages`. */
+export function namedInRed(messages: string[]): string[] {
+  return messages.flatMap((m) => /^MAIN IS RED after merging ([^(:]+)/.exec(m)?.[1]?.split(', ').map((id) => id.trim()) ?? []);
+}

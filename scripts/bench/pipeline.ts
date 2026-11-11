@@ -12,12 +12,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { config } from '../../src/config.ts';
-import { testSlotCommand } from '../../src/runners/cliRunners.ts';
 import { createServer } from '../../src/server.ts';
 import { percentile } from '../../src/latency.ts';
 import { Store } from '../../src/queue.ts';
 import { Scheduler } from '../../src/scheduler.ts';
-import { mergedApproval, outcome, whyNotLanded } from './outcome.ts';
+import { mergedApproval, outcome, perLanded, whyNotLanded } from './outcome.ts';
+import { workerCommand } from './worker.ts';
 
 interface Spread { p50: number; p90: number; max: number }
 
@@ -114,19 +114,6 @@ function playbooks(): string {
   return dir;
 }
 
-/**
- * A bench worker that follows its brief: it writes its file, and under FOREMAN_WORKER_SUITE=full runs the suite once
- * through the slot wrapper against this process's daemon, counting the run in `leases` only when the wrapper says it
- * was granted a slot. Its suite is a stand-in that takes suiteMs and counts nothing; the gate's runs count themselves.
- */
-function workerCommand(i: number, o: { port: number; tmp: string; leases: string; suiteMs: number }): string {
-  const write = `printf '${i}\\n' > ticket-${i}.txt`;
-  if (config.workerSuite === 'targeted') return write;
-  const env = `FOREMAN_PORT=${o.port} TMPDIR='${o.tmp}' FOREMAN_WORKER_TEST_CMD='sleep ${o.suiteMs / 1000}'`;
-  const granted = `$(${env} ${testSlotCommand()} 2>&1 | grep -c '^testSlot: slot held')`;
-  return `${write} && if [ "${granted}" = 1 ]; then printf 'x\\n' >> '${o.leases}'; fi`;
-}
-
 /** The lines of `file` equal to `line`, or every non-empty line; 0 when there is no file. */
 const lines = (file: string, line?: string): number => (fs.existsSync(file)
   ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => (line === undefined ? l !== '' : l === line)).length
@@ -152,7 +139,7 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
     const worker = { port: (server.address() as AddressInfo).port, tmp: scratch('worker-tmp'), leases: workerLeases, suiteMs: o.suiteMs };
     const epic = store.addTask({ title: 'bench epic', prompt: 'bench', runner: 'shell', isEpic: true, playbook: 'bench' });
     const ids = Array.from({ length: o.tickets }, (_, i) => store.addTask({
-      title: `bench ticket ${i}`, prompt: workerCommand(i, worker), kind: 'code', runner: 'shell',
+      title: `bench ticket ${i}`, prompt: workerCommand(i, { ...worker, suite: config.workerSuite }), kind: 'code', runner: 'shell',
       repo, testCmd: suite, parentId: epic.id, playbook: 'bench', role: 'dev',
     }).id);
     sched.start();
@@ -209,8 +196,6 @@ async function runOnce(gateBatch: 'on' | 'off', o: { tickets: number; workers: n
     store.close();
   }
 }
-
-const perLanded = (n: number, landed: number): number => (landed ? Math.round((n / landed) * 100) / 100 : 0);
 
 const { values, json } = options({ tickets: '20', workers: '4', 'suite-ms': '500', 'model-ms': '2000', 'worker-suite': 'full' });
 if (values['worker-suite'] !== 'full' && values['worker-suite'] !== 'targeted') {
