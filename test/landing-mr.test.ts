@@ -112,6 +112,25 @@ test('a forge refusal returns the ticket to the gate; approving again writes a s
   assert.equal(store.getTask(a.id)!.status, 'done');
 });
 
+test('approving again after new commits waits for GitLab to refresh the reused MR\'s head', async (t) => {
+  // GitLab takes a pushed commit into an open MR's head in a background job: a read right after the push can show the old one.
+  const f = await fixture(t, { refreshDelayMs: 1500 });
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'reworked');
+  // The MR an earlier approval left open, at the commit before the rework.
+  git(f.repo, 'push', '-q', f.forge, `main:refs/heads/foreman/${a.id}`);
+  const old = await new GitlabForge({ baseUrl: f.fake.url }).openMr('group/app', { sourceBranch: `foreman/${a.id}`, targetBranch: 'main', title: 't', description: 'd' });
+  assert.equal(old.headSha, git(f.repo, 'rev-parse', 'main'));
+  const posts = mrPosts(f.fake);
+  useLanding(new Landing([f.map], null), f.home);
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  assert.match(out.merge.reason, /^opened !1 /);
+  assert.equal(mrPosts(f.fake), posts, 'the open MR was reused');
+  assert.deepEqual(pendingMrs().filter((p) => p.taskId === a.id).map((p) => p.tip), [git(f.repo, 'rev-parse', 'reworked')]);
+});
+
 test('an unreachable forge returns the ticket to the gate with the reason', async (t) => {
   const f = await fixture(t);
   useLanding(new Landing([{ ...f.map, baseUrl: 'http://127.0.0.1:9' }], null), f.home);

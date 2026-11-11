@@ -27,6 +27,11 @@ export interface FakeGitlabOptions {
   port?: number;
   /** How long detailed_merge_status reads 'checking' after a push or a pipeline change (default 0). */
   checkingMs?: number;
+  /**
+   * How long an open MR's `sha` keeps reading the old head after a push to its source branch (default 0). GitLab
+   * refreshes an existing MR's head in a background job, so a read just after a push can still show the old commit.
+   */
+  refreshDelayMs?: number;
   /** New pipelines: 'success' after pipelineDelayMs, 'failed' at once, or 'manual' (left running). Default 'success'. */
   pipeline?: PipelinePolicy;
   pipelineDelayMs?: number;
@@ -49,6 +54,8 @@ interface Pipeline { id: number; sha: string; createdAt: number; status?: Pipeli
 interface MergeRequest {
   iid: number; source: string; target: string; title: string; description: string; squash: boolean; removeSource: boolean;
   state: 'opened' | 'merged'; sha: string; checkingUntil: number; mergeCommitSha: string | null;
+  /** A head pushed but not yet taken into `sha` (refreshDelayMs), and when it was first seen. */
+  seenHead?: string; seenAt?: number;
 }
 interface Project { id: number; path: string; bare: string; mrs: MergeRequest[] }
 
@@ -69,6 +76,7 @@ const flag = (v: unknown): boolean => v === true || v === 'true';
 
 export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitlab> {
   const checkingMs = opts.checkingMs ?? 0;
+  const refreshDelayMs = opts.refreshDelayMs ?? 0;
   const policy = opts.pipeline ?? 'success';
   const pipelineDelayMs = opts.pipelineDelayMs ?? 0;
   const requirePipeline = opts.requirePipeline ?? true;
@@ -89,12 +97,18 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
   const pipelineStatus = (p: Pipeline): PipelineStatus =>
     p.status ?? (policy === 'failed' ? 'failed' : policy === 'success' && Date.now() - p.createdAt >= pipelineDelayMs ? 'success' : 'running');
 
-  /** The source branch head, read live; a change since the last look is a push: a new pipeline and a 'checking' window. */
+  /**
+   * The source branch head, read live; a change since the last look is a push: a new pipeline and a 'checking' window,
+   * taken into the MR's `sha` only refreshDelayMs after it was first seen.
+   */
   const observe = async (project: Project, mr: MergeRequest): Promise<void> => {
     if (mr.state === 'merged') return;
     const head = await git(project.bare, 'rev-parse', `refs/heads/${mr.source}`);
-    if (head !== mr.sha) { mr.sha = head; mr.checkingUntil = Date.now() + checkingMs; }
-    pipelineFor(head);
+    if (head !== mr.sha) {
+      if (head !== mr.seenHead) { mr.seenHead = head; mr.seenAt = Date.now(); }
+      if (Date.now() - mr.seenAt! >= refreshDelayMs) { mr.sha = head; mr.checkingUntil = Date.now() + checkingMs; }
+    }
+    pipelineFor(mr.sha);
   };
   const mergeStatus = (mr: MergeRequest): string => {
     if (mr.state === 'merged') return 'not_open';
