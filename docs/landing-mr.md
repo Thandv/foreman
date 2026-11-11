@@ -40,13 +40,14 @@ prints each step of three passes:
 
 1. The pipeline passes. alice's approval of alice's own ticket is refused (403, four-eyes). bob's approval opens the MR,
    whose head is the reviewed commit. The pipeline succeeds, the MR merges at that sha, the checkout is synced, the main
-   check is green and alice's second ticket, which depended on the first, is released.
+   check is green at the merge commit (the ticket's test command records the HEAD each run is at, and the demo finds
+   the merge commit there) and alice's second ticket, which depended on the first, is released.
 2. The pipeline fails. The ticket is back at the gate, with the pipeline's URL.
 3. The MR's head moves after review and the moved head's pipeline passes, so only the stale sha is left to refuse: the
    demo's own merge call at the reviewed sha is refused (409). The ticket is back at the gate ("MR head moved after
    review"): Foreman reads the moved head and never makes that call.
 
-`--keep` leaves the temp dirs (and prints them) so you can read `landing.json`, the ledger and the repos; remove them
+`--keep` leaves the temp dirs (and prints them, a failed run's too) so you can read `landing.json`, the ledger and the repos; remove them
 yourself. `--check` answers the pipeline at once and does not pause: the suite runs the demo that way
 (`test/demo-mr-landing.test.ts`). The script stops with a non-zero status the moment a step does not happen as above.
 

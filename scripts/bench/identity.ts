@@ -7,7 +7,7 @@
 // Writes raw.json, summary.md and demo-transcript.txt to --out (default comparisons/identity). Not part of npm run verify;
 // comparisons/identity/method.md says how to read the numbers.
 import { options, count } from './env.ts';
-import { call, mint, forgeFixture, parked } from './api.ts';
+import { WAIT_MS, call, mint, forgeFixture, parked } from './api.ts';
 import { startDaemon, openFeed, type Daemon, type Feed } from './daemon.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,8 +21,6 @@ interface Refusal { status: number; error: string }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WARMUP = 5;
-/** How long an MR may take to merge before the bench gives up. */
-const WAIT_MS = 60_000;
 
 const round = (n: number): number => Math.round(n * 100) / 100;
 

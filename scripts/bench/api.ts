@@ -8,7 +8,7 @@ import type { Daemon } from './daemon.ts';
 import { ensureHostSecret, HOST_SECRET_HEADER } from '../../src/security/hostSecret.ts';
 
 /** How long a ticket may take to reach a status before a script gives up. */
-const WAIT_MS = 60_000;
+export const WAIT_MS = 60_000;
 
 export async function call(d: Daemon, method: string, urlPath: string, o: { body?: unknown; token?: string; headers?: Record<string, string> } = {}): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await fetch(`${d.url}${urlPath}`, {

@@ -10,12 +10,13 @@
 //   --check  no pauses and a pipeline that answers at once: the mode the suite runs (test/demo-mr-landing.test.ts)
 // Nothing is touched outside temp dirs: the daemon has its own FOREMAN_HOME and port (never ~/.foreman or the live
 // daemon's), and nothing leaves this machine. The GitLab token is generated here and is never printed.
-import { keepScratch } from '../bench/env.ts';
-import { call, mint, forgeFixture, parked, submit, untilStatus } from '../bench/api.ts';
+import { keepScratch, scratch } from '../bench/env.ts';
+import { WAIT_MS, call, mint, forgeFixture, parked, submit, untilStatus } from '../bench/api.ts';
 import { startDaemon, openFeed, type Daemon, type Feed } from '../bench/daemon.ts';
 import { startFakeGitlab, type FakeGitlab } from '../forge/fakeGitlab.ts';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -23,9 +24,11 @@ import { parseArgs } from 'node:util';
 const { values } = parseArgs({ options: { keep: { type: 'boolean' }, check: { type: 'boolean' } }, strict: true });
 const check = values.check === true;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const WAIT_MS = 60_000;
 const PROJECT = 'group/app';
 const TEST_CMD = { testCmd: 'true' };
+/** Every run of pass 1's first ticket's tests appends the HEAD it ran at here, so the demo sees its main check run. */
+const ranAt = path.join(scratch('demo-checks'), 'checked');
+const RECORDED_CMD = { testCmd: `git rev-parse HEAD >> '${ranAt}'` };
 /** How long the fake reports 'checking' after a push or a pipeline change. */
 const CHECKING_MS = check ? 0 : 1_000;
 
@@ -82,7 +85,7 @@ async function passes(d: Daemon, feed: Feed, fake: FakeGitlab, { repo, bare, tok
   };
 
   console.log('pass 1: the pipeline passes');
-  const t1 = await parked(d, alice, repo, 'alpha', TEST_CMD);
+  const t1 = await parked(d, alice, repo, 'alpha', RECORDED_CMD);
   const t2 = await submit(d, alice, repo, 'beta', { ...TEST_CMD, deps: [t1] });
   const own = await call(d, 'POST', `/api/tasks/${t1}/approve`, { token: alice, body: {} });
   if (own.status !== 403) throw new Error(`alice's approval of her own ticket was not refused: ${own.status}`);
@@ -95,7 +98,9 @@ async function passes(d: Daemon, feed: Feed, fake: FakeGitlab, { repo, bare, tok
   await event(t1, `checkout synced to ${merged}`);
   if (git(repo, 'rev-parse', 'HEAD') !== merged) throw new Error('the checkout is not at the merge commit');
   await untilStatus(d, bob, t2, 'awaiting-approval');
-  console.log(`  3. pipeline success: merged !${first.iid} at ${short(merged)}, checkout synced, main check green, dependent ${t2} released`);
+  // The merge is --no-ff, so of t1's runs only its post-merge check is at the merge commit; t2 waits for it to pass.
+  if (!fs.readFileSync(ranAt, 'utf8').split('\n').includes(merged)) throw new Error(`no main check ran at the merge commit ${merged}`);
+  console.log(`  3. pipeline success: merged !${first.iid} at ${short(merged)}, checkout synced, main check green at ${short(merged)}, dependent ${t2} released`);
 
   console.log('pass 2: the pipeline fails');
   const t3 = await parked(d, alice, repo, 'gamma', TEST_CMD);
@@ -124,6 +129,10 @@ async function passes(d: Daemon, feed: Feed, fake: FakeGitlab, { repo, bare, tok
 }
 
 const t0 = Date.now();
-await main();
-console.log(`done in ${Math.round((Date.now() - t0) / 1000)} s`);
-if (values.keep) for (const dir of keepScratch()) console.log(`kept: ${dir}`);
+try {
+  await main();
+  console.log(`done in ${Math.round((Date.now() - t0) / 1000)} s`);
+} finally {
+  // A failed run is the one most worth looking at, so --keep holds on to its dirs too.
+  if (values.keep) for (const dir of keepScratch()) console.log(`kept: ${dir}`);
+}
