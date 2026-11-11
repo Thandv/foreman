@@ -8,6 +8,7 @@ import { ApprovalTracker, applyApproval } from '../src/gate.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
 import { ForgeError, type Forge } from '../src/landing/forge.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
+import type { ForgeMirror } from '../src/landing/push.ts';
 import { Store } from '../src/queue.ts';
 import type { Principal } from '../src/types.ts';
 import { approve, fixture, git, landingRows, parked, postMerge, type Fixture } from './helpers/landingMr.ts';
@@ -217,4 +218,34 @@ test('the repo hold is read in the merge\'s turn: a repo held while another merg
   assert.equal(merges(f.fake), 1, 'only the first MR got a merge call');
   assert.equal(store.getTask(second.id)!.status, 'done', 'the second MR waits for land-clear');
   assert.ok(pendingMr(second.id), 'the second MR is still followed');
+});
+
+test('the turn lasts until the merge is confirmed and synced: a merge that cannot be confirmed holds the repo before the next merge call', async (t) => {
+  const f = await fixture(t);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const first = parked(store, f.repo, 'first');
+  const second = parked(store, f.repo, 'second');
+  useLanding(new Landing([f.map], null), f.home);
+  for (const task of [first, second]) {
+    const out = await approve(store, task.id);
+    assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  }
+  // Whichever MR merges first, the mirror cannot confirm its merge commit, so the repo is held.
+  useLanding(new (class extends Landing {
+    override mirror(m: LandingMapping, home: string): ForgeMirror {
+      const real = super.mirror(m, home);
+      real.confirmMerge = async () => { await new Promise((r) => setTimeout(r, 300)); return false; };
+      return real;
+    }
+  })([f.map], null), f.home);
+  await pipelinePasses(f, git(f.repo, 'rev-parse', 'first'));
+  await pipelinePasses(f, git(f.repo, 'rev-parse', 'second'));
+  // Both MRs are due in one poll, so the second waits its turn behind the first's merge.
+  await pollMergeRequests(store, Date.now() + config.mrPollMs, (err) => { throw err; }, postMerge());
+  assert.equal(merges(f.fake), 1, 'no merge call on top of a merge that is not confirmed');
+  assert.ok(store.landInterrupted(f.repo), 'the repo is held');
+  const waiting = [first, second].filter((task) => pendingMr(task.id));
+  assert.equal(waiting.length, 1, 'the other MR is still followed');
+  assert.equal(store.getTask(waiting[0]!.id)!.status, 'done', 'and waits for land-clear');
 });
