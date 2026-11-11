@@ -34,6 +34,8 @@ export interface FakeGitlabOptions {
   requirePipeline?: boolean;
   /** The merge_method every project reports (default 'merge'); the merge itself is always --no-ff. */
   mergeMethod?: string;
+  /** More project fields every project reports, as GitLab names them (squash_option, merge_trains_enabled, ...). */
+  projectExtra?: Record<string, unknown>;
 }
 
 export interface FakeGitlab {
@@ -151,7 +153,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     const rest = segs.slice(4);
     if (rest.length === 0 && method === 'GET') {
       const head = await git(project.bare, 'symbolic-ref', '--short', 'HEAD');
-      return { path_with_namespace: project.path, default_branch: head, merge_method: opts.mergeMethod ?? 'merge', squash_option: 'default_off' };
+      return { path_with_namespace: project.path, default_branch: head, merge_method: opts.mergeMethod ?? 'merge', squash_option: 'default_off', ...opts.projectExtra };
     }
     if (rest[0] !== 'merge_requests') throw new HttpError(404, '404 Not Found');
     if (rest.length === 1 && method === 'GET') {

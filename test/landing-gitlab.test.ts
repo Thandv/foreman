@@ -67,7 +67,7 @@ test('openMr then getMr returns the pushed head sha and a null-or-running pipeli
 test('project, findOpenMr, openMr, getMr and merge work against the fake; the merge commit\'s second parent is the reviewed sha', async () => {
   await withFake({}, async (s, f) => {
     const forge = new GitlabForge({ baseUrl: s.url });
-    assert.deepEqual(await forge.project('group/app'), { defaultBranch: 'main', mergeMethod: 'merge' });
+    assert.deepEqual(await forge.project('group/app'), { defaultBranch: 'main', mergeMethod: 'merge', squashOption: 'default_off', mergePipelines: false, mergeTrains: false });
     const head = f.push('foreman/t1', 'b.txt');
     assert.equal(await forge.findOpenMr('group/app', 'foreman/t1', 'main'), null);
     const opened = await forge.openMr('group/app', NEW_MR);
@@ -157,7 +157,7 @@ test('a 401 from the fake is a ForgeError with the status and without the token'
     assert.equal(err.status, 401);
     assert.match(err.message, /401/);
     assert.ok(!`${err.message} ${err.stack}`.includes('wrong-token-value'));
-    assert.deepEqual(await new GitlabForge({ baseUrl: s.url, token: 'the-right-token' }).project('group/app'), { defaultBranch: 'main', mergeMethod: 'merge' });
+    assert.deepEqual(await new GitlabForge({ baseUrl: s.url, token: 'the-right-token' }).project('group/app'), { defaultBranch: 'main', mergeMethod: 'merge', squashOption: 'default_off', mergePipelines: false, mergeTrains: false });
   });
 });
 

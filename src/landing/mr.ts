@@ -5,7 +5,7 @@ import { prepareLandingCommit, type Approver, type MergeResult } from '../merge.
 import type { Store } from '../queue.ts';
 import { isSelfTaskFresh } from '../security/coreGuard.ts';
 import type { Run, Task } from '../types.ts';
-import type { Landing, LandingMapping } from './config.ts';
+import { projectRefusal, type Landing, type LandingMapping } from './config.ts';
 import { ForgeError, type Forge, type Mr } from './forge.ts';
 import { forgeBranch, MirrorError } from './push.ts';
 import { withRepoMergeSection } from './queue.ts';
@@ -157,7 +157,8 @@ export async function handLandingRefusal(store: Store, task: Task, commit: strin
 }
 
 /**
- * The merge step of an approval in a mapped repo, inside the repo's merge section: fetch the target branch, run every
+ * The merge step of an approval in a mapped repo, inside the repo's merge section: check the project's merge settings
+ * (projectRefusal), fetch the target branch, run every
  * landing check against it (prepareLandingCommit; a refusal comes back exactly as the local merge gives it), push the
  * checked commit, then find or open the MR and confirm its head is that commit. 'mr-opened' puts the MR in the pending
  * table with `marker`; a forge or mirror failure is 'mr-refused', with the reason. Nothing merges here.
@@ -173,6 +174,9 @@ export async function openForApproval(
   const mirror = active.landing.mirror(map, active.home);
   const forge = active.landing.forge(map);
   try {
+    // Asked on every approval: a project setting can change between two.
+    const unsupported = projectRefusal(await forge.project(map.project));
+    if (unsupported) return { merged: false, code: 'mr-refused', reason: `merge request not opened: ${map.project}: ${unsupported}`, branch };
     const target = await mirror.fetchTarget();
     const landing = await prepareLandingCommit(task, run, { ...opts, against: target });
     if ('code' in landing) return landing;

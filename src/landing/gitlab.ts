@@ -132,7 +132,15 @@ export class GitlabForge implements Forge {
 
   async project(projectRef: string): Promise<ForgeProject> {
     const o = object(await this.#ok('GET', projectRef, ''), 'project');
-    return { defaultBranch: text(o, 'default_branch', 'project'), mergeMethod: text(o, 'merge_method', 'project') };
+    // GitLab Free does not list the two pipeline fields: absent is off.
+    const optional = (key: string): boolean => (o[key] === undefined ? false : bool(o, key, 'project'));
+    return {
+      defaultBranch: text(o, 'default_branch', 'project'),
+      mergeMethod: text(o, 'merge_method', 'project'),
+      squashOption: text(o, 'squash_option', 'project'),
+      mergePipelines: optional('merge_pipelines_enabled'),
+      mergeTrains: optional('merge_trains_enabled'),
+    };
   }
 
   async findOpenMr(projectRef: string, sourceBranch: string, targetBranch: string): Promise<Mr | null> {

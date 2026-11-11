@@ -93,8 +93,10 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    `foreman/<task id>`, finds the open merge request from that branch or opens one, and confirms
    the MR's head is that commit. The answer is `mr-opened` (`opened !<iid> <url>`). The ticket is
    `done`, but its landing hold and its `landings` row stay: its dependents stay `blocked` and its
-   epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, or an MR
-   head that is not the reviewed commit is `mr-refused`: the ticket goes back to
+   epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, an MR
+   head that is not the reviewed commit, or a project whose settings MR landing does not support
+   (read on every approval: a merge method other than `merge`, squash required, merged results
+   pipelines or merge trains) is `mr-refused`: the ticket goes back to
    `awaiting-approval` with the reason, the hold ends and the row is deleted; approving again
    writes a second decision and reuses the MR still open. Only an open MR from the project's own
    `foreman/<task id>` branch (not a fork's) into the mapped target branch is reused, and one set
@@ -102,7 +104,7 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    then posts one note on it naming the approver of record, the ticket's author and the decision
    id, and the decision keeps the MR's iid ([security](security.md)). Only those steps run in the section, so
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
-   section for at most about four forge calls of 15 s each, plus the mirror's git. A change to
+   section for at most about five forge calls of 15 s each, plus the mirror's git. A change to
    Foreman itself always lands by the local merge. A daemon that stops with an MR open leaves its
    `landings` row, so the next start holds the repo until `foreman land-clear <repo>`. A mapped
    ticket is not hand-landed with `foreman landed` (409), except to record its own MR merged on the

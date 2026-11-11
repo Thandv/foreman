@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ForgeError, type Forge } from './forge.ts';
+import { ForgeError, type Forge, type ForgeProject } from './forge.ts';
 import { forgeUrl, GitlabForge } from './gitlab.ts';
 import { ForgeMirror } from './push.ts';
 import { readForgeToken } from '../security/forgeToken.ts';
@@ -138,9 +138,22 @@ export function loadLanding(home: string, mode: 'merge' | 'mr'): Landing | null 
 }
 
 /**
- * `foreman doctor`'s landing lines: each mapping's project as the forge reports it. MR landing needs merge_method
- * `merge` (the merge commit's second parent is how a landing is confirmed to be the reviewed commit) and a default
- * branch. A forge that cannot be asked is a FAIL line, not a throw.
+ * Why MR landing cannot work in a project with these settings, or null. A landing is confirmed by a merge commit whose
+ * second parent is the reviewed commit, so merge_method must be `merge` and squash must not be required (GitLab's
+ * squash_option `always`; the others leave it to the MR, which Foreman opens without squash). The pipeline gate reads
+ * the pipeline of the source branch head, so merged results pipelines and merge trains are not supported.
+ */
+export function projectRefusal(p: ForgeProject): string | null {
+  if (p.mergeMethod !== 'merge') return `merge_method ${p.mergeMethod}; MR landing needs merge`;
+  if (p.squashOption === 'always') return 'squash_option always; MR landing needs a merge commit, so squash must not be required';
+  if (p.mergePipelines) return 'merged results pipelines are on; MR landing does not support them';
+  if (p.mergeTrains) return 'merge trains are on; MR landing does not support them';
+  return null;
+}
+
+/**
+ * `foreman doctor`'s landing lines: each mapping's project as the forge reports it, checked by projectRefusal. A forge
+ * that cannot be asked is a FAIL line, not a throw.
  */
 export async function landingDoctorLines(landing: Landing): Promise<string[]> {
   const lines: string[] = [];
@@ -148,9 +161,10 @@ export async function landingDoctorLines(landing: Landing): Promise<string[]> {
     const head = `landing ${m.repo} (${m.project})`;
     try {
       const p = await landing.forge(m).project(m.project);
-      lines.push(p.mergeMethod === 'merge'
+      const refused = projectRefusal(p);
+      lines.push(refused === null
         ? `${head}: ok  merge_method merge, default branch ${p.defaultBranch}, target ${m.targetBranch}`
-        : `${head}: FAIL merge_method ${p.mergeMethod}; MR landing needs merge`);
+        : `${head}: FAIL ${refused}`);
     } catch (err) {
       if (!(err instanceof ForgeError)) throw err;
       lines.push(`${head}: FAIL ${err.message}`);

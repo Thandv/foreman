@@ -13,6 +13,12 @@ export interface ForgeProject {
   defaultBranch: string;
   /** The host's merge method, as it names it ('merge', 'rebase_merge', 'ff'). */
   mergeMethod: string;
+  /** The host's squash setting, as it names it (GitLab: 'never', 'default_off', 'default_on', 'always'). */
+  squashOption: string;
+  /** Pipelines run on the merge result (GitLab's merged results pipelines), not on the source branch head. */
+  mergePipelines: boolean;
+  /** Merges go through a merge train. */
+  mergeTrains: boolean;
 }
 
 export interface MrPipeline {
