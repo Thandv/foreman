@@ -2,12 +2,14 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/queue.ts';
 import { outcome, whyNotLanded } from '../scripts/bench/outcome.ts';
+import { assertIsolated, LIVE_PORT } from '../scripts/bench/isolation.ts';
 
 // The benchmarks in scripts/bench are too slow for the suite at their real sizes. These runs are the smallest sizes
 // that still exercise every path: each script runs from the checkout, with no network, and writes nothing to the
@@ -132,4 +134,43 @@ test('the pipeline bench keeps the end of a not-landed ticket\'s events, where t
   } finally {
     store.close();
   }
+});
+
+test('the identity bench refuses a home that is the operator\'s ~/.foreman or sits under it, and the live daemon\'s port', () => {
+  const live = path.join(os.homedir(), '.foreman');
+  assert.throws(() => assertIsolated(live, 40_000), /~\/\.foreman/);
+  assert.throws(() => assertIsolated(path.join(live, 'nested'), 40_000), /~\/\.foreman/);
+  assert.throws(() => assertIsolated(scratchDir('foreman-bench-iso-'), LIVE_PORT), new RegExp(String(LIVE_PORT)));
+  assert.doesNotThrow(() => assertIsolated(scratchDir('foreman-bench-iso-'), 40_000));
+});
+
+test('the identity bench measures a throwaway daemon with and without a bearer, lands through the fake GitLab, and writes its results', async () => {
+  const out = scratchDir('foreman-bench-identity-out-');
+  const result = await bench('identity.ts', ['--requests', '5', '--out', out]) as {
+    comparable: { requests: number; rows: Array<{ daemon: string; auth: string; op: string; samples: number; p50Ms: number; p95Ms: number }> };
+    newCapability: { landings: Array<{ mode: string; approveToMergedMs: number }>; refusal: { status: number } };
+    isolation: { daemons: Array<{ name: string; home: string; port: number }> };
+  };
+  // Without --base there is only the branch's daemon: its two operations with auth off, then with a bearer.
+  const keys = result.comparable.rows.map((r) => `${r.daemon}/${r.auth}/${r.op}`);
+  assert.deepEqual(keys, [
+    'branch/off/GET /api/state', 'branch/off/POST /api/tasks', 'branch/bearer/GET /api/state', 'branch/bearer/POST /api/tasks',
+  ]);
+  for (const r of result.comparable.rows) assert.ok(r.samples === 5 && r.p50Ms >= 0 && r.p95Ms >= r.p50Ms, JSON.stringify(r));
+  assert.deepEqual(result.newCapability.landings.map((l) => l.mode), ['single-principal', 'four-eyes']);
+  for (const l of result.newCapability.landings) assert.ok(l.approveToMergedMs > 0, JSON.stringify(l));
+  assert.equal(result.newCapability.refusal.status, 403, 'the author\'s own approval is refused once a second person exists');
+  for (const d of result.isolation.daemons) {
+    assert.notEqual(d.port, LIVE_PORT);
+    assert.ok(!d.home.startsWith(path.join(os.homedir(), '.foreman')), d.home);
+  }
+  assert.deepEqual(fs.readdirSync(out).sort(), ['demo-transcript.txt', 'raw.json', 'summary.md']);
+  const summary = fs.readFileSync(path.join(out, 'summary.md'), 'utf8');
+  assert.ok(summary.indexOf('## A. ') !== -1 && summary.indexOf('## B. ') > summary.indexOf('## A. '), 'A and B are separate sections');
+  assert.match(summary, /NEW CAPABILITY/);
+  const transcript = fs.readFileSync(path.join(out, 'demo-transcript.txt'), 'utf8');
+  assert.match(transcript, /alice approves .*403/);
+  assert.match(transcript, /bob approves .*mr-opened/);
+  assert.match(transcript, /Foreman-Approved-By: bob/);
+  assert.match(transcript, /principal-minted.*alice/);
 });
