@@ -158,6 +158,9 @@ const lanes = new Map<string, Pending[]>();
 
 const commandOf = (p: Pending): string | null => p.landed.task.testCmd ?? null;
 
+/** Whether coalesced landing checks are running in `repo`: their next check is at the newest HEAD merged there. */
+export const landingChecksRunning = (repo: string): boolean => lanes.has(path.resolve(repo));
+
 /**
  * The post-merge check of a landing whose merge made `head`, and the end of its landing hold. Resolves, like
  * verifyLanding, with the merge result and what the check that covered it found, once one has.

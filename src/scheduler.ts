@@ -20,6 +20,7 @@ import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChang
 import { pinnedGit } from './gitExec.ts';
 import { checkRepo, recordBaseline } from './gitTripwire.ts';
 import { pollMergeRequests } from './landing/mr.ts';
+import { landingChecksRunning } from './landing/verify.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
 import { factDrift } from './prose/linecheck.ts';
@@ -2623,6 +2624,8 @@ export class Scheduler {
     this.redCheckAt = now;
     for (const [repo, red] of this.store.redRepoList()) {
       if (this.redChecking.has(repo)) continue;
+      // The landing queue is checking the HEADs merged since: one check of a HEAD at a time.
+      if (landingChecksRunning(repo)) continue;
       this.redChecking.add(repo);
       void (async () => {
         let head = red.head;

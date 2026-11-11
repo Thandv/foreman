@@ -55,7 +55,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    more check; merges with different commands never cover each other. A red check covering
    several merges marks the repo red at that HEAD with one `MAIN IS RED` event, on the newest
    one's timeline, naming them all, and ends all their holds: the red marker holds the repo's
-   work until the scheduler's red re-check passes. An interrupted check names every landing it
+   work until the scheduler's red re-check passes. The re-check leaves a repo alone while its
+   landing checks still run, so a HEAD merged after the red one is not checked twice at once. An interrupted check names every landing it
    covered the same way. `FOREMAN_POSTMERGE_MODE=per-merge` runs one check per landing at the
    HEAD its own merge made, at once, and a red names that merge alone.
    The hold is in memory; its durable twin is a `landings` row, written before the decision and
