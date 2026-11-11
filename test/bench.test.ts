@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/queue.ts';
-import { outcome, whyNotLanded } from '../scripts/bench/outcome.ts';
+import { mergedToVerifiedMs, namedInRed, outcome, parseSuiteLog, perLanded, whyNotLanded } from '../scripts/bench/outcome.ts';
 import { assertIsolated, LIVE_PORT } from '../scripts/bench/isolation.ts';
 
 // The benchmarks in scripts/bench are too slow for the suite at their real sizes. These runs are the smallest sizes
@@ -134,6 +134,22 @@ test('the pipeline bench keeps the end of a not-landed ticket\'s events, where t
   } finally {
     store.close();
   }
+});
+
+test('the landing bench reads suite runs per landed ticket, merged-to-verified and the red\'s culprits from fixed logs', () => {
+  // The fake suite logs one line per run when it ends: the epoch ms, then the ticket files its checkout held. A
+  // post-merge check holds every ticket merged so far; a ticket's own check holds only its file, and ends before it merges.
+  const runs = parseSuiteLog('1000 ticket-0.txt\n1500 ticket-0.txt,ticket-1.txt\n2400 ticket-0.txt,ticket-1.txt,ticket-2.txt\n\n');
+  assert.deepEqual(runs.map((r) => [r.endedAt, r.files.length]), [[1000, 1], [1500, 2], [2400, 3]]);
+  assert.equal(perLanded(7, 4), 1.75);
+  assert.equal(perLanded(3, 0), 0, 'nothing landed');
+  // ticket-1 merged at 1200 and the first run that ended after it and held its file ended at 1500.
+  assert.equal(mergedToVerifiedMs(runs, 'ticket-1.txt', 1200), 300);
+  // ticket-0 holds in the run at 1000 too, but that run ended before it merged: it verified nothing.
+  assert.equal(mergedToVerifiedMs(runs, 'ticket-0.txt', 1200), 300);
+  assert.equal(mergedToVerifiedMs(runs, 'ticket-2.txt', 3000), undefined, 'no check has covered it yet');
+  assert.deepEqual(namedInRed(['MAIN IS RED after merging t-1, t-2 (cmd): new work for this repo is held', 'status: merged']), ['t-1', 't-2']);
+  assert.deepEqual(namedInRed(['status: merged']), []);
 });
 
 test('the identity bench refuses a home that is the operator\'s ~/.foreman or sits under it, and the live daemon\'s port', () => {
