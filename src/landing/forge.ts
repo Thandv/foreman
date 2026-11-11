@@ -27,6 +27,13 @@ export interface Mr {
   state: MrState;
   /** The source branch head the host sees now. */
   headSha: string;
+  /** The branch it merges into. */
+  targetBranch: string;
+  /** Whether the host squashes it on merge. */
+  squash: boolean;
+  /** The project its source branch is in, and the project it merges into: different for a fork's MR. */
+  sourceProjectId: number;
+  targetProjectId: number;
   /** The host's own mergeability word (GitLab's detailed_merge_status: 'mergeable', 'checking', 'ci_still_running', ...). */
   mergeStatus: string;
   pipeline: MrPipeline | null;
@@ -53,8 +60,8 @@ export type MergeOutcome =
 
 export interface Forge {
   project(projectRef: string): Promise<ForgeProject>;
-  /** The one open MR from `sourceBranch`, or null. */
-  findOpenMr(projectRef: string, sourceBranch: string): Promise<Mr | null>;
+  /** The one open MR from `sourceBranch` in the project itself (not a fork) into `targetBranch`, or null. */
+  findOpenMr(projectRef: string, sourceBranch: string, targetBranch: string): Promise<Mr | null>;
   /** Opens an MR that removes its source branch on merge and never squashes. */
   openMr(projectRef: string, mr: NewMr): Promise<Mr>;
   getMr(projectRef: string, iid: number): Promise<Mr>;

@@ -53,6 +53,18 @@ function pipeline(v: unknown): MrPipeline | null {
   return { sha: commit(p, 'sha', 'head_pipeline'), status: text(p, 'status', 'head_pipeline'), webUrl: text(p, 'web_url', 'head_pipeline') };
 }
 
+function bool(o: Obj, key: string, of: string): boolean {
+  const v = o[key];
+  if (typeof v !== 'boolean') throw unexpected(`${of}.${key}`, 'true or false');
+  return v;
+}
+
+function projectId(o: Obj, key: string): number {
+  const v = o[key];
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) throw unexpected(`merge request.${key}`, 'a positive integer');
+  return v;
+}
+
 function readIid(o: Obj): number {
   const iid = o['iid'];
   if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1) throw unexpected('merge request.iid', 'a positive integer');
@@ -68,6 +80,10 @@ function readMr(v: unknown): Mr {
     iid,
     state: state as MrState,
     headSha: commit(o, 'sha', 'merge request'),
+    targetBranch: text(o, 'target_branch', 'merge request'),
+    squash: bool(o, 'squash', 'merge request'),
+    sourceProjectId: projectId(o, 'source_project_id'),
+    targetProjectId: projectId(o, 'target_project_id'),
     mergeStatus: text(o, 'detailed_merge_status', 'merge request'),
     pipeline: pipeline(o['head_pipeline']),
     mergeCommitSha: o['merge_commit_sha'] === null ? null : commit(o, 'merge_commit_sha', 'merge request'),
@@ -119,13 +135,15 @@ export class GitlabForge implements Forge {
     return { defaultBranch: text(o, 'default_branch', 'project'), mergeMethod: text(o, 'merge_method', 'project') };
   }
 
-  async findOpenMr(projectRef: string, sourceBranch: string): Promise<Mr | null> {
-    const query = new URLSearchParams({ source_branch: sourceBranch, state: 'opened' });
+  async findOpenMr(projectRef: string, sourceBranch: string, targetBranch: string): Promise<Mr | null> {
+    const query = new URLSearchParams({ source_branch: sourceBranch, target_branch: targetBranch, state: 'opened' });
     const list = await this.#ok('GET', projectRef, `/merge_requests?${query}`);
     if (!Array.isArray(list)) throw unexpected('merge request list', 'an array');
-    if (list.length > 1) throw new ForgeError(`GitLab lists ${list.length} open merge requests from ${sourceBranch}; expected at most one`);
+    // The list includes MRs from forks with the same branch name: only the project's own branch is Foreman's.
+    const own = list.map((e) => object(e, 'merge request')).filter((o) => projectId(o, 'source_project_id') === projectId(o, 'target_project_id'));
+    if (own.length > 1) throw new ForgeError(`GitLab lists ${own.length} open merge requests from ${sourceBranch} into ${targetBranch}; expected at most one`);
     // A list entry is GitLab's MergeRequestBasic (no head_pipeline): take its iid and read the full MR.
-    return list.length === 0 ? null : this.getMr(projectRef, readIid(object(list[0], 'merge request')));
+    return own.length === 0 ? null : this.getMr(projectRef, readIid(own[0]!));
   }
 
   async openMr(projectRef: string, mr: NewMr): Promise<Mr> {

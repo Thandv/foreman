@@ -179,7 +179,7 @@ export async function openForApproval(
     const { tip, tipTree, note } = landing;
     await mirror.pushReviewed(tip, task.id);
     const sourceBranch = forgeBranch(task.id).slice('refs/heads/'.length);
-    const opened = await forge.findOpenMr(map.project, sourceBranch) ?? await forge.openMr(map.project, {
+    const opened = await forge.findOpenMr(map.project, sourceBranch, map.targetBranch) ?? await forge.openMr(map.project, {
       sourceBranch,
       targetBranch: map.targetBranch,
       title: task.title,
@@ -189,6 +189,8 @@ export async function openForApproval(
     if (mr.headSha !== tip) {
       return { merged: false, code: 'mr-refused', reason: `the head of !${mr.iid} is ${mr.headSha}, not the reviewed commit ${tip}`, branch };
     }
+    const wrong = notAsOpened(mr, map);
+    if (wrong) return { merged: false, code: 'mr-refused', reason: wrong, branch };
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, checkout: task.repo!, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
       polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
@@ -199,6 +201,17 @@ export async function openForApproval(
     if (!(err instanceof ForgeError) && !(err instanceof MirrorError)) throw err;
     return { merged: false, code: 'mr-refused', reason: `merge request not opened: ${err.message}`, branch };
   }
+}
+
+/**
+ * Why `mr` is not an MR as Foreman opens it for `map` (into the mapped target, from the project's own branch, never
+ * squashed), or null. Someone else may have opened the MR Foreman reuses, or edited it since.
+ */
+function notAsOpened(mr: Mr, map: LandingMapping): string | null {
+  if (mr.targetBranch !== map.targetBranch) return `!${mr.iid} targets ${mr.targetBranch}, not ${map.targetBranch}`;
+  if (mr.sourceProjectId !== mr.targetProjectId) return `!${mr.iid} is from another project (a fork)`;
+  if (mr.squash) return `!${mr.iid} is set to squash`;
+  return null;
 }
 
 /** GitLab detailed_merge_status words that change by themselves: a merge refused while one reads is retried. */
@@ -250,7 +263,7 @@ async function pollOne(store: Store, mr: Entry, now: number, check: PostMergeRun
   const forge = active.landing.forge(map);
   let step: Step;
   try {
-    step = await decide(store, mr, forge, map.project, map.requirePipeline);
+    step = await decide(store, mr, forge, map);
     if ('confirm' in step) mr.forgeMerged = true;
     if ('confirm' in step && step.confirm !== null) {
       const ok = await active.landing.mirror(map, active.home).confirmMerge(step.confirm, mr.tip);
@@ -272,11 +285,13 @@ async function pollOne(store: Store, mr: Entry, now: number, check: PostMergeRun
 }
 
 /**
- * Reads the MR and merges it when it may be: its head is still the reviewed commit, its pipeline for that commit
+ * Reads the MR and merges it when it may be: its head is still the reviewed commit, it is still as Foreman opened it
+ * (notAsOpened), its pipeline for that commit
  * passed (or none is required), GitLab calls it mergeable and four-eyes still lets the approver land it (the approver
  * may have been disabled while the pipeline ran). A merged MR is to be confirmed at its merge commit.
  */
-async function decide(store: Store, mr: Entry, forge: Forge, project: string, requirePipeline: boolean): Promise<Step> {
+async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping): Promise<Step> {
+  const { project, requirePipeline } = map;
   const seen = await forge.getMr(project, mr.iid);
   if (seen.state === 'merged') return { confirm: seen.mergeCommitSha };
   if (seen.state !== 'opened' && seen.state !== 'closed') return { wait: `the merge request is ${seen.state}` };
@@ -284,6 +299,8 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   mr.mergeCalled = false;
   if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
   if (seen.headSha !== mr.tip) return { gate: `MR head moved after review: !${mr.iid} is at ${seen.headSha}, not ${mr.tip}` };
+  const wrong = notAsOpened(seen, map);
+  if (wrong) return { gate: wrong };
   const pipeline = seen.pipeline?.sha === mr.tip ? seen.pipeline : null;
   if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
     return { gate: `the pipeline of !${mr.iid} ${pipeline.status}: ${pipeline.webUrl}` };

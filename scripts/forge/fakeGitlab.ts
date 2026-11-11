@@ -48,7 +48,7 @@ interface MergeRequest {
   iid: number; source: string; target: string; title: string; description: string; squash: boolean; removeSource: boolean;
   state: 'opened' | 'merged'; sha: string; checkingUntil: number; mergeCommitSha: string | null;
 }
-interface Project { path: string; bare: string; mrs: MergeRequest[] }
+interface Project { id: number; path: string; bare: string; mrs: MergeRequest[] }
 
 class HttpError extends Error {
   readonly status: number;
@@ -70,7 +70,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
   const policy = opts.pipeline ?? 'success';
   const pipelineDelayMs = opts.pipelineDelayMs ?? 0;
   const requirePipeline = opts.requirePipeline ?? true;
-  const projects = new Map<string, Project>(Object.entries(opts.projects).map(([p, bare]) => [p, { path: p, bare, mrs: [] }]));
+  const projects = new Map<string, Project>(Object.entries(opts.projects).map(([p, bare], i) => [p, { id: i + 1, path: p, bare, mrs: [] }]));
   const pipelines = new Map<string, Pipeline>();
   const requests: FakeGitlab['requests'] = [];
   let nextPipelineId = 1;
@@ -106,6 +106,7 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     return {
       iid: mr.iid, id: mr.iid, state: mr.state, title: mr.title, description: mr.description,
       source_branch: mr.source, target_branch: mr.target, sha: mr.sha, squash: mr.squash,
+      source_project_id: project.id, target_project_id: project.id,
       web_url: `${url}/${project.path}/-/merge_requests/${mr.iid}`,
       detailed_merge_status: mergeStatus(mr),
       head_pipeline: { id: pl.id, sha: pl.sha, status: pipelineStatus(pl), web_url: `${url}/${project.path}/-/pipelines/${pl.id}` },
@@ -154,7 +155,8 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
     }
     if (rest[0] !== 'merge_requests') throw new HttpError(404, '404 Not Found');
     if (rest.length === 1 && method === 'GET') {
-      const mrs = project.mrs.filter((m) => (!query.has('source_branch') || m.source === query.get('source_branch')) && (!query.has('state') || m.state === query.get('state')));
+      const mrs = project.mrs.filter((m) => (!query.has('source_branch') || m.source === query.get('source_branch'))
+        && (!query.has('target_branch') || m.target === query.get('target_branch')) && (!query.has('state') || m.state === query.get('state')));
       for (const mr of mrs) await observe(project, mr);
       // GitLab's list returns MergeRequestBasic, which has no head_pipeline.
       return mrs.map((m) => ({ ...view(project, m), head_pipeline: undefined }));

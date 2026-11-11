@@ -18,7 +18,7 @@ right before the merge call.
 | State | Meaning | How it ends |
 |---|---|---|
 | `done`, MR open | Approved; the MR is polled every `FOREMAN_MR_POLL_MS`; its dependents stay `blocked` | the pipeline passes and the MR merges, or one of the next two |
-| back at the gate (`awaiting-approval`) | The pipeline failed, the head is not the reviewed commit, a person closed the MR, GitLab refused the merge, or the MR timed out | approve again |
+| back at the gate (`awaiting-approval`) | The pipeline failed, the head is not the reviewed commit, the MR was retargeted or set to squash, a person closed the MR, GitLab refused the merge, or the MR timed out | approve again |
 | merged, checkout synced | The merge commit is confirmed on the target branch and the checkout is fast-forwarded to it | the post-merge check is green and the dependents are released |
 | repo held | A merge could not be confirmed or the checkout could not take it | `foreman land-clear <repo>` after you have looked |
 
@@ -56,6 +56,11 @@ yourself. `--check` answers the pipeline at once and does not pause: the suite r
 The demo only talks to the fake. To try the real thing, map a throwaway repo and project in `landing.json`, put the token
 in `<FOREMAN_HOME>/secrets/gitlab-token` (mode 0600), run `foreman doctor`, and sign two people in
 (`foreman token create --host-admin --name <name>`) before approving.
+
+Anyone who may push to `foreman/<task id>` can open an MR from it before the approval. Foreman reuses only an MR into
+the mapped target branch that is not set to squash, and reads both again before every merge call, but the branch is
+still force-pushed with the reviewed commit. Make `foreman/*` a protected branch pattern on GitLab that only the
+token's user may push and force-push to.
 
 ## Manual steps
 

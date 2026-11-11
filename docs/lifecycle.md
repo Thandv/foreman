@@ -96,7 +96,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, or an MR
    head that is not the reviewed commit is `mr-refused`: the ticket goes back to
    `awaiting-approval` with the reason, the hold ends and the row is deleted; approving again
-   writes a second decision and reuses the MR still open. Each approval that opens or reuses an MR
+   writes a second decision and reuses the MR still open. Only an open MR from the project's own
+   `foreman/<task id>` branch (not a fork's) into the mapped target branch is reused, and one set
+   to squash is `mr-refused`. Each approval that opens or reuses an MR
    then posts one note on it naming the approver of record, the ticket's author and the decision
    id, and the decision keeps the MR's iid ([security](security.md)). Only those steps run in the section, so
    the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
@@ -113,7 +115,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
      by Foreman`). After a merge call that got no answer (a timeout), the MR is read first: it is
      dropped only if it still reads open; merged, it is settled as below.
-   - The MR's head is not the reviewed commit, its pipeline for that commit `failed` or was
+   - The MR's head is not the reviewed commit, its target branch is not the mapped one or it is
+     set to squash (someone edited it on GitLab), its pipeline for that commit `failed` or was
      `canceled`, a person closed it, or GitLab refuses the merge call itself (401 or 403, or a
      refusal while the status reads something other than a transient word such as `checking`):
      the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's

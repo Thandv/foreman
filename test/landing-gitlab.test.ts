@@ -69,9 +69,9 @@ test('project, findOpenMr, openMr, getMr and merge work against the fake; the me
     const forge = new GitlabForge({ baseUrl: s.url });
     assert.deepEqual(await forge.project('group/app'), { defaultBranch: 'main', mergeMethod: 'merge' });
     const head = f.push('foreman/t1', 'b.txt');
-    assert.equal(await forge.findOpenMr('group/app', 'foreman/t1'), null);
+    assert.equal(await forge.findOpenMr('group/app', 'foreman/t1', 'main'), null);
     const opened = await forge.openMr('group/app', NEW_MR);
-    const found = await forge.findOpenMr('group/app', 'foreman/t1');
+    const found = await forge.findOpenMr('group/app', 'foreman/t1', 'main');
     assert.equal(found?.iid, opened.iid);
     assert.match(found.webUrl, /\/group\/app\/-\/merge_requests\/1$/);
     assert.deepEqual(found.pipeline && { sha: found.pipeline.sha, status: found.pipeline.status }, { sha: head, status: 'success' });
@@ -83,7 +83,7 @@ test('project, findOpenMr, openMr, getMr and merge work against the fake; the me
     assert.equal(git(f.bare, 'rev-parse', 'refs/heads/main'), outcome.mergeCommitSha);
     assert.equal(git(f.bare, 'rev-parse', `${outcome.mergeCommitSha}^2`), head);
     assert.equal((await forge.getMr('group/app', opened.iid)).state, 'merged');
-    assert.equal(await forge.findOpenMr('group/app', 'foreman/t1'), null);
+    assert.equal(await forge.findOpenMr('group/app', 'foreman/t1', 'main'), null);
   });
 });
 
