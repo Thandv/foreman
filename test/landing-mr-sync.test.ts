@@ -8,6 +8,7 @@ import { ApprovalTracker } from '../src/gate.ts';
 import { Landing } from '../src/landing/config.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
 import { mirrorPath } from '../src/landing/push.ts';
+import { mergeSectionsPending } from '../src/landing/queue.ts';
 import type { MainChecker, PostMergeRun } from '../src/landing/verify.ts';
 import { Store } from '../src/queue.ts';
 import { scratchDir } from './env.ts';
@@ -36,6 +37,11 @@ async function opened(t: test.TestContext, f: Fixture, check: PostMergeRun = pos
   let now = Date.now();
   const poll = (): Promise<void> => pollMergeRequests(store, now += config.mrPollMs, (err) => { throw err; }, check);
   return { store, a, child, poll };
+}
+
+/** Resolves once `cond` holds, checked once per turn of the event loop. */
+async function until(cond: () => boolean): Promise<void> {
+  while (!cond()) await new Promise((r) => setImmediate(r));
 }
 
 const messages = (store: Store, taskId: string): string[] => store.eventsForTask(taskId).map((e) => e.message);
@@ -186,4 +192,67 @@ test('a merge the mirror cannot confirm holds the repo until land-clear', async 
   assert.equal(store.isLanding(a.id), false, 'land-clear ends the hold');
   assert.equal(landingRows(store), 0, 'and drops the marker');
   assert.equal(released(store, child.id), 'queued');
+});
+
+test('two MRs merged in one tick: the second sync does not start until the first sync\'s merge section ends', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, poll } = await opened(t, f);
+  const b = parked(store, f.repo, 'second');
+  assert.equal((await approve(store, b.id)).merge.code, 'mr-opened');
+  // The first import into the checkout waits until the test lets it go; the ones after it run at once.
+  let imports = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  useLanding(new (class extends Landing {
+    override mirror(m: Fixture['map'], home: string) {
+      const real = super.mirror(m, home);
+      const importCommit = real.importCommit.bind(real);
+      real.importCommit = async (sha) => {
+        imports += 1;
+        if (imports === 1) await gate;
+        return importCommit(sha);
+      };
+      return real;
+    }
+  })([f.map], null), f.home);
+  const polled = poll();
+  // The second settle either queues behind the first in the repo's section, or (unsectioned) starts its own import.
+  await until(() => mergeSectionsPending(f.repo) === 2 || imports === 2);
+  assert.equal(imports, 1, 'the second sync waits for the first one\'s section');
+  assert.equal(mergeSectionsPending(f.repo), 2);
+  release();
+  await polled;
+  assert.equal(imports, 2);
+  assert.equal(git(f.repo, 'rev-parse', 'HEAD'), git(f.forge, 'rev-parse', 'main'));
+  assert.equal(store.isLanding(a.id), false);
+  assert.equal(store.isLanding(b.id), false);
+});
+
+test('an MR merged by a person on the forge while the repo is held does not move the checkout, and joins the hold', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, poll } = await opened(t, f);
+  const before = git(f.repo, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(f.repo, 'a.txt'), 'edited by hand\n');
+  await poll();
+  assert.equal(store.landInterrupted(f.repo)?.taskId, a.id, 'the repo is held');
+  const b = parked(store, f.repo, 'other');
+  assert.equal((await approve(store, b.id)).merge.code, 'mr-opened');
+  await poll();
+  assert.ok(messages(store, b.id).includes('merge request !2 waiting: the repo is held until foreman land-clear'));
+  // The operator cleans the checkout but has not cleared the hold; a person merges !2 on the forge meanwhile.
+  git(f.repo, 'checkout', '-q', '--', 'a.txt');
+  const out = await new Landing([f.map], null).forge(f.map).merge(f.map.project, 2, git(f.repo, 'rev-parse', 'other'));
+  assert.ok(out.merged);
+  await poll();
+  const m2 = git(f.forge, 'rev-parse', 'main');
+  assert.equal(git(f.repo, 'rev-parse', 'HEAD'), before, 'the checkout is left to the operator');
+  assert.ok(messages(store, b.id).some((msg) => msg.startsWith(`land-held(${f.repo}): merge request !2 merged at ${m2}, but the repo is held for an earlier landing;`)));
+  assert.equal(store.landInterrupted(f.repo)?.taskId, a.id, 'still the earlier landing\'s hold');
+  assert.equal(pendingMr(b.id), undefined, 'the hold owns it now');
+  assert.equal(store.isLanding(b.id), true);
+  assert.equal(landingRows(store), 2, 'its marker passes to the hold');
+  assert.equal(store.clearLandInterrupted(f.repo), true);
+  assert.equal(store.isLanding(a.id), false);
+  assert.equal(store.isLanding(b.id), false);
+  assert.equal(landingRows(store), 0, 'land-clear drops both markers');
 });
