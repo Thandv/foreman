@@ -544,8 +544,11 @@ async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): 
     // A mapped repo lands by merge request (landing/mr.ts), every other one by the local merge.
     const land = async (): Promise<MergeResult> => {
       const map = marker === null ? null : await mrLandingFor(task, opts.selfRoot);
-      if (map && marker !== null) return openForApproval(task, run, map, { marker, selfRoot: opts.selfRoot, ...who });
-      return mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who });
+      if (!map || marker === null) return mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who });
+      // Asked again right before the forge merge call, which waits for the MR's pipeline: the approver may be disabled by then.
+      const fourEyes = (now: Task): Promise<string | null> =>
+        recheck(store, now, opts.principal, () => protectedHit(store, now, approvalChange(store, now.id, opts), opts.selfRoot));
+      return openForApproval(task, run, map, { marker, selfRoot: opts.selfRoot, fourEyes, ...who });
     };
     let merge: MergeResult = landable
       ? await land().catch((err: Error): MergeResult => ({

@@ -123,8 +123,12 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      does waiting give up and send the ticket back to the gate. A forge or mirror failure while
      polling is waited out the same way, except that a merge call that got no answer is first read
      back: the timeout applies only once a read shows the MR still open.
-   - Pipeline `success` for the reviewed commit and `mergeable`: one merge call at the reviewed sha,
-     which GitLab refuses if the head has moved.
+   - Pipeline `success` for the reviewed commit and `mergeable`: four-eyes (`docs/security.md`) is
+     asked again for the approve decision's actor, then one merge call at the reviewed sha, which
+     GitLab refuses if the head has moved. If four-eyes now refuses (the approver was disabled while
+     the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made:
+     the MR gets one note saying why (a note the forge refuses is a `warning`), and the ticket goes
+     back to `awaiting-approval` with the reason.
    - Merged (by Foreman, or by a person in GitLab): the mirror fetches the target branch and
      confirms the merge commit is on it with the reviewed commit as its second parent. Confirmed,
      the row is deleted and the ticket's event reads `merged !<iid> at <sha>; checkout sync

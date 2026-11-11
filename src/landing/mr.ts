@@ -54,7 +54,15 @@ interface Entry extends PendingMr {
   forgeMerged: boolean;
   /** Foreman called merge and no read since showed the MR still open: it may have merged, so it is not dropped. */
   mergeCalled: boolean;
+  /** Four-eyes for the approver as the ledger stands now (FourEyesRecheck), asked right before the merge call. */
+  fourEyes: FourEyesRecheck;
 }
+
+/**
+ * Four-eyes (security/fourEyes.ts recheck) for the approve decision's actor landing `task` as it reads now: null, or
+ * why not. The approval path supplies it, since what the change touches is its to say.
+ */
+export type FourEyesRecheck = (task: Task) => Promise<string | null>;
 
 let active: { landing: Landing; home: string } | null = null;
 const pending = new Map<string, Entry>();
@@ -160,7 +168,7 @@ export async function openForApproval(
   task: Task,
   run: Run | null,
   map: LandingMapping,
-  opts: { marker: number; selfRoot?: string } & Approver,
+  opts: { marker: number; selfRoot?: string; fourEyes: FourEyesRecheck } & Approver,
 ): Promise<MergeResult> {
   if (!active) throw new Error('merge-request landing is not configured');
   const branch = run?.branch ?? null;
@@ -186,6 +194,7 @@ export async function openForApproval(
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
       phase: 'open', merged: null, polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
+      fourEyes: opts.fourEyes,
     });
     return { merged: false, code: 'mr-opened', reason: `opened !${mr.iid} ${mr.webUrl}`, branch, ...(note ? { note } : {}) };
   } catch (err) {
@@ -265,7 +274,8 @@ async function pollOne(store: Store, mr: Entry, now: number): Promise<void> {
 
 /**
  * Reads the MR and merges it when it may be: its head is still the reviewed commit, its pipeline for that commit
- * passed (or none is required) and GitLab calls it mergeable. A merged MR is to be confirmed at its merge commit.
+ * passed (or none is required), GitLab calls it mergeable and four-eyes still lets the approver land it (the approver
+ * may have been disabled while the pipeline ran). A merged MR is to be confirmed at its merge commit.
  */
 async function decide(store: Store, mr: Entry, forge: Forge, project: string, requirePipeline: boolean): Promise<Step> {
   const seen = await forge.getMr(project, mr.iid);
@@ -283,6 +293,9 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
   // A person may have reopened the ticket while the MR was read.
   if (left(store, mr)) return { wait: 'the ticket left done' };
+  // left() saw the ticket `done`, so it exists.
+  const refused = await mr.fourEyes(store.getTask(mr.taskId)!);
+  if (refused !== null) return refuseMerge(store, mr, forge, project, `four-eyes: ${refused}`);
   mr.mergeCalled = true;
   const out = await forge.merge(project, mr.iid, mr.tip);
   mr.mergeCalled = false;
@@ -293,6 +306,17 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
     if (TRANSIENT_MERGE_STATUS.has(now)) return { wait: `GitLab reports ${now}` };
   }
   return { gate: `GitLab did not merge !${mr.iid}: ${out.detail}` };
+}
+
+/** No merge call: the MR gets one note saying why (a note the forge refuses is a warning), and the ticket goes back to the gate. */
+async function refuseMerge(store: Store, mr: Entry, forge: Forge, project: string, reason: string): Promise<Step> {
+  try {
+    await forge.addNote(project, mr.iid, `Not merged by Foreman: ${reason}. The ticket is back at the gate in Foreman.`);
+  } catch (err) {
+    if (!(err instanceof ForgeError)) throw err;
+    store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request note giving why !${mr.iid} was not merged not posted: ${err.message}` });
+  }
+  return { gate: reason };
 }
 
 function pipelineWait(mr: Mr): string {

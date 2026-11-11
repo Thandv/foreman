@@ -5,7 +5,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FakeGitlab } from '../scripts/forge/fakeGitlab.ts';
 import { config } from '../src/config.ts';
 import { ApprovalTracker, applyApproval } from '../src/gate.ts';
-import { Landing } from '../src/landing/config.ts';
+import { Landing, type LandingMapping } from '../src/landing/config.ts';
+import { ForgeError, type Forge } from '../src/landing/forge.ts';
 import { pendingMr, pollMergeRequests, useLanding } from '../src/landing/mr.ts';
 import { Store } from '../src/queue.ts';
 import type { Principal } from '../src/types.ts';
@@ -89,5 +90,23 @@ test('an approver disabled while the pipeline ran gets no merge call: one MR not
   assert.match(store.getTask(a.id)!.error ?? '', /approved, but not landed: four-eyes: only a signed-in person can approve or land work/);
   assert.equal(store.isLanding(a.id), false);
   assert.equal(landingRows(store), 0);
+  assert.equal(pendingMr(a.id), undefined);
+});
+
+test('a refusal note the forge does not take is a warning; still no merge call, and the ticket is back at the gate', async (t) => {
+  const { f, store, a, bob, tip, poll } = await opened(t, true);
+  useLanding(new (class extends Landing {
+    override forge(m: LandingMapping): Forge {
+      const real = super.forge(m);
+      real.addNote = () => Promise.reject(new ForgeError('GitLab POST notes: 500 down'));
+      return real;
+    }
+  })([f.map], null), f.home);
+  store.disablePrincipal(bob!.id);
+  await pipelinePasses(f, tip);
+  await poll();
+  assert.equal(merges(f.fake), 0, 'no merge call');
+  assert.ok(store.eventsForTask(a.id).some((e) => e.type === 'warning' && e.message === 'merge request note giving why !1 was not merged not posted: GitLab POST notes: 500 down'));
+  assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
   assert.equal(pendingMr(a.id), undefined);
 });

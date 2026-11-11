@@ -70,7 +70,10 @@
   auth on, `landed` is also refused (409) unless it records the ticket's own merge request merged on the forge at the
   reviewed tree (D6, [commands](commands.md)), so a hand landing cannot step around the org's CI. The
   rule runs before anything else in `applyApproval` and again when an approval's turn in its repo's merge section
-  comes, so an approver disabled while it waited is refused. A refusal is 403 naming the rule, writes no decision,
+  comes, so an approver disabled while it waited is refused. When the approval opened a merge request, the rule is
+  asked a third time right before the forge merge call, which waits for the MR's pipeline: refused then, no merge
+  call is made, the MR gets one note giving the reason and the ticket returns to `awaiting-approval` with it
+  ([lifecycle](lifecycle.md)). Otherwise a refusal is 403 naming the rule, writes no decision,
   leaves the ticket where it was and puts the reason on its timeline. Known limits: the live-human count is whatever
   the host-admin secret has minted, so its holder can mint a second name for themselves (mints are
   `principal-minted` events); with auth on and one human, a protected change cannot land until a second person is
