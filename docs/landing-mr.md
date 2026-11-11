@@ -84,7 +84,10 @@ in `<FOREMAN_HOME>/secrets/gitlab-token` (mode 0600), run `foreman doctor`, and 
 Anyone who may push to `foreman/<task id>` can open an MR from it before the approval. Foreman reuses only an MR into
 the mapped target branch that is not set to squash, and reads both again before every merge call, but the branch is
 still force-pushed with the reviewed commit. Make `foreman/*` a protected branch pattern on GitLab that only the
-token's user may push and force-push to.
+token's user may push to, with "Allowed to force push" on: approving a reworked ticket again force-pushes its branch.
+Foreman opens each MR with "delete source branch" on, but GitLab does not delete a protected branch when it merges, so
+with this pattern the merged `foreman/*` branches stay: delete them on a schedule. Left unprotected, they are deleted
+on merge, but any Developer can push there.
 
 ## Manual steps
 
