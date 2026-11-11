@@ -781,3 +781,56 @@ test('a merge call GitLab answered 500 does not stop FOREMAN_MR_TIMEOUT_MIN once
   assert.equal(merges(f).length, 1, 'no merge call after the timeout');
   atGate(store, a, /not merged within FOREMAN_MR_TIMEOUT_MIN \(120 min\); last: GitLab PUT .*: 500 500 Internal Server Error/);
 });
+
+test('an MR a person merges between Foreman\'s read and its merge call is confirmed and synced, not sent back to the gate', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, child, tip } = await opened(t, f);
+  patch(f, (forge) => {
+    const merge = forge.merge.bind(forge);
+    forge.merge = async (project, iid, sha) => {
+      // The person's merge lands first; GitLab then answers Foreman's call 405, as it does for a merged MR.
+      assert.equal((await merge(project, iid, sha)).merged, true);
+      return merge(project, iid, sha);
+    };
+  });
+  await poller(store)();
+  assert.equal(git(f.forge, 'rev-parse', 'main^2'), tip);
+  assert.equal(store.getTask(a.id)!.status, 'done');
+  synced(store, f, a);
+  store.reconcileBlocked();
+  assert.equal(store.getTask(child.id)!.status, 'queued');
+});
+
+test('an MR a person merges while Foreman\'s merge waits its turn is confirmed with no merge call of Foreman\'s', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, tip } = await opened(t, f);
+  let reads = 0;
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => {
+      const mr = await getMr(project, iid);
+      if (++reads === 1) assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).merge(project, iid, tip)).merged, true);
+      return mr;
+    };
+  });
+  await poller(store)();
+  assert.equal(merges(f).length, 1, 'only the person\'s merge');
+  synced(store, f, a);
+});
+
+test('an MR retargeted on GitLab while its merge waits its turn goes back to the gate with no merge call', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a, main } = await opened(t, f);
+  let reads = 0;
+  patch(f, (forge) => {
+    const getMr = forge.getMr.bind(forge);
+    forge.getMr = async (project, iid) => {
+      const mr = await getMr(project, iid);
+      return ++reads > 1 ? { ...mr, targetBranch: 'release' } : mr;
+    };
+  });
+  await poller(store)();
+  assert.equal(merges(f).length, 0, 'no merge call');
+  assert.equal(git(f.forge, 'rev-parse', 'main'), main);
+  atGate(store, a, /!1 targets release, not main/);
+});
