@@ -2,16 +2,17 @@ import { scratchDir } from './env.ts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startFakeGitlab, type FakeGitlab } from '../scripts/forge/fakeGitlab.ts';
 import { Store } from '../src/queue.ts';
-import { ApprovalTracker, applyApproval } from '../src/gate.ts';
+import { ApprovalTracker, applyApproval, FourEyesRefused } from '../src/gate.ts';
 import { Landing, type LandingMapping } from '../src/landing/config.ts';
 import type { Forge, NewMr } from '../src/landing/forge.ts';
 import { GitlabForge } from '../src/landing/gitlab.ts';
 import { pendingMrs, useLanding } from '../src/landing/mr.ts';
-import type { Task } from '../src/types.ts';
+import type { Principal, Task } from '../src/types.ts';
 
 // Approving a ticket whose repo lands by merge request (src/landing/mr.ts) pushes the reviewed commit to
 // foreman/<task id> through the Foreman-owned mirror and opens a GitLab MR on the local fake; nothing merges into the
@@ -52,7 +53,7 @@ async function fixture(t: TestContext, opts: { token?: string } = {}): Promise<F
 }
 
 /** A ticket parked at the gate whose run left `branch` carrying a file of its own, reviewed at that commit's tree. */
-function parked(store: Store, repo: string, branch: string, extra: { parentId?: string } = {}): Task {
+function parked(store: Store, repo: string, branch: string, extra: { parentId?: string; createdBy?: string } = {}): Task {
   git(repo, 'checkout', '-q', '-b', branch);
   fs.writeFileSync(path.join(repo, `${branch}.txt`), 'x\n');
   git(repo, 'add', '-A');
@@ -239,4 +240,71 @@ test('two approvals in one repo open two MRs without waiting for CI', async (t) 
   assert.equal(mrPosts(f.fake), 2);
   assert.equal(landingRows(store), 2);
   assert.equal(store.isLanding(a.id) && store.isLanding(b.id), true);
+});
+
+const notePosts = (fake: FakeGitlab): Array<{ path: string; body: string }> =>
+  fake.requests.filter((r) => r.method === 'POST' && /\/notes$/.test(r.path)).map((r) => ({ path: r.path, body: (JSON.parse(r.body!) as { body: string }).body }));
+
+test('pin: the MR an approval opens names the task and the reviewed tree in its description', async (t) => {
+  const f = await fixture(t);
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const a = parked(store, f.repo, 'described');
+  const out = await approve(store, a.id);
+  assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  const open = f.fake.requests.find((r) => r.method === 'POST' && /\/merge_requests$/.test(r.path))!;
+  assert.deepEqual(JSON.parse(open.body!), {
+    source_branch: `foreman/${a.id}`, target_branch: 'main', title: 'described',
+    description: `Foreman task ${a.id}\n\nReviewed tree ${store.latestRun(a.id)!.reviewedTree}`,
+    remove_source_branch: true, squash: false,
+  });
+});
+
+/** Alice and Bob as human principals, which turns auth on; each has a token the note must never carry. */
+function team(store: Store): { alice: Principal; bob: Principal; secrets: string[] } {
+  const minted = ['alice', 'bob'].map((name) => {
+    const principal = store.addPrincipal({ kind: 'human', name, createdBy: 'operator' });
+    const token = randomBytes(32).toString('base64url');
+    store.addToken({ principalId: principal.id, tokenHash: createHash('sha256').update(token).digest('hex'), createdBy: 'operator' });
+    return { principal, token };
+  });
+  return { alice: minted[0]!.principal, bob: minted[1]!.principal, secrets: minted.map((m) => m.token) };
+}
+
+test('a four-eyes approval names its approver of record in one MR note, and its decision keeps the MR iid', async (t) => {
+  const f = await fixture(t, { token: TOKEN });
+  useLanding(new Landing([f.map], TOKEN), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const { alice, bob, secrets } = team(store);
+  const a = parked(store, f.repo, 'attributed', { createdBy: alice.id });
+  const out = await applyApproval(store, a.id, { principal: bob.id, tracker: new ApprovalTracker() });
+  assert.equal(out.merge.code, 'mr-opened', out.merge.reason);
+  const decision = out.decision!;
+  assert.equal(decision.actorId, bob.id);
+  assert.deepEqual(decision.extra, { mrIid: 1 });
+  const notes = notePosts(f.fake);
+  assert.equal(notes.length, 1, 'exactly one note');
+  assert.equal(notes[0]!.path, '/api/v4/projects/group%2Fapp/merge_requests/1/notes');
+  assert.equal(notes[0]!.body, [
+    `Approved in Foreman at reviewed tree ${store.latestRun(a.id)!.reviewedTree}.`,
+    '',
+    `Foreman-Approved-By: bob (${bob.id})`,
+    'Foreman-Author: alice',
+    `Foreman-Decision: ${decision.id}`,
+  ].join('\n'));
+  for (const secret of [TOKEN, ...secrets]) assert.ok(!notes[0]!.body.includes(secret), 'no token in the note');
+});
+
+test('an approval refused by four-eyes makes no forge call', async (t) => {
+  const f = await fixture(t);
+  useLanding(new Landing([f.map], null), f.home);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const { alice } = team(store);
+  const a = parked(store, f.repo, 'own', { createdBy: alice.id });
+  await assert.rejects(applyApproval(store, a.id, { principal: alice.id, tracker: new ApprovalTracker() }), FourEyesRefused);
+  assert.equal(f.fake.requests.length, 0, 'the forge recorded no request');
+  assert.equal(store.getTask(a.id)!.status, 'awaiting-approval');
 });
