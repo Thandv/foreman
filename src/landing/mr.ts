@@ -56,6 +56,9 @@ interface Entry extends PendingMr {
   fourEyes: FourEyesRecheck;
   /** GitLab refused a merge while it reported mergeable (two merges into one target can collide): tried once more. */
   mergeRetried: boolean;
+  /** Merge calls with no answer or a server error after which the MR read open again, and the last one's error. */
+  unanswered: number;
+  unansweredError: string;
   /** Ends this MR's turn in its target's merge queue: set when its merge call is made, called once pollOne is done. */
   endTurn?: () => void;
 }
@@ -214,6 +217,7 @@ export async function openForApproval(
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, checkout: task.repo!, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
       polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false, mergeRetried: false,
+      unanswered: 0, unansweredError: '',
       fourEyes: opts.fourEyes,
     });
     return { merged: false, code: 'mr-opened', reason: `opened !${mr.iid} ${mr.webUrl}`, branch, ...(note ? { note } : {}) };
@@ -247,6 +251,9 @@ const TRANSIENT_MERGE_STATUS: ReadonlySet<string> = new Set(['checking', 'unchec
 
 /** detailed_merge_status words only a new head can clear; the new head is not the reviewed commit, so waiting is no use. */
 const NEEDS_NEW_HEAD: ReadonlySet<string> = new Set(['conflict', 'need_rebase']);
+
+/** Merge calls with no answer or a server error, each followed by a read showing the MR open, before the gate. */
+const MAX_UNANSWERED_MERGES = 3;
 
 /** What one poll of an open MR decided. */
 type Step = { wait: string } | { gate: string } | { confirm: string | null };
@@ -336,9 +343,10 @@ async function pollOnce(store: Store, mr: Entry, now: number, check: PostMergeRu
   const map = active?.landing.mappings.find((m) => m.repo === mr.repo);
   if (!active || !map) throw new Error(`merge request !${mr.iid} of ${mr.taskId}: ${mr.repo} is no longer mapped for landing`);
   const forge = active.landing.forge(map);
+  const timedOut = now - mr.openedAt >= config.mrTimeoutMin * 60_000;
   let step: Step;
   try {
-    step = await decide(store, mr, forge, map);
+    step = await decide(store, mr, forge, map, timedOut);
     if ('confirm' in step) mr.forgeMerged = true;
     if ('confirm' in step && step.confirm !== null) {
       const ok = await active.landing.mirror(map, active.home).confirmMerge(step.confirm, mr.tip);
@@ -351,7 +359,7 @@ async function pollOnce(store: Store, mr: Entry, now: number, check: PostMergeRu
   if ('confirm' in step) return settle(store, mr, step.confirm, map, check);
   if (left(store, mr)) return;
   if ('gate' in step) return backToGate(store, mr, step.gate, forge, map.project);
-  if (!mr.forgeMerged && !mr.mergeCalled && now - mr.openedAt >= config.mrTimeoutMin * 60_000) {
+  if (!mr.forgeMerged && !mr.mergeCalled && timedOut) {
     return backToGate(store, mr, `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${step.wait}`, forge, map.project);
   }
   if (step.wait === mr.waiting) return;
@@ -363,19 +371,28 @@ async function pollOnce(store: Store, mr: Entry, now: number, check: PostMergeRu
  * Reads the MR and merges it when it may be: its head is still the reviewed commit, it is still as Foreman opened it
  * (notAsOpened), its pipeline for that commit
  * passed (or none is required), GitLab calls it mergeable and four-eyes still lets the approver land it (the approver
- * may have been disabled while the pipeline ran). A merged MR is to be confirmed at its merge commit.
+ * may have been disabled while the pipeline ran). A merged MR is to be confirmed at its merge commit. An MR that reads
+ * open after merge calls with no answer or a server error goes back to the gate after MAX_UNANSWERED_MERGES of them,
+ * or once `timedOut`.
  */
-async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping): Promise<Step> {
+async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping, timedOut: boolean): Promise<Step> {
   const { project, requirePipeline } = map;
   const seen = await forge.getMr(project, mr.iid);
   if (seen.state === 'merged') return { confirm: seen.mergeCommitSha };
   if (seen.state !== 'opened' && seen.state !== 'closed') return { wait: `the merge request is ${seen.state}` };
   // An open or closed MR shows that no merge call of Foreman's merged it.
+  const unanswered = mr.mergeCalled;
   mr.mergeCalled = false;
   if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
   if (seen.headSha !== mr.tip) return { gate: `MR head moved after review: !${mr.iid} is at ${seen.headSha}, not ${mr.tip}` };
   const wrong = notAsOpened(seen, map);
   if (wrong) return { gate: wrong };
+  if (unanswered && ++mr.unanswered >= MAX_UNANSWERED_MERGES) {
+    return { gate: `merge request !${mr.iid} still reads open after ${mr.unanswered} merge calls GitLab did not answer with a result; last: ${mr.unansweredError}` };
+  }
+  if (unanswered && timedOut) {
+    return { gate: `merge request !${mr.iid} not merged within FOREMAN_MR_TIMEOUT_MIN (${config.mrTimeoutMin} min); last: ${mr.unansweredError}` };
+  }
   const pipeline = seen.pipeline?.sha === mr.tip ? seen.pipeline : null;
   if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
     return { gate: `the pipeline of !${mr.iid} ${pipeline.status}: ${pipeline.webUrl}` };
@@ -404,6 +421,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
       // A 4xx is GitLab's answer that nothing merged, so the timeout applies again; no answer, or a server error, may
       // hide a merge, and keeps the MR until a read shows it open.
       if (err instanceof ForgeError && err.status !== null && err.status >= 400 && err.status < 500) mr.mergeCalled = false;
+      else mr.unansweredError = (err as Error).message;
       throw err;
     });
   });

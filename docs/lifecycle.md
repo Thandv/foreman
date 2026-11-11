@@ -135,7 +135,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      `canceled`, a person closed it, or GitLab refuses the merge call itself (401 or 403, or a
      refusal while the status reads something other than a transient word such as `checking`; a
      refusal while it reads `mergeable`, as when another merge into the target just moved it, is
-     tried once more at the next poll first):
+     tried once more at the next poll first; a merge GitLab answers 200 with the MR still open, as
+     when a hook refuses the merge commit, is such a refusal, with GitLab's `merge_error` as the message):
      the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's
      message), the hold ends and the row is deleted. The MR gets one note, `Not merged by Foreman:
      <reason>`, saying it is no longer approved in Foreman (a note the forge refuses is a
@@ -154,6 +155,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      the ticket back to the gate, with the last status as the reason. A forge or mirror failure while
      polling is waited out the same way, except that a merge call that got no answer, or a server
      error (5xx), is first read back: the timeout applies only once a read shows the MR still open.
+     Each such call the next read shows open counts: the third sends the ticket back to the gate
+     with the last error, and so does the first once the timeout has passed.
      A merge call GitLab answers with another 4xx is a definite answer that nothing merged, and the
      timeout applies to it as to any wait. GitLab answers 401 or 403 when the token may not merge
      into the target branch: that is a refusal, and the ticket goes back to the gate at once.
