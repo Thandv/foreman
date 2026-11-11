@@ -52,6 +52,8 @@ interface Entry extends PendingMr {
   waiting: string | null;
   /** The forge reported the MR merged: only the confirmation is waited for, and the timeout no longer applies. */
   forgeMerged: boolean;
+  /** Foreman called merge and no read since showed the MR still open: it may have merged, so it is not dropped. */
+  mergeCalled: boolean;
 }
 
 let active: { landing: Landing; home: string } | null = null;
@@ -183,7 +185,7 @@ export async function openForApproval(
     }
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
-      phase: 'open', merged: null, polledAt: 0, polling: false, waiting: null, forgeMerged: false,
+      phase: 'open', merged: null, polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
     });
     return { merged: false, code: 'mr-opened', reason: `opened !${mr.iid} ${mr.webUrl}`, branch, ...(note ? { note } : {}) };
   } catch (err) {
@@ -219,11 +221,12 @@ export function pollMergeRequests(store: Store, now: number, onError: (err: unkn
 
 /**
  * Drops `mr` when its ticket is no longer `done`, or a later approval replaced it; true when it did. An MR the forge
- * has merged is kept whatever the ticket's status, so its merge is confirmed and settled before its marker closes.
+ * has merged, or may have merged (a merge call not answered), is kept whatever the ticket's status, so its merge is
+ * confirmed and settled before its marker closes.
  */
 function left(store: Store, mr: Entry): boolean {
   if (pending.get(mr.taskId) !== mr) return true;
-  if (mr.forgeMerged) return false;
+  if (mr.forgeMerged || mr.mergeCalled) return false;
   const status = store.getTask(mr.taskId)?.status ?? 'gone';
   if (status === 'done') return false;
   pending.delete(mr.taskId);
@@ -269,6 +272,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   if (seen.state === 'merged') return { confirm: seen.mergeCommitSha };
   if (seen.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
   if (seen.state !== 'opened') return { wait: `the merge request is ${seen.state}` };
+  mr.mergeCalled = false;
   if (seen.headSha !== mr.tip) return { gate: `MR head moved after review: !${mr.iid} is at ${seen.headSha}, not ${mr.tip}` };
   const pipeline = seen.pipeline?.sha === mr.tip ? seen.pipeline : null;
   if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
@@ -278,6 +282,7 @@ async function decide(store: Store, mr: Entry, forge: Forge, project: string, re
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
   // A person may have reopened the ticket while the MR was read.
   if (left(store, mr)) return { wait: 'the ticket left done' };
+  mr.mergeCalled = true;
   const out = await forge.merge(project, mr.iid, mr.tip);
   if (out.merged) return { confirm: out.mergeCommitSha };
   if (out.reason === 'head-moved') return { gate: `MR head moved after review: ${out.detail}` };

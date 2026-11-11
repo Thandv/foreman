@@ -111,7 +111,8 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    for the forge. Each change of state is one event on the ticket.
    - The ticket left `done` (a person reopened, rejected or archived it): the MR is no longer
      followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
-     by Foreman`).
+     by Foreman`). After a merge call that got no answer (a timeout), the MR is read first: it is
+     dropped only if it still reads open; merged, it is settled as below.
    - The MR's head is not the reviewed commit, its pipeline for that commit `failed` or was
      `canceled`, a person closed it, or GitLab refuses the merge for a lasting reason (required
      approvals, branch protection): the ticket goes back to `awaiting-approval` with the reason
