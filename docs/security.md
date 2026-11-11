@@ -66,7 +66,9 @@
   A change to protected paths always needs that second person, even while only one human exists: Foreman's
   `PROTECTED_PATHS` in Foreman's own repo, and in any repo the human-only paths and the repo's `gate.humanPaths`.
   The change is the run's work from its base commit to the reviewed tree (the `--as-is` tree when one is named),
-  and for `landed` the named commit against its first parent; a change git cannot list counts as protected. The
+  and for `landed` the named commit against its first parent; a change git cannot list counts as protected. With
+  auth on, `landed` is also refused (409) unless it records the ticket's own merge request merged on the forge at the
+  reviewed tree (D6, [commands](commands.md)), so a hand landing cannot step around the org's CI. The
   rule runs before anything else in `applyApproval` and again when an approval's turn in its repo's merge section
   comes, so an approver disabled while it waited is refused. A refusal is 403 naming the rule, writes no decision,
   leaves the ticket where it was and puts the reason on its timeline. Known limits: the live-human count is whatever

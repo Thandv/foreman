@@ -68,6 +68,14 @@ retry the ticket, or cancel it and land the work as a new ticket); a `canceled` 
 parent epic; a ticket with no repo, or a repo that is not a git repo; a `--commit` that is not a commit in that repo;
 a repo with no branch checked out; and either ancestry check below. A ticket that does not exist answers 404.
 
+**Through the merge request (D6).** A ticket whose repo lands by merge request (`FOREMAN_LANDING=mr` and the repo
+mapped in `landing.json`; a change to Foreman itself excepted), and every ticket once auth is on, is not landed by hand:
+the route answers 409 `this repo lands through its merge request (<why>)` and records nothing. The one exception is
+the merge request the ticket's latest MR-opening approval names (its decision's `mrIid`): when the forge reports it
+merged, `--commit` names its head, and that commit's tree is the tree the approval reviewed, the landing is recorded,
+once (a second call finds the ticket `done`). With auth off and the repo not mapped, nothing changes. Four-eyes is
+checked first (403).
+
 **Inputs** are checked at the route before the Store sees them (400, nothing done): `--commit` is hex, 7 to 40
 characters; `--by` has the ticket-id shape (`t_` then letters or digits); `--note` is at most 2000 characters.
 

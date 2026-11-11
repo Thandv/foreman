@@ -48,6 +48,7 @@ import { withDroppedIssues } from './verify/crewReview.ts';
 import { acquireVerifySlot, claimRunLease, slotsAhead, VERIFY_SLOT_REFUSED, VerifyWaitAborted } from './verify/slots.ts';
 import { testTimeoutMs } from './verify/tests.ts';
 import { checkRepo } from './gitTripwire.ts';
+import { handLandingRefusal } from './landing/mr.ts';
 import { pinnedGit } from './gitExec.ts';
 import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
 import { hostAdminMintAllowed, mintToken, readMintRequest } from './security/mint.ts';
@@ -970,6 +971,9 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           // Four-eyes, as for approve: the change is the named commit against its first parent.
           const refused = await fourEyesRefusal(store, taskId, actorId, { from: `${commit}^1`, to: commit }, scheduler.selfRoot);
           if (refused) return json(res, 403, { error: refused.message });
+          // D6: a repo that lands by merge request, and every repo once auth is on, is landed through its MR.
+          const viaMr = asked ? await handLandingRefusal(store, asked, commit, { authOn: authIsOn(store), selfRoot: scheduler.selfRoot }) : null;
+          if (viaMr) return json(res, 409, { error: viaMr });
           try {
             const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human', actorId });
             void scheduler.tick().catch(() => {});

@@ -114,6 +114,41 @@ export async function mrLandingFor(task: Task, selfRoot?: string): Promise<Landi
 }
 
 /**
+ * Why a person may not record `task` as landed by hand (POST /landed, D6), or null when they may. A ticket whose repo
+ * lands by merge request, and every ticket once auth is on, lands through its MR: the only hand landing recorded is of
+ * the MR its latest MR-opening approval names (that decision's mrIid), merged on the forge with `commit` as its head
+ * and that commit's tree the tree the approval reviewed. With auth off and the repo not mapped, nothing changes.
+ */
+export async function handLandingRefusal(store: Store, task: Task, commit: string, opts: { authOn: boolean; selfRoot: string | undefined }): Promise<string | null> {
+  const refuse = (why: string): string => `cannot mark ${task.id} landed: this repo lands through its merge request (${why}); nothing was recorded`;
+  let map: LandingMapping | null;
+  try {
+    map = await mrLandingFor(task, opts.selfRoot);
+  } catch (err) {
+    return refuse(`whether it lands by merge request could not be read: ${(err as Error).message}`);
+  }
+  if (!map || !active) return opts.authOn ? refuse('auth is on, and no forge is configured for it') : null;
+  const approval = store.decisionsForTask(task.id).filter((d) => d.action === 'approve' && typeof d.extra?.['mrIid'] === 'number').at(-1);
+  if (!approval) return refuse('no merge request was opened for it');
+  const iid = approval.extra!['mrIid'] as number;
+  // A name git cannot resolve is the refusal's answer, as markLanded gives it.
+  const sha = (await pinnedGit(map.repo, ['rev-parse', '--verify', '--end-of-options', `${commit}^{commit}`]).catch(() => null))?.stdout.trim();
+  if (!sha) return refuse(`${commit} is not a commit in ${map.repo}`);
+  let mr: Mr;
+  try {
+    mr = await active.landing.forge(map).getMr(map.project, iid);
+  } catch (err) {
+    if (!(err instanceof ForgeError)) throw err;
+    return refuse(`the forge could not say whether !${iid} merged: ${err.message}`);
+  }
+  if (mr.state !== 'merged') return refuse(`!${iid} is ${mr.state}`);
+  if (mr.headSha !== sha) return refuse(`the head of !${iid} is ${mr.headSha}, not ${sha}`);
+  const tree = (await pinnedGit(map.repo, ['rev-parse', '--verify', `${sha}^{tree}`])).stdout.trim();
+  if (tree !== approval.reviewedTree) return refuse(`the tree of ${sha} is ${tree}, not the reviewed tree ${approval.reviewedTree ?? '(none recorded)'}`);
+  return null;
+}
+
+/**
  * The merge step of an approval in a mapped repo, inside the repo's merge section: fetch the target branch, run every
  * landing check against it (prepareLandingCommit; a refusal comes back exactly as the local merge gives it), push the
  * checked commit, then find or open the MR and confirm its head is that commit. 'mr-opened' puts the MR in the pending

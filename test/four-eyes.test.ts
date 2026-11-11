@@ -148,7 +148,7 @@ test('the rule: only a live human approves; with two, never the author; protecte
   assert.match(fourEyes(alice, { createdBy: 'p_alice' }, 'src/gate.ts', 1)!, /touches src\/gate\.ts.*mint a principal/);
 });
 
-test('with two humans, the other person approves and hand-lands, and is the actor of record', async (t) => {
+test('with two humans, the other person approves and is the actor of record; their hand landing passes four-eyes and meets D6', async (t) => {
   const r = await rig(t);
   const alice = mint(r.store, 'alice');
   const bob = mint(r.store, 'bob');
@@ -158,9 +158,11 @@ test('with two humans, the other person approves and hand-lands, and is the acto
   assert.deepEqual(decisions(r.store, task.id), [{ action: 'approve', actor_id: bob.principal.id }]);
   const { repo, sha } = repoWithChange(t);
   const landed = handWork(r.store, repo, alice.principal.id);
+  // Not the four-eyes 403: with auth on, work lands through its merge request (test/landed-mr.test.ts).
   const res2 = await r.call('POST', `/api/tasks/${landed.id}/landed`, { commit: sha }, bob.token);
-  assert.equal(res2.status, 200, JSON.stringify(res2.json));
-  assert.deepEqual(decisions(r.store, landed.id), [{ action: 'landed', actor_id: bob.principal.id }]);
+  assert.equal(res2.status, 409, JSON.stringify(res2.json));
+  assert.match(String(res2.json['error']), /lands through its merge request/);
+  assert.deepEqual(decisions(r.store, landed.id), []);
 });
 
 test('with two humans, a ticket whose author is unknown is refused, with the reason on its timeline', async (t) => {

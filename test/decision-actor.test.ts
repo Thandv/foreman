@@ -398,7 +398,7 @@ async function rig(t: test.TestContext, headers: () => Record<string, string>): 
 }
 
 /** Cancel, retry, reopen, deps-drop, delete, landed, approve and reject through their routes: each one's newest actor_id. */
-async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
+async function throughRoutes(t: test.TestContext, r: Rig, landedStatus = 200): Promise<unknown[]> {
   const { store, call } = r;
   const work = scratchDir('foreman-decision-actor-reopen-');
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
@@ -427,7 +427,7 @@ async function throughRoutes(t: test.TestContext, r: Rig): Promise<unknown[]> {
   ];
   for (const [method, url, body] of calls) {
     const res = await call(method, url, body);
-    assert.equal(res.status, 200, `${method} ${url}: ${JSON.stringify(res.json)}`);
+    assert.equal(res.status, url.endsWith('/landed') ? landedStatus : 200, `${method} ${url}: ${JSON.stringify(res.json)}`);
   }
   return [canceled.id, retried.task.id, reopened.task.id, b.id, f2.id, landed.id, approved.task.id, rejected.task.id]
     .map((id) => actorIds(store, id).at(-1));
@@ -444,7 +444,10 @@ test('with auth on, every decision route records the request principal', async (
   const alice = r.store.addPrincipal({ kind: 'human', name: 'alice', createdBy: 'operator' });
   secret = randomBytes(32).toString('base64url');
   r.store.addToken({ principalId: alice.id, tokenHash: createHash('sha256').update(secret).digest('hex'), expiresAt: null, createdBy: 'operator' });
-  assert.deepEqual(await throughRoutes(t, r), Array(8).fill(alice.id));
+  // With auth on, a repo with no forge is not hand-landed (D6), so /landed writes no row.
+  const expected = Array(8).fill(alice.id);
+  expected[5] = undefined;
+  assert.deepEqual(await throughRoutes(t, r, 409), expected);
 });
 
 /** The parameter list of each exported function `names` in src/gate.ts, as written. */
