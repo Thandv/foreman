@@ -1,8 +1,8 @@
 # Capacity
 
-Scope: how fast Foreman's ledger and pipeline are, measured by two benchmarks, and the first numbers they gave. For a contributor changing the queue, the scheduler or the gate, and for an operator sizing a backlog. How the parts fit together is in [ARCHITECTURE.md](ARCHITECTURE.md).
+Scope: how fast Foreman's ledger, pipeline and landing are, measured by benchmarks, and the first numbers they gave. For a contributor changing the queue, the scheduler or the gate, and for an operator sizing a backlog. How the parts fit together is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Neither benchmark is part of `npm run verify` (they take minutes); verify typechecks them, and `test/bench.test.ts` runs each at its smallest size. Both run from a clean checkout with no network: each makes its own temp `FOREMAN_HOME`, clears every `FOREMAN_*` variable the shell exported, turns the OS sandbox off (it is a per-command wrapper whose cost depends on the platform), and removes everything it made when it exits, Ctrl-C included. Neither starts or calls a daemon. Pass `--json` for machine-readable output. A third script, [identity](#identity-scriptsbenchidentityts), does start daemons, and is described apart.
+Neither benchmark is part of `npm run verify` (they take minutes); verify typechecks them, and `test/bench.test.ts` runs each at its smallest size. Both run from a clean checkout with no network: each makes its own temp `FOREMAN_HOME`, clears every `FOREMAN_*` variable the shell exported, turns the OS sandbox off (it is a per-command wrapper whose cost depends on the platform), and removes everything it made when it exits, Ctrl-C included. Neither starts or calls a daemon. Pass `--json` for machine-readable output. Two more scripts, [identity](#identity-scriptsbenchidentityts) and [landing](#landing-scriptsbenchlandingts), do start daemons, and are described apart.
 
 ## Ledger: `scripts/bench/ledger.ts`
 
@@ -49,6 +49,37 @@ What bearer-token auth costs per request, and what four-eyes landing adds. Unlik
 
 Two results are kept apart. **A, comparable:** p50 and p95 of `GET /api/state` and `POST /api/tasks` (a ticket for a person's desk, which never runs) on a fresh daemon of the base with no auth, of the branch with no auth, and of the branch with a bearer. **B, a new capability, branch only:** approve to merged through the local fake GitLab (`scripts/forge/fakeGitlab.ts`) with one principal and with four-eyes, from the approving call to Foreman's "merged" event, with the person's wait left out, and a transcript of the four-eyes demo. B has nothing to compare with and is not a speed-up. `comparisons/identity/method.md` says how to read both.
 
+## Landing: `scripts/bench/landing.ts`
+
+```
+node scripts/bench/landing.ts [--scenarios burst,steady,mr] [--tickets 20] [--suite-ms 900] [--burst-gap-ms 50] [--steady-gap-ms 864] [--pipeline-ms 1500] [--wait-ms 600000] [--out <dir>] [--json]
+```
+
+What landing costs when many approvals reach one repo. Like identity it starts daemons (`foreman serve` of this checkout, each cell in its own temp `FOREMAN_HOME` on a free loopback port, with the OS sandbox off and the model server pointed at a dead port; it refuses `~/.foreman` and port 4100), and drives them over the HTTP API only, with `scripts/bench/landingRun.ts`. That file takes a daemon's URL and a repo and nothing else, so the comparison harness runs the same code against a build that has no bench code. Time is compressed: the 15-minute suite takes `--suite-ms`.
+
+Each cell parks `--tickets` shell tickets at the gate, then approves them through the API. The ticket's test command is a fake suite that waits `--suite-ms` and appends one line to a log (when it ended, which ticket files its checkout held), so the count of suite runs is read from the log. The last ticket's change is bad: it also writes `bad.txt`, which fails the suite only in a post-merge checkout, so the red's attribution can be read. Scenarios:
+
+| Scenario | Approvals |
+| --- | --- |
+| burst | `--burst-gap-ms` apart ("20 approvals in one minute") |
+| steady | `--steady-gap-ms` apart (100 merges a day at the compression) |
+| mr | the burst, landed through the local fake GitLab whose pipelines pass after `--pipeline-ms` |
+
+Each runs under `before` (`FOREMAN_WORKER_SUITE=full`, `FOREMAN_POSTMERGE_MODE=per-merge`) and `after` (`targeted`, `coalesced`). It reports, per cell:
+
+| Column | Measured from → to |
+| --- | --- |
+| suite runs/landed | log lines (own checks, post-merge checks, re-runs) per landed ticket |
+| worker leases/landed | verify slots the workers' wrapper runs were granted, per landed ticket; not in suite runs |
+| landings/h | landed tickets over the first approval → the last check that covered a merge |
+| approve > merged | the approving call sent → the ticket's merge event (`merge: merged …`, or `merged !<iid> at …` for a merge request) |
+| merged > verified | the merge event → the first suite run to end after it in a checkout that held the ticket's file |
+| red names | whether the red-main event names the bad ticket, and how many tickets it names |
+
+A ticket whose approval did not land it is listed under `not landed` with the merge event that says why. `--out` writes `raw.json`; `comparisons/landing/method.md` says how to read the stored run.
+
+The comparison harness scenario `landing-burst` runs the burst against the commit before the landing work (3a6712a), the branch with `per-merge` and the branch at its defaults, through the same `landingRun.ts`.
+
 ## First numbers
 
 Machine class: an 8-core Apple M2 laptop with 16 GB of memory, macOS 14, Node 26, otherwise idle. Defaults as above. With 20 samples a p99 is the slowest sample, so one pause (a WAL checkpoint, a GC) shows there: the 100k `claimable` p99 is one such sample.
@@ -85,6 +116,17 @@ The table above was measured before the bench's workers ran the wrapper, which i
 | full | off | 1,019 | 4,254/9,145 | 1 |
 | targeted | on | 1,950 | 2,080/4,706 | 0 |
 | targeted | off | 1,052 | 2,063/4,246 | 0 |
+
+Landing, 20 tickets, a 900 ms suite (the 15-minute suite at 1000x), one bad change last, ms, from the stored run in `comparisons/landing/` ([method](../comparisons/landing/method.md)):
+
+| Scenario | Mode | Landed | Suite runs/landed | Worker leases/landed | Landings/h | Approve > merged p50/p95 | Merged > verified p50/p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| burst | before | 20/20 | 2.05 | 1 | 6,781 | 3,146/5,902 | 2,032/3,382 |
+| burst | after | 20/20 | 1.45 | 0 | 8,061 | 3,071/5,798 | 1,434/1,841 |
+| steady | before | 20/20 | 2.05 | 1 | 4,025 | 383/387 | 1,016/1,020 |
+| steady | after | 20/20 | 1.9 | 0 | 3,874 | 380/390 | 1,534/1,994 |
+
+The same burst through the comparison harness, against the commit before the landing work: 3a6712a landed 15 of 20 (its overlapping approvals conflict: there is no per-repo merge section) at 2.47 suite runs per landed ticket; the branch landed 20 of 20, at 2.05 under `per-merge` and 1.45 under `coalesced`, against the target of 2.3 or fewer. The `mr` scenario lands one merge request and refuses the other 19 at the git tripwire (the first merge request creates `refs/foreman/forge/target`), so it has no suite-run figure worth reading.
 
 What they say:
 
