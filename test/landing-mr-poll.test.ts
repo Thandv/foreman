@@ -384,6 +384,20 @@ test('a merge call whose answer was lost at FOREMAN_MR_TIMEOUT_MIN is read back,
   synced(store, f, a);
 });
 
+test('a merge call GitLab answers with an HTTP error (401) is not taken for a lost answer: the timeout still sends the ticket back', async (t) => {
+  const f = await fixture(t, { pipeline: 'success' });
+  const { store, a } = await opened(t, f);
+  patch(f, (forge) => {
+    forge.merge = async () => { throw new ForgeError('GitLab PUT /merge_requests/1/merge: 401 401 Unauthorized', 401); };
+  });
+  const poll = poller(store);
+  await poll();
+  assert.equal(store.getTask(a.id)!.status, 'done', 'waited, not bounced, before the timeout');
+  await poll(Date.now() + config.mrTimeoutMin * 60_000 + 1);
+  assert.equal(merges(f).length, 0);
+  atGate(store, a, /not merged within FOREMAN_MR_TIMEOUT_MIN \(120 min\); last: GitLab PUT \/merge_requests\/1\/merge: 401/);
+});
+
 test('a merge GitLab refuses for a lasting reason sends the ticket back to the gate with its message', async (t) => {
   const f = await fixture(t, { pipeline: 'success' });
   const { store, a } = await opened(t, f);

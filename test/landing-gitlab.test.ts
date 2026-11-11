@@ -193,6 +193,12 @@ test('a 403 on merge is refused', async () => {
   });
 });
 
+test('a 401 on merge is refused: GitLab answers it when the token may not merge into the target branch', async () => {
+  await withStub((_req, res) => res.writeHead(401).end(JSON.stringify({ message: '401 Unauthorized' })), async (url) => {
+    assert.deepEqual(await new GitlabForge({ baseUrl: url }).merge('group/app', 1, SHA), { merged: false, reason: 'refused', detail: '401 Unauthorized' });
+  });
+});
+
 test('a server that never answers is cut at the timeout', async () => {
   await withStub(() => undefined, async (url) => {
     await assert.rejects(new GitlabForge({ baseUrl: url, timeoutMs: 50 }).project('group/app'), (e: Error) => e instanceof ForgeError && /no answer within 50 ms/.test(e.message));
