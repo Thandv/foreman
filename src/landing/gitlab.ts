@@ -15,9 +15,6 @@ import { ForgeError, type Forge, type ForgeProject, type MergeOutcome, type Mr, 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 1024 * 1024;
 const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-/** findOpenMr reads the open MR list LIST_PER_PAGE at a time (GitLab's most), at most LIST_PAGES pages. */
-const LIST_PER_PAGE = 100;
-const LIST_PAGES = 10;
 const MR_STATES: readonly string[] = ['opened', 'merged', 'closed', 'locked'] satisfies MrState[];
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
@@ -63,12 +60,6 @@ function bool(o: Obj, key: string, of: string): boolean {
   return v;
 }
 
-function projectId(o: Obj, key: string): number {
-  const v = o[key];
-  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) throw unexpected(`merge request.${key}`, 'a positive integer');
-  return v;
-}
-
 function readIid(o: Obj): number {
   const iid = o['iid'];
   if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1) throw unexpected('merge request.iid', 'a positive integer');
@@ -86,8 +77,6 @@ function readMr(v: unknown): Mr {
     headSha: commit(o, 'sha', 'merge request'),
     targetBranch: text(o, 'target_branch', 'merge request'),
     squash: bool(o, 'squash', 'merge request'),
-    sourceProjectId: projectId(o, 'source_project_id'),
-    targetProjectId: projectId(o, 'target_project_id'),
     mergeStatus: text(o, 'detailed_merge_status', 'merge request'),
     pipeline: pipeline(o['head_pipeline']),
     mergeCommitSha: o['merge_commit_sha'] === null ? null : commit(o, 'merge_commit_sha', 'merge request'),
@@ -148,20 +137,12 @@ export class GitlabForge implements Forge {
   }
 
   async findOpenMr(projectRef: string, sourceBranch: string, targetBranch: string): Promise<Mr | null> {
-    // The list includes MRs from forks with the same branch name: only the project's own branch is Foreman's. Forks
-    // can fill whole pages, so every page is read, up to LIST_PAGES of them.
-    const own: Obj[] = [];
-    for (let page = 1; ; page++) {
-      if (page > LIST_PAGES) throw new ForgeError(`GitLab lists over ${LIST_PAGES * LIST_PER_PAGE} open merge requests from ${sourceBranch} into ${targetBranch}`);
-      const query = new URLSearchParams({ source_branch: sourceBranch, target_branch: targetBranch, state: 'opened', per_page: String(LIST_PER_PAGE), page: String(page) });
-      const list = await this.#ok('GET', projectRef, `/merge_requests?${query}`);
-      if (!Array.isArray(list)) throw unexpected('merge request list', 'an array');
-      own.push(...list.map((e) => object(e, 'merge request')).filter((o) => projectId(o, 'source_project_id') === projectId(o, 'target_project_id')));
-      if (list.length < LIST_PER_PAGE) break;
-    }
-    if (own.length > 1) throw new ForgeError(`GitLab lists ${own.length} open merge requests from ${sourceBranch} into ${targetBranch}; expected at most one`);
+    const query = new URLSearchParams({ source_branch: sourceBranch, target_branch: targetBranch, state: 'opened' });
+    const list = await this.#ok('GET', projectRef, `/merge_requests?${query}`);
+    if (!Array.isArray(list)) throw unexpected('merge request list', 'an array');
+    if (list.length > 1) throw new ForgeError(`GitLab lists ${list.length} open merge requests from ${sourceBranch} into ${targetBranch}; expected at most one`);
     // A list entry is GitLab's MergeRequestBasic (no head_pipeline): take its iid and read the full MR.
-    return own.length === 0 ? null : this.getMr(projectRef, readIid(own[0]!));
+    return list.length === 0 ? null : this.getMr(projectRef, readIid(object(list[0], 'merge request')));
   }
 
   async openMr(projectRef: string, mr: NewMr): Promise<Mr> {

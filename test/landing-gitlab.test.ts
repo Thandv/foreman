@@ -213,34 +213,14 @@ test('a 401 on merge is refused: GitLab answers it when the token may not merge 
   });
 });
 
-test('findOpenMr asks for the target branch and leaves out an MR from another project (a fork)', async () => {
+test('findOpenMr asks for the target branch', async () => {
   let query = '';
   await withStub((req, res) => {
     query = new URL(req.url ?? '/', 'http://stub.invalid').search;
-    res.writeHead(200).end(JSON.stringify([{ iid: 1, source_project_id: 9, target_project_id: 1 }]));
+    res.writeHead(200).end(JSON.stringify([]));
   }, async (url) => {
     assert.equal(await new GitlabForge({ baseUrl: url }).findOpenMr('group/app', 'foreman/t1', 'main'), null);
     assert.match(query, /target_branch=main/);
-  });
-});
-
-test('findOpenMr reads past a full page of fork MRs to the project\'s own', async () => {
-  const asked: string[] = [];
-  const fork = { iid: 1, source_project_id: 9, target_project_id: 1 };
-  await withStub((req, res) => {
-    const u = new URL(req.url ?? '/', 'http://stub.invalid');
-    asked.push(u.pathname.replace(/^.*\/merge_requests/, '') + u.search);
-    if (!u.pathname.endsWith('/merge_requests')) {
-      res.writeHead(404).end(JSON.stringify({ message: '404 Not Found' }));
-      return;
-    }
-    // GitLab lists newest first: a full first page of fork MRs, then the project's own MR on page two.
-    res.writeHead(200).end(JSON.stringify(u.searchParams.get('page') === '2' ? [{ iid: 7, source_project_id: 1, target_project_id: 1 }] : Array(100).fill(fork)));
-  }, async (url) => {
-    await assert.rejects(new GitlabForge({ baseUrl: url }).findOpenMr('group/app', 'foreman/t1', 'main'), /404/);
-    assert.match(asked[0]!, /per_page=100/);
-    assert.match(asked[1]!, /page=2/);
-    assert.equal(asked[2], '/7', 'the own MR on page two is read');
   });
 });
 
@@ -290,7 +270,7 @@ test('a merge GitLab answers 200 with the MR still open is not-mergeable, with G
 
 test('an MR with head_pipeline null or absent has no pipeline: GitLab leaves the key out when the token may not read pipelines', async () => {
   const mr = {
-    iid: 1, state: 'opened', sha: SHA, target_branch: 'main', squash: false, source_project_id: 7, target_project_id: 7,
+    iid: 1, state: 'opened', sha: SHA, target_branch: 'main', squash: false,
     detailed_merge_status: 'mergeable', merge_commit_sha: null, web_url: 'http://gitlab.test/group/app/-/merge_requests/1',
   };
   for (const body of [mr, { ...mr, head_pipeline: null }]) {

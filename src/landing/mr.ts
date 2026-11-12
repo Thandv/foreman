@@ -236,12 +236,11 @@ function mrTitle(task: Task): string {
 }
 
 /**
- * Why `mr` is not an MR as Foreman opens it for `map` (into the mapped target, from the project's own branch, never
- * squashed), or null. Someone else may have opened the MR Foreman reuses, or edited it since.
+ * Why `mr` is not an MR as Foreman opens it for `map` (into the mapped target, never squashed), or null. Someone else
+ * may have opened the MR Foreman reuses, or edited it since.
  */
 function notAsOpened(mr: Mr, map: LandingMapping): string | null {
   if (mr.targetBranch !== map.targetBranch) return `!${mr.iid} targets ${mr.targetBranch}, not ${map.targetBranch}`;
-  if (mr.sourceProjectId !== mr.targetProjectId) return `!${mr.iid} is from another project (a fork)`;
   if (mr.squash) return `!${mr.iid} is set to squash`;
   return null;
 }
