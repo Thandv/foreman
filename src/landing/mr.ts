@@ -436,10 +436,10 @@ function whyNotMerge(mr: Entry, seen: Mr, map: LandingMapping): Step | null {
   if (pipeline && (pipeline.status === 'failed' || pipeline.status === 'canceled')) {
     return { gate: `the pipeline of !${mr.iid} ${pipeline.status}: ${pipeline.webUrl}` };
   }
-  if (map.requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
   if (NEEDS_NEW_HEAD.has(seen.mergeStatus)) {
     return { gate: `GitLab reports ${seen.mergeStatus}: the merge request conflicts with ${map.targetBranch} or needs a rebase; rework it, then approve again` };
   }
+  if (map.requirePipeline && pipeline?.status !== 'success') return { wait: pipelineWait(seen) };
   if (seen.mergeStatus !== 'mergeable') return { wait: `GitLab reports ${seen.mergeStatus}` };
   return null;
 }

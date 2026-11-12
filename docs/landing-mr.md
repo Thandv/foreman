@@ -27,8 +27,9 @@ after a restart. Run `foreman land-clear <repo>`, then approve again (the open M
 the reviewed commit meanwhile, record it with `foreman landed <id> --commit <sha>`. The MR itself stays on GitLab, with
 no note.
 
-A ticket that leaves `done` while its MR is open (reopened, rejected, canceled) is no longer followed: its MR gets a
-`No longer approved in Foreman` note and stays open.
+A `done` ticket whose MR is open cannot be rejected, canceled or reopened in Foreman. To withdraw the approval before
+the merge, close the MR on GitLab: the ticket returns to the gate, where reject and cancel work. Or delete the ticket
+with `foreman rm`: the MR is no longer followed, gets a `No longer approved in Foreman` note and stays open.
 A repo already held because GitLab merged the MR but the checkout could not take it stays held after a restart, and
 its ticket stays done: sync the checkout by hand, then `foreman land-clear <repo>`.
 

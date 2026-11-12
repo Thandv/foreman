@@ -124,7 +124,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    **Merging the MR.** A tick stage, before the dispatch gate so a full machine still polls, reads
    each open MR at most every `FOREMAN_MR_POLL_MS`, one call at a time per MR; the tick never waits
    for the forge. Each change of state is one event on the ticket.
-   - The ticket left `done` (a person reopened, rejected or archived it): the MR is no longer
+   - The ticket left `done` (in practice it was deleted with `foreman rm`: a `done` ticket cannot
+     be rejected, canceled or reopened, and archiving does not change its status; to withdraw an
+     approval, close the MR on GitLab, which sends the ticket back to the gate): the MR is no longer
      followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
      by Foreman`). The MR gets one note, `No longer approved in Foreman: the ticket is <status>`,
      and stays open; a note the forge refuses is a `warning`. After a merge call that got no answer (a timeout), the MR is read first: it is
