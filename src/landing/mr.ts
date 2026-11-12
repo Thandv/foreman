@@ -54,8 +54,6 @@ interface Entry extends PendingMr {
   mergeCalled: boolean;
   /** Four-eyes for the approver as the ledger stands now (FourEyesRecheck), asked right before the merge call. */
   fourEyes: FourEyesRecheck;
-  /** GitLab refused a merge while it reported mergeable (two merges into one target can collide): tried once more. */
-  mergeRetried: boolean;
   /** Merge calls with no answer or a server error after which the MR read open again, and the last one's error. */
   unanswered: number;
   unansweredError: string;
@@ -216,7 +214,7 @@ export async function openForApproval(
     if (wrong) return { merged: false, code: 'mr-refused', reason: wrong, branch };
     pending.set(task.id, {
       taskId: task.id, runId: run!.id, repo: map.repo, checkout: task.repo!, iid: mr.iid, tip, tree: tipTree, marker: opts.marker, openedAt: Date.now(),
-      polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false, mergeRetried: false,
+      polledAt: 0, polling: false, waiting: null, forgeMerged: false, mergeCalled: false,
       unanswered: 0, unansweredError: '',
       fourEyes: opts.fourEyes,
     });
@@ -419,10 +417,6 @@ async function decide(store: Store, mr: Entry, forge: Forge, map: LandingMapping
     if (now.state === 'merged') return { confirm: now.mergeCommitSha };
     if (now.state === 'closed') return { gate: `merge request !${mr.iid} was closed on the forge` };
     if (TRANSIENT_MERGE_STATUS.has(now.mergeStatus)) return { wait: `GitLab reports ${now.mergeStatus}` };
-    if (now.mergeStatus === 'mergeable' && !mr.mergeRetried) {
-      mr.mergeRetried = true;
-      return { wait: 'GitLab refused the merge while reporting mergeable; trying once more' };
-    }
   }
   return { gate: `GitLab did not merge !${mr.iid}: ${out.detail}` };
 }

@@ -669,20 +669,6 @@ test('a merge GitLab refuses while its status is still settling is waited for, n
   assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab reports checking'));
 });
 
-test('a merge GitLab refuses while its status reads mergeable is tried once more before the ticket goes back to the gate', async (t) => {
-  const f = await fixture(t, { pipeline: 'success' });
-  const { store, a } = await opened(t, f);
-  patch(f, (forge) => {
-    forge.merge = () => Promise.resolve({ merged: false, reason: 'not-mergeable', detail: '406 Branch cannot be merged' });
-  });
-  const poll = poller(store);
-  await poll();
-  assert.equal(store.getTask(a.id)!.status, 'done', 'not bounced on the first refusal');
-  assert.ok(messages(store, a).includes('merge request !1 waiting: GitLab refused the merge while reporting mergeable; trying once more'));
-  await poll();
-  atGate(store, a, /GitLab did not merge !1: 406 Branch cannot be merged/);
-});
-
 test('MRs into one target merge one at a time: overlapping merges GitLab would refuse all land, none back at the gate', { timeout: 30_000 }, async (t) => {
   const f = await fixture(t, { pipeline: 'success', refuseOverlappingMerges: true, recheckAfterMerge: true, checkingMs: 100 });
   useLanding(new Landing([f.map], null), f.home);
@@ -742,12 +728,12 @@ test('the fake reads an MR that no longer merges cleanly into its target as conf
   atGate(store, a, /GitLab reports conflict/);
 });
 
-test('a merge GitLab answers 200 with the MR still open is tried once more, then goes back to the gate with GitLab\'s merge_error', async (t) => {
+test('a merge GitLab answers 200 with the MR still open goes back to the gate with GitLab\'s merge_error', async (t) => {
   const f = await fixture(t, { pipeline: 'success', failMerges: 'opened' });
   const { store, a, main } = await opened(t, f);
   const poll = poller(store);
   for (let i = 0; i < 5; i++) await poll();
-  assert.equal(merges(f).length, 2, 'one call, and one more');
+  assert.equal(merges(f).length, 1, 'one call');
   assert.equal(git(f.forge, 'rev-parse', 'main'), main, 'nothing merged');
   atGate(store, a, /GitLab did not merge !1: pre-receive hook declined the merge commit/);
 });
