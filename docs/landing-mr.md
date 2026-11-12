@@ -28,7 +28,7 @@ the reviewed commit meanwhile, record it with `foreman landed <id> --commit <sha
 no note.
 
 A ticket that leaves `done` while its MR is open (reopened, rejected, canceled) is no longer followed: its MR gets a
-`No longer approved in Foreman` note, and is closed when the ticket is rejected, canceled, failed or deleted.
+`No longer approved in Foreman` note and stays open.
 A repo already held because GitLab merged the MR but the checkout could not take it stays held after a restart, and
 its ticket stays done: sync the checkout by hand, then `foreman land-clear <repo>`.
 
@@ -65,7 +65,7 @@ The demo only talks to the fake. None of this has been run against a real GitLab
 ### What the GitLab side needs
 
 - GitLab 15.6 or later: the adapter reads `detailed_merge_status` and refuses an MR without it.
-- A token whose user may create, read, comment on, close and merge MRs (scope `api`; GitLab has no narrower scope for
+- A token whose user may create, read, comment on and merge MRs (scope `api`; GitLab has no narrower scope for
   merging) and push over https (scope `write_repository`, for an https `pushUrl`). A project access token's bot user
   is the usual choice.
 - That user may merge into the target branch (on a protected branch, Maintainer by default) and push and force-push
@@ -119,6 +119,6 @@ Two things to know before protecting `foreman/*`, from GitLab's documentation an
 - Held repo: look at the checkout (`git status`, is it on the target branch and clean), fast-forward it by hand if
   GitLab merged, then `foreman land-clear <repo>`.
 - A ticket whose MR was merged on GitLab at the reviewed tree can be recorded with `foreman landed <id> --commit <sha>` ([commands](commands.md)).
-- An MR Foreman no longer follows but did not close (its ticket went back to the gate, was reopened, or the daemon
+- An MR Foreman no longer follows (its ticket went back to the gate or left `done`, or the daemon
   restarted) stays open on GitLab, and anyone with merge rights there can still merge it; Foreman would not check it.
   Close it by hand if the ticket will not be approved again.

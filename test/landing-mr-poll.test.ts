@@ -180,8 +180,8 @@ test('an MR sent back to the gate gets one note saying it is no longer approved,
   assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).getMr('group/app', 1)).state, 'opened');
 });
 
-test('an MR whose ticket is rejected, canceled, failed or deleted is closed on the forge with a note; one whose ticket is reopened only gets the note', async (t) => {
-  for (const [status, state] of [['rejected', 'closed'], ['canceled', 'closed'], ['failed', 'closed'], ['gone', 'closed'], ['queued', 'opened']] as const) {
+test('an MR whose ticket is rejected, canceled, failed, deleted or reopened gets one note and is neither merged nor changed', async (t) => {
+  for (const status of ['rejected', 'canceled', 'failed', 'gone', 'queued'] as const) {
     const f = await fixture(t);
     const { store, a, child } = await opened(t, f);
     const before = noteBodies(f).length;
@@ -194,8 +194,8 @@ test('an MR whose ticket is rejected, canceled, failed or deleted is closed on t
     const posted = noteBodies(f).slice(before);
     assert.equal(posted.length, 1, `${status}: ${JSON.stringify(posted)}`);
     assert.match(posted[0]!, new RegExp(`^No longer approved in Foreman: the ticket is ${status}`));
-    assert.equal((await new GitlabForge({ baseUrl: f.fake.url }).getMr('group/app', 1)).state, state, status);
-    assert.equal(merges(f).length, 0);
+    assert.equal(merges(f).length, 0, status);
+    assert.equal(f.fake.requests.filter((r) => r.method === 'PUT').length, 0, status);
   }
 });
 
