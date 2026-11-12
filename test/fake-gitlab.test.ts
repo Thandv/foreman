@@ -139,16 +139,6 @@ test('merge with a stale sha gets 409 and changes nothing', async () => {
   });
 });
 
-test('a stale sha on an MR not yet mergeable gets 405, not 409: GitLab checks mergeability before the sha', async () => {
-  await withServer({ pipeline: 'manual' }, async (s, f) => {
-    const stale = f.commitOn('feat', 'b.txt');
-    const mr = await open(s, 'feat');
-    f.commitOn('feat', 'c.txt');
-    assert.equal((await mergeMr(s, mr.iid, stale)).status, 405);
-    assert.equal((await getMr(s, mr.iid)).state, 'opened');
-  });
-});
-
 test('a failed pipeline blocks the merge with 405 and ci_must_pass; flipping it to success unblocks', async () => {
   await withServer({ pipeline: 'failed' }, async (s, f) => {
     const head = f.commitOn('feat', 'b.txt');

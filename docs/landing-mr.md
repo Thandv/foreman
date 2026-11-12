@@ -9,7 +9,7 @@ the setting in [configuration](configuration.md#merge-request-landing-landingjso
 ## The invariant
 
 Whatever lands is the tree a person reviewed. The commit pushed to the MR is the one the gate checked; an MR whose head is
-anything else is never merged, and the merge call names the reviewed sha, which GitLab refuses if the head has moved (409, or 405 while the moved head is not yet mergeable).
+anything else is never merged, and the merge call names the reviewed sha, which GitLab refuses (409) if the head has moved.
 With sign-in on, the person who approves is not the person who created the ticket (four-eyes), and that is asked again
 right before the merge call.
 
