@@ -245,9 +245,8 @@ export async function startFakeGitlab(opts: FakeGitlabOptions): Promise<FakeGitl
         try {
           await observe(project, mr);
           if (mr.state !== 'opened') throw new HttpError(405, 'Method Not Allowed');
-          // GitLab checks mergeability (405) before the sha (409).
-          if (mergeStatus(mr) !== 'mergeable') throw new HttpError(405, 'Method Not Allowed');
           if (query.has('sha') && query.get('sha') !== mr.sha) throw new HttpError(409, 'SHA does not match HEAD of source branch');
+          if (mergeStatus(mr) !== 'mergeable') throw new HttpError(405, 'Method Not Allowed');
           if (opts.failMerges === 'server-error') throw new HttpError(500, '500 Internal Server Error');
           if (opts.failMerges === 'opened') {
             mr.mergeError = 'pre-receive hook declined the merge commit';
