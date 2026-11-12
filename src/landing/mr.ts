@@ -98,8 +98,7 @@ export interface ApproverOfRecord {
 }
 
 /**
- * Posts the approver of record on the task's pending MR as one note: the reviewed tree (saying it replaces any earlier
- * Foreman approval, since a reused MR keeps its older notes) and the Foreman-Approved-By,
+ * Posts the approver of record on the task's pending MR as one note: the reviewed tree and the Foreman-Approved-By,
  * Foreman-Author and Foreman-Decision trailers. A forge failure is a ForgeError.
  */
 export async function noteApproval(taskId: string, record: ApproverOfRecord): Promise<void> {
@@ -107,7 +106,7 @@ export async function noteApproval(taskId: string, record: ApproverOfRecord): Pr
   const map = mr && active?.landing.mappings.find((m) => m.repo === mr.repo);
   if (!active || !mr || !map) throw new Error(`no merge request is pending for ${taskId}`);
   await active.landing.forge(map).addNote(map.project, mr.iid, [
-    `Approved in Foreman at reviewed tree ${mr.tree}. This replaces any earlier Foreman approval on this request.`,
+    `Approved in Foreman at reviewed tree ${mr.tree}.`,
     '',
     `Foreman-Approved-By: ${record.approver}`,
     `Foreman-Author: ${record.author}`,
