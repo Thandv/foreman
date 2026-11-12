@@ -76,27 +76,18 @@ The demo only talks to the fake. None of this has been run against a real GitLab
 - With `requirePipeline` off the project may have CI/CD switched off: GitLab then leaves `head_pipeline` out of the
   MR, and Foreman reads that as no pipeline. Not checked on an instance.
 - No required GitLab approval rules: Foreman never approves on GitLab, so such an MR waits for a person to approve it
-  on GitLab, or for `FOREMAN_MR_TIMEOUT_MIN`. Any other merge check GitLab leaves unmet (unresolved threads, external
-  status checks, a required Jira issue, a security policy, requested changes) waits the same way: Foreman merges only
-  when `detailed_merge_status` is `mergeable`.
+  on GitLab, or for `FOREMAN_MR_TIMEOUT_MIN`.
 - `pushUrl` is the same project as `project`, not a fork.
 - No Git LFS in the repo: Foreman's git runs with filters off and pushes objects it copied itself, so it never uploads
   an LFS object. GitLab refuses a push that adds an LFS pointer without its object, and a file meant for LFS is pushed
   as a plain file.
 - No push rules that reject unsigned commits or check the committer or author: Foreman's commits are not signed, and
-  carry the git identity they were made with, not the token's user. A branch name rule must allow `foreman/*`, and a
-  commit message rule must allow Foreman's commit message. Any of these refuses the push, and the approval is
+  carry the git identity they were made with, not the token's user. Either refuses the push, and the approval is
   `mr-refused` (`merge request not opened: git push for the forge mirror of <repo> failed: ...`).
-- Network: the adapter's API calls use Node's `https` with no proxy set up, so a GitLab reached only through an
-  outbound proxy is not supported. git, run as the daemon's user, reads that user's git config. For a GitLab whose
-  certificate an internal CA signed, start the daemon with `NODE_EXTRA_CA_CERTS` naming the CA file, and set
-  `http.sslCAInfo` in that user's git config. Not checked on an instance.
 
 To try it, map a throwaway repo and project in `landing.json`, put the token
 in `<FOREMAN_HOME>/secrets/gitlab-token` (mode 0600), run `foreman doctor`, and sign two people in
-(`foreman token create --host-admin --name <name>`) before approving. Doctor reads the project's merge settings only:
-it does not check the token's scopes, expiry date, or rights to push `foreman/*` and merge into the target branch. A
-token short of those passes doctor and fails at the first approval (push refused) or the first merge (401).
+(`foreman token create --host-admin --name <name>`) before approving. Doctor reads the project's merge settings only.
 
 Anyone who may push to `foreman/<task id>` can open an MR from it before the approval. Foreman reuses only an MR into
 the mapped target branch that is not set to squash, and reads both again before every merge call, but the branch is
