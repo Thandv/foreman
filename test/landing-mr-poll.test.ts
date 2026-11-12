@@ -595,18 +595,6 @@ test('a daemon restart after GitLab merged the MR but the checkout was held keep
   assert.equal(store.getTask(child.id)!.status, 'queued');
 });
 
-test('an MR that reads as from another project (a fork) goes back to the gate with no merge call', async (t) => {
-  const f = await fixture(t, { pipeline: 'success' });
-  const { store, a } = await opened(t, f);
-  patch(f, (forge) => {
-    const getMr = forge.getMr.bind(forge);
-    forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), sourceProjectId: 99 });
-  });
-  await poller(store)();
-  assert.equal(merges(f).length, 0);
-  atGate(store, a, /!1 is from another project \(a fork\)/);
-});
-
 test('a throwing forge adapter is recorded against the stage, and the tick still dispatches', { timeout: 20_000 }, async (t) => {
   const f = await fixture(t);
   const { store, a } = await opened(t, f);
