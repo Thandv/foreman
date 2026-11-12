@@ -57,7 +57,9 @@ export async function startDaemon(
     cwd: checkout,
     env: {
       PATH: process.env['PATH'] ?? '', HOME: scratch(`${name}-user`), FOREMAN_HOME: home, FOREMAN_PORT: String(port),
-      FOREMAN_SANDBOX: 'off', FOREMAN_OLLAMA_URL: 'http://127.0.0.1:9', ...opts.env,
+      FOREMAN_SANDBOX: 'off', FOREMAN_OLLAMA_URL: 'http://127.0.0.1:9',
+      // A temp dir of its own, removed with the bench's others: under a sandbox /tmp is not writable.
+      TMPDIR: scratch(`${name}-tmp`), ...opts.env,
     },
   });
   running.add(child);

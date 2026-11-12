@@ -38,7 +38,8 @@ test('--check prints the steps of all three passes, including the refused self-a
     /^ {2}3\. \S+ is back at the gate \(awaiting-approval\)/,
   ].map(at);
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'the steps come in order');
-  assert.deepEqual(fs.readdirSync(tmp), [], 'every temp dir the demo made is gone');
+  // xcrun_db is macOS's own cache, which git's xcrun shim writes to TMPDIR under a sandbox: not the demo's.
+  assert.deepEqual(fs.readdirSync(tmp).filter((f) => f !== 'xcrun_db'), [], 'every temp dir the demo made is gone');
 });
 
 test('--keep leaves its directories, and no token appears in the output', async () => {
