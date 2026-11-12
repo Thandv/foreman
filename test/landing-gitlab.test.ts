@@ -115,20 +115,6 @@ test('addNote posts the body as a note on the merge request', async () => {
   });
 });
 
-test('closeMr closes the merge request with state_event=close', async () => {
-  await withFake({}, async (s, f) => {
-    f.push('foreman/t1', 'b.txt');
-    const forge = new GitlabForge({ baseUrl: s.url });
-    const opened = await forge.openMr('group/app', NEW_MR);
-    await forge.closeMr('group/app', opened.iid);
-    const put = s.requests.at(-1)!;
-    assert.equal(put.method, 'PUT');
-    assert.equal(put.path, `/api/v4/projects/group%2Fapp/merge_requests/${opened.iid}`);
-    assert.deepEqual(JSON.parse(put.body!), { state_event: 'close' });
-    assert.equal((await forge.getMr('group/app', opened.iid)).state, 'closed');
-  });
-});
-
 test('merge with a stale sha is head-moved and leaves the target branch unchanged', async () => {
   await withFake({}, async (s, f) => {
     const stale = f.push('foreman/t1', 'b.txt');

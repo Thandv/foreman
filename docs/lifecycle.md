@@ -127,8 +127,7 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    - The ticket left `done` (a person reopened, rejected or archived it): the MR is no longer
      followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
      by Foreman`). The MR gets one note, `No longer approved in Foreman: the ticket is <status>`,
-     and is closed on the forge when the ticket is `rejected`, `canceled`, `failed` or deleted; a
-     note or close the forge refuses is a `warning`. After a merge call that got no answer (a timeout), the MR is read first: it is
+     and stays open; a note the forge refuses is a `warning`. After a merge call that got no answer (a timeout), the MR is read first: it is
      dropped only if it still reads open; merged, it is settled as below.
    - The MR's head is not the reviewed commit, its target branch is not the mapped one or it is
      set to squash (someone edited it on GitLab), its pipeline for that commit `failed` or was

@@ -278,28 +278,24 @@ export function pollMergeRequests(store: Store, now: number, onError: (err: unkn
   return Promise.all(started).then(() => Promise.all(releasing)).then(() => undefined);
 }
 
-/** Statuses a ticket does not come back from to land this MR: its MR is closed when it is let go. */
-const GONE_FOR_GOOD: ReadonlySet<string> = new Set(['rejected', 'canceled', 'failed', 'gone']);
-
 /** The forge calls (release) of MRs let go that have not ended yet. */
 const releasing = new Set<Promise<void>>();
 
 /**
  * An MR Foreman no longer follows gets one note saying so, so the earlier 'Approved in Foreman' note is not read as
- * standing, and is closed when its ticket is gone for good. A note or close the forge refuses is a warning. Not awaited
- * by the caller; pollMergeRequests waits for it.
+ * standing. The MR stays open. A note the forge refuses is a warning. Not awaited by the caller; pollMergeRequests
+ * waits for it.
  */
-function release(store: Store, mr: Entry, note: string, close: boolean): void {
+function release(store: Store, mr: Entry, note: string): void {
   const map = active?.landing.mappings.find((m) => m.repo === mr.repo);
   if (!active || !map) return;
   const forge = active.landing.forge(map);
   const done = (async () => {
     try {
       await forge.addNote(map.project, mr.iid, note);
-      if (close) await forge.closeMr(map.project, mr.iid);
     } catch (err) {
       if (!(err instanceof ForgeError)) throw err;
-      store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request !${mr.iid} not marked as no longer approved${close ? ' and closed' : ''}: ${err.message}` });
+      store.record({ taskId: mr.taskId, runId: mr.runId, type: 'warning', message: `merge request !${mr.iid} not marked as no longer approved: ${err.message}` });
     }
   })().catch(() => undefined).finally(() => releasing.delete(done));
   releasing.add(done);
@@ -319,8 +315,7 @@ function left(store: Store, mr: Entry): boolean {
   store.endLanding(mr.taskId);
   store.closeLanding(mr.marker);
   store.record({ taskId: mr.taskId, runId: mr.runId, type: 'status', message: `merge request !${mr.iid} no longer followed: the ticket is ${status}; no merge made by Foreman` });
-  const close = GONE_FOR_GOOD.has(status);
-  release(store, mr, `No longer approved in Foreman: the ticket is ${status}. Foreman will not merge this request${close ? ', and closes it' : ''}.`, close);
+  release(store, mr, `No longer approved in Foreman: the ticket is ${status}. Foreman will not merge this request.`);
   return true;
 }
 
