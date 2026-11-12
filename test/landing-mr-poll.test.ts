@@ -700,16 +700,18 @@ test('MRs into one target merge one at a time: overlapping merges GitLab would r
 });
 
 test('an MR GitLab reads as conflict or need_rebase goes back to the gate at once: only a new head can fix it', async (t) => {
-  for (const status of ['conflict', 'need_rebase']) {
-    const f = await fixture(t, { pipeline: 'success' });
-    const { store, a } = await opened(t, f);
-    patch(f, (forge) => {
-      const getMr = forge.getMr.bind(forge);
-      forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), mergeStatus: status });
-    });
-    await poller(store)();
-    assert.equal(merges(f).length, 0, 'no merge call');
-    atGate(store, a, new RegExp(`GitLab reports ${status}: the merge request conflicts with main or needs a rebase; rework it, then approve again`));
+  for (const pipeline of ['success', 'manual'] as const) {
+    for (const status of ['conflict', 'need_rebase']) {
+      const f = await fixture(t, { pipeline });
+      const { store, a } = await opened(t, f);
+      patch(f, (forge) => {
+        const getMr = forge.getMr.bind(forge);
+        forge.getMr = async (project, iid) => ({ ...(await getMr(project, iid)), mergeStatus: status });
+      });
+      await poller(store)();
+      assert.equal(merges(f).length, 0, 'no merge call');
+      atGate(store, a, new RegExp(`GitLab reports ${status}: the merge request conflicts with main or needs a rebase; rework it, then approve again`));
+    }
   }
 });
 
