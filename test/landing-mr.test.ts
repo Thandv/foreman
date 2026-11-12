@@ -256,7 +256,7 @@ test('a four-eyes approval names its approver of record in one MR note, and its 
   assert.equal(notes.length, 1, 'exactly one note');
   assert.equal(notes[0]!.path, '/api/v4/projects/group%2Fapp/merge_requests/1/notes');
   assert.equal(notes[0]!.body, [
-    `Approved in Foreman at reviewed tree ${store.latestRun(a.id)!.reviewedTree}. This replaces any earlier Foreman approval on this request.`,
+    `Approved in Foreman at reviewed tree ${store.latestRun(a.id)!.reviewedTree}.`,
     '',
     `Foreman-Approved-By: bob (${bob.id})`,
     'Foreman-Author: alice',
