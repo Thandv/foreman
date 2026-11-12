@@ -40,7 +40,7 @@ tickets in one repo, parked at the gate, then approved through the API:
    fake pipeline (1.5 s) and the target fetch; under `coalesced` one check covered up to 10 merges, so its red names
    the culprit among 10 tickets. The fake runs merges one at a time and does not recheck other merge requests when the
    target moves, so these cells say nothing about merges that collide on a real GitLab. Foreman now sends merge calls
-   into one target one at a time and tries a refusal once more while GitLab reports `mergeable`; the fake's
+   into one target one at a time; the fake's
    `refuseOverlappingMerges` and `recheckAfterMerge` options behave like that, and these cells were not rerun with them.
 2. **Coalescing helps in proportion to overlap.** In the burst the checks overlap and the post-merge checks coalesce: 2.05
    to 1.45 suite runs per landed ticket. In the steady run a check ends before the next merge, so there is little to

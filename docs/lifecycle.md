@@ -133,8 +133,7 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
      set to squash (someone edited it on GitLab), its pipeline for that commit `failed` or was
      `canceled`, a person closed it, or GitLab refuses the merge call itself (401 or 403, or a
      refusal while the status reads something other than a transient word such as `checking`; a
-     refusal while it reads `mergeable`, as when another merge into the target just moved it, is
-     tried once more at the next poll first; a merge GitLab answers 200 with the MR still open, as
+     merge GitLab answers 200 with the MR still open, as
      when a hook refuses the merge commit, is such a refusal, with GitLab's `merge_error` as the message):
      the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's
      message), the hold ends and the row is deleted. The MR gets one note, `Not merged by Foreman:
@@ -162,7 +161,7 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    - Pipeline `success` for the reviewed commit and `mergeable`: four-eyes (`docs/security.md`) is
      asked again for the approve decision's actor, then one merge call at the reviewed sha, which
      GitLab refuses if the head has moved. Merge calls into one target branch are sent one at a
-     time (GitLab can refuse two that overlap); the MR (as in the cases above), the ticket, the repo hold (below) and four-eyes are read again in its turn, right before the call, so an MR a person merged, closed or edited while the merge waited is handled as read. A merge call GitLab refuses is read back too: an MR a person merged just before the call is confirmed (below), one closed goes back to the gate. A turn that makes a merge call lasts until that merge is
+     time (GitLab may refuse two that overlap); the MR (as in the cases above), the ticket, the repo hold (below) and four-eyes are read again in its turn, right before the call, so an MR a person merged, closed or edited while the merge waited is handled as read. A merge call GitLab refuses is read back too: an MR a person merged just before the call is confirmed (below), one closed goes back to the gate. A turn that makes a merge call lasts until that merge is
      confirmed and the checkout synced, or the repo held for it (not until its post-merge check),
      so a merge that cannot be confirmed holds the repo before the next merge call. If four-eyes now refuses (the approver was disabled while
      the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made,
