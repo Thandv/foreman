@@ -1682,7 +1682,12 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // path at once, whenever the local council had passed the work. A chair saw less of the source than the reviewer
   // whose list says the item is not met, so its pass is not a pass either: a person decides.
   const owed = verdict === 'pass' ? owedItems({ council: usable.map(asOpinion) }) : [];
-  const recorded: CouncilVerdict = verdict === 'pass' && (held.length || owed.length || lostReviewers.length) ? 'split' : verdict;
+  // The same for a pass given on part of the work. A reviewer whose diff was over its reading cap read an excerpt
+  // and was told not to fail over what lay past the cut (PARTIAL_READ_NOTICE), so its pass says nothing about the
+  // rest. A fail stands: a defect seen in part of the work is still a defect.
+  const excerptReaders = verdict === 'pass' ? usable.filter((r) => bounded.get(r.style)?.truncated) : [];
+  const recorded: CouncilVerdict =
+    verdict === 'pass' && (held.length || owed.length || lostReviewers.length || excerptReaders.length) ? 'split' : verdict;
   if (owed.length) {
     critiques.push(
       `FOREMAN CHECK (deterministic): a chair passed this work, but the reviewer's own acceptance status has ` +
@@ -1696,6 +1701,14 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
       `FOREMAN CHECK (deterministic): ${lostReviewers.map((r) => `${r.role} (${r.style})`).join(', ')} gave no usable answer. ` +
         'A review the chain did not give is not a pass: held for a person.',
     );
+  }
+  if (excerptReaders.length) {
+    const who = excerptReaders.map((r) => `${r.role} (${r.style})`).join(', ');
+    critiques.push(
+      `FOREMAN CHECK (deterministic): ${who} read an excerpt — the work exceeded the reviewer's reading cap. ` +
+        'A pass on part of the work is not a pass: held for a person.',
+    );
+    onNote?.(`crew review held for a person: ${who} read an excerpt of the work`);
   }
   if (held.length && recorded === 'split') {
     critiques.push(
