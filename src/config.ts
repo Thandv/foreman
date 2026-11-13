@@ -129,6 +129,12 @@ export const config = {
    * and the owner gate. A reviewer aid: it repairs, holds and fails nothing. Off by default; read once, at start.
    */
   revertTests: onOff('FOREMAN_REVERT_TESTS'),
+  /**
+   * FOREMAN_MUTANTS=on: after a code ticket's tests pass, up to 20 small mutants of the source lines its diff changes
+   * are each run against the test files the diff adds or changes (verify/mutants.ts), and which ones survive goes to
+   * the reviewer and the owner gate. A reviewer aid: it repairs, holds and fails nothing. Off by default; read once.
+   */
+  mutants: onOff('FOREMAN_MUTANTS'),
   /** Automatic repair rounds for a gap found before review (map, scope); apart from maxRepairs. */
   preReviewRepairs: int('FOREMAN_PRE_REVIEW_REPAIRS', 2),
   /**

@@ -26,6 +26,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 | `src/db.ts` | The SQLite schema and its migrations. |
 | `src/verify/assertionCheck.ts` | Compares a run's test assertions with the base to catch weakened tests. |
 | `src/verify/revertTests.ts` | Runs the new tests against the reverted change to show they fail without it. |
+| `src/verify/mutants.ts` | Runs small mutants of the changed source lines against the changed tests and reports which survive. |
 | `src/playbooks.ts` | Loads playbooks (roles and their modes) and checks their skill lists. |
 | `src/prose/metrics.ts` | Prose measurements (sentences, length) for non-code tickets. |
 | `src/prose/tics.ts` | Prose tic detection for non-code tickets. |
@@ -154,7 +155,7 @@ stateDiagram-v2
 <FOREMAN_HOME>/work/<runId>/          one jail (git worktree) per run
 <FOREMAN_HOME>/artifacts/<runId>.log  the run's full log
 <FOREMAN_HOME>/artifacts/<runId>.diff the run's diff
-<FOREMAN_HOME>/artifacts/<runId>.report.md, <runId>.assertions.json, <runId>.revert-tests.json   verification output
+<FOREMAN_HOME>/artifacts/<runId>.report.md, <runId>.assertions.json, <runId>.revert-tests.json, <runId>.mutants.json   verification output
 <FOREMAN_HOME>/traces/YYYY-MM-DD.jsonl  daily trace files, kept FOREMAN_TRACE_RETAIN_DAYS days
 <FOREMAN_HOME>/backups/               database backups (FOREMAN_BACKUP_DIR moves it)
 <FOREMAN_HOME>/debriefs/<id>.md, <id>.json   debriefs
