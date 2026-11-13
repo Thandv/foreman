@@ -250,7 +250,7 @@ test('a source that is a symlink is never mutated: nothing outside the scratch t
   noScratch(f);
 });
 
-test('a test that swaps the mutated file for a symlink cannot make the restore write outside the scratch tree', T, async (t) => {
+test('a test that swaps the mutated file for a symlink cannot make the daemon write outside the scratch tree', T, async (t) => {
   const f = fixture(t);
   const victim = path.join(f.root, 'victim.js');
   fs.writeFileSync(victim, 'export const kept = 1;\n');

@@ -295,8 +295,8 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     const build = async (name: string, mutant: (Mutant & { file: string }) | null): Promise<string> => {
       const tree = path.join(opts.workRoot, `mutants-${opts.runId}-${name}`);
       if (exists(tree)) throw new Error(`${tree} already exists`);
+      dirs.push(tree); // before the checkout: a checkout that fails half-way still leaves a worktree to remove
       await checkoutWorktree(opts.repo, tree, ['--detach'], base);
-      dirs.push(tree);
       for (const c of changes) {
         const gone = c.status === 'D' ? c.path : c.from;
         if (gone) {
@@ -307,8 +307,7 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
       }
       if (mutant) {
         const target = withinScratch(tree, inside(tree, mutant.file)!, mutant.file);
-        await fsp.rm(target, { force: true });
-        await fsp.writeFile(target, applyMutant(originals.get(mutant.file)!, mutant), { flag: 'wx' });
+        await fsp.writeFile(target, applyMutant(originals.get(mutant.file)!, mutant));
       }
       await provisionDeps(tree, opts.repo, { allowInstall: false });
       return tree;
@@ -358,11 +357,11 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
       if (aborted()) return null;
       rows.push(res.timedOut ? row(m, 'could-not-run', 'timed out with the mutant in place') : row(m, res.passed ? 'survived' : 'killed'));
     }
-    const count = (o: MutantOutcome): number => rows.filter((r) => r.outcome === o).length;
+    const tally = (o: MutantOutcome): number => rows.filter((r) => r.outcome === o).length;
     log(`mutation check: ${rows.length} mutant(s) in ${(runMs / 1000).toFixed(1)}s`);
     return {
       version: 1, status: 'ran',
-      reason: `${rows.length} mutant(s) of changed lines (of ${candidates}): ${count('killed')} killed, ${count('survived')} survived, ${count('could-not-run')} could not run`,
+      reason: `${rows.length} mutant(s) of changed lines (of ${candidates}): ${tally('killed')} killed, ${tally('survived')} survived, ${tally('could-not-run')} could not run`,
       mutants: rows, candidates, testFiles, runMs, runs,
     };
   } catch (err) {

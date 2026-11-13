@@ -124,6 +124,7 @@ tests did not notice. It decides nothing (`src/verify/mutants.ts`).
   round, no hold, no failed stage comes from it.**
 - **Cost and bounds**: one verify slot and the sandbox per command, the run's deadline stopped for the check, each run
   killed at three times the clean run (at least 30 s, at most 120 s), and 600 s of run time for the whole check.
+  Building the scratch trees (one checkout per run, up to 21) is not counted in that 600 s.
 
 ## The sandbox (`FOREMAN_SANDBOX`)
 
