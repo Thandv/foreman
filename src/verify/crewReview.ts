@@ -1103,7 +1103,7 @@ export const OPERATOR_TAG = '(operator)';
 /**
  * A blocker no worker can act on from its worktree: the reviewer tagged it "(operator)" (a Foreman or environment
  * fault, a rebase, another ticket's state, data the worker cannot read), or it asks for work on a host this one is
- * not. Measured on the ledger: six such blockers each started a repair round that delivered nothing.
+ * not.
  */
 function isOperatorBlocker(issue: CrewIssue): boolean {
   return issue.severity === 'blocker' &&
@@ -1561,8 +1561,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
       // now: a cached review's issues count as filed the round it was paid for,
       // so skipping them here would lose them for good.
       const replayedHere = new Set(usable.filter((r) => r.cached).flatMap((r) => r.issues));
-      const freshHere = usable.flatMap((r) => r.issues).slice(0, MAX_ISSUES)
-        .filter((i) => !replayedHere.has(i) && !isOperatorBlocker(i));
+      const freshHere = usable.flatMap((r) => r.issues).slice(0, MAX_ISSUES).filter((i) => !replayedHere.has(i));
       if (!halted(opts.signal)) fileIssues(store, task, pb, freshHere, { branch: opts.branch, runId }, onNote);
       return null;
     }
@@ -1679,7 +1678,8 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // go into the critique — which becomes the repair notes — and only
   // normal-severity follow-ups are filed.
   const replayed = new Set(usable.filter((r) => r.cached).flatMap((r) => r.issues));
-  const repairedInPlace = verdict === 'fail' ? issues.filter((i) => i.severity === 'blocker' && !forOperator.includes(i)) : [];
+  // A review held for the operator runs no repair, so its other blockers are listed for the operator below instead.
+  const repairedInPlace = verdict === 'fail' && !forOperator.length ? issues.filter((i) => i.severity === 'blocker') : [];
   if (repairedInPlace.length) {
     critiques.push(
       'BLOCKERS TO FIX IN THIS REPAIR (not filed as separate tickets):\n' +
@@ -1703,7 +1703,11 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
     critiques.push(
       'FOREMAN CHECK (deterministic): FOR THE OPERATOR — the review raised blocker(s) the worker cannot act on from its ' +
         'worktree. A repair round would deliver nothing: held for a person.\n' +
-        forOperator.map((i) => `- ${i.title.replace(`${OPERATOR_TAG} `, '')}: ${i.prompt}`).join('\n'),
+        forOperator.map((i) => `- ${i.title.replace(`${OPERATOR_TAG} `, '')}: ${i.prompt}`).join('\n') +
+        (blockers.length
+          ? '\nThe review\'s other blockers, not repaired or filed (name them in a retry note to have them done):\n' +
+            blockers.map((i) => `- ${i.title}: ${i.prompt}`).join('\n')
+          : ''),
     );
     onNote?.(`crew review held for a person: ${forOperator.length} blocker(s) only the operator can act on`);
   }
@@ -1755,7 +1759,9 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // paid for, and a replay on every repair/retry round would file them again.
   // At depth nothing is filed, so a replayed issue left over is dropped
   // (recorded) like a fresh one rather than vanishing.
-  const fresh = issues.filter((i) => (tooDeep || !replayed.has(i)) && !repairedInPlace.includes(i) && !forOperator.includes(i));
+  // A held review files none of its blockers: the operator decides on them.
+  const fresh = issues.filter((i) => (tooDeep || !replayed.has(i)) && !repairedInPlace.includes(i) &&
+    !(forOperator.length && i.severity === 'blocker'));
   // Cancellation between the verdict and the filing still spawns work nobody
   // asked for; the verdict row above is the last state a canceled run writes.
   const filed = halted(opts.signal) ? [] : fileIssues(store, task, pb, fresh, { branch: opts.branch, runId }, onNote);

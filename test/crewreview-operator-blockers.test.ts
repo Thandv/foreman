@@ -86,13 +86,12 @@ test('a blocker tagged (operator) holds a passing review for the operator: no re
   });
 });
 
-test('a failing review with an (operator) blocker is held too, and keeps its other blockers for the retry', async () => {
+test('a failing review with an (operator) blocker is held too; its other blockers are listed for the operator, not repaired or filed', async () => {
   await scenario({ verdict: 'fail', issues: [REBASE, DEFECT] }, ({ out, store, taskId }) => {
     assert.equal(out?.verdict, 'split');
     const critique = out?.critique ?? '';
-    assert.match(critique, /FOR THE OPERATOR[^]*Rebase the ticket branch/);
-    assert.match(critique, /BLOCKERS TO FIX[^]*off-by-one/);
-    assert.doesNotMatch(critique.match(/BLOCKERS TO FIX[^]*?(\n\n|$)/)?.[0] ?? '', /Rebase/);
+    assert.match(critique, /FOR THE OPERATOR[^]*Rebase the ticket branch[^]*not repaired or filed[^]*off-by-one/);
+    assert.doesNotMatch(critique, /BLOCKERS TO FIX IN THIS REPAIR/, 'no repair runs on a held review');
     assert.deepEqual(titles(store, taskId), []);
   });
 });

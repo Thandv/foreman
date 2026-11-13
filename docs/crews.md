@@ -182,8 +182,8 @@ A **blocker** the worker cannot act on from its worktree is not sent back as a r
 Foreman or its environment, a rebase or merge, the state of another ticket, and data the worker cannot read. The
 reviewer starts such a blocker's title with `(operator)`, and a blocker that asks for work on another host counts the
 same way. The review is then recorded as a split and held for you, with the blocker listed under `FOR THE OPERATOR`.
-It is not filed as a ticket. The ticket's other blockers stay in its notes for the retry. Before this, each such
-blocker started a repair round that delivered nothing.
+The review's other blockers are listed with it there. None of them is repaired or filed as a ticket: name the ones
+you want done in a retry note.
 
 An owner-tier planner decomposes the ask into an epic of tickets (roles,
 dependencies, acceptance criteria, points) shown before queuing. In the
