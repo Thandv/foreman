@@ -119,6 +119,23 @@ function codeOnly(line: string): string {
   return out;
 }
 
+const count = (s: string, c: string): number => s.split(c).length - 1;
+
+/**
+ * A line is a statement of its own only when its brackets balance and the code line before it ended one: deleting
+ * a continuation (`  a === b;` after `const ok =`) or the tail of a wrapped call breaks the file, and a file that
+ * does not load fails its tests, which would read as a killed mutant.
+ */
+function standsAlone(all: string[], n: number, stmt: string): boolean {
+  if (count(stmt, '(') !== count(stmt, ')') || count(stmt, '[') !== count(stmt, ']')) return false;
+  for (let k = n - 2; k >= 0; k--) {
+    const prev = codeOnly(all[k]!).trim();
+    if (prev === '' || /^(\/\*|\*)/.test(prev)) continue;
+    return /[;{}]$/.test(prev);
+  }
+  return true;
+}
+
 /** Every mutant the fixed operators offer on the given lines of `source`, in line then column order. */
 export function mutantsFor(source: string, lines: Iterable<number>): Mutant[] {
   const all = source.split('\n');
@@ -151,7 +168,7 @@ export function mutantsFor(source: string, lines: Iterable<number>): Mutant[] {
       k++;
     }
     const stmt = code.trim();
-    if (stmt.endsWith(';') && !/[{}]/.test(stmt) && !NOT_A_STATEMENT.test(stmt) && /[(=]/.test(stmt)) {
+    if (stmt.endsWith(';') && !/[{}]/.test(stmt) && !NOT_A_STATEMENT.test(stmt) && /[(=]/.test(stmt) && standsAlone(all, n, stmt)) {
       out.push({ line: n, col: raw.indexOf(trimmed), op: 'delete-statement', from: trimmed, to: '' });
     }
   }

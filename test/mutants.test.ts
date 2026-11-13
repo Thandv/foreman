@@ -119,6 +119,19 @@ test('operators inside strings, comments, imports and arrows are not mutated', (
   assert.deepEqual(seen, ['7:===->!==', '7:&&->||', '7:===->!==', '7:true->false']);
 });
 
+test('a statement is only deleted when it stands alone: never a continuation line or the tail of a wrapped call', () => {
+  const src = [
+    'const ok =',
+    '  a === b;',
+    'first(',
+    '  second(arg));',
+    'done();',
+    'x = compute(y);',
+  ].join('\n');
+  const deletes = mutantsFor(src, [2, 4, 5, 6]).filter((m) => m.op === 'delete-statement').map((m) => m.line);
+  assert.deepEqual(deletes, [5, 6], 'line 2 continues an assignment and line 4 closes a call opened above');
+});
+
 test('pickMutants keeps all under the cap and spreads deterministically over it', () => {
   const ms = Array.from({ length: 10 }, (_, i) => ({ line: i + 1, col: 0, op: 'logical' as const, from: '&&', to: '||' }));
   assert.equal(pickMutants(ms, 20).length, 10);
@@ -170,6 +183,44 @@ test('at most maxMutants are run, and one command runs per mutant plus one befor
   assert.equal(res.candidates, 5);
   assert.equal(calls.length, 3, 'one clean run, then one per mutant');
   assert.match(calls[0]!, /test\/clamp\.test\.js/, 'the changed test file is what runs');
+});
+
+test('a mutant that hangs is could-not-run, never killed', T, async (t) => {
+  const f = fixture(t);
+  let calls = 0;
+  const res = await check(f, { 'src/x.js': SRC, 'test/clamp.test.js': `${HEAD}test('c', () => assert.ok(clamp(1, 0, 2)));\n` }, {
+    maxMutants: 2,
+    run: async () => (calls++ === 0
+      ? { passed: true, timedOut: false, output: 'ok' }
+      : { passed: false, timedOut: true, output: 'killed at its bound' }),
+  });
+  assert.equal(res.status, 'ran');
+  assert.deepEqual(res.mutants.map((m) => [m.outcome, m.detail]), [
+    ['could-not-run', 'timed out with the mutant in place'], ['could-not-run', 'timed out with the mutant in place'],
+  ]);
+  noScratch(f);
+});
+
+test('the run-time budget bounds the check: mutants past it are not run, and each run is bounded by what is left', T, async (t) => {
+  const f = fixture(t);
+  let clock = 0;
+  const limits: number[] = [];
+  const res = await check(f, { 'src/x.js': SRC, 'test/clamp.test.js': `${HEAD}test('c', () => assert.ok(clamp(1, 0, 2)));\n` }, {
+    budgetMs: 300_000,
+    perRunMs: 250_000,
+    now: () => clock,
+    run: async (_dir, _cmd, timeoutMs) => {
+      limits.push(timeoutMs);
+      clock += 200_000;
+      return { passed: true, timedOut: false, output: 'ok' };
+    },
+  });
+  assert.equal(res.status, 'ran');
+  assert.equal(res.runs, 2, 'the clean run and one mutant; then the budget is spent');
+  assert.deepEqual(limits, [250_000, 100_000], 'the mutant run gets only the 100 s left');
+  assert.equal(res.mutants[0]!.outcome, 'survived');
+  assert.ok(res.mutants.slice(1).every((m) => m.outcome === 'could-not-run' && /budget was spent/.test(m.detail)), JSON.stringify(res.mutants));
+  noScratch(f);
 });
 
 test('tests that fail before any mutant make the check could-not-run, never a clean result', T, async (t) => {
