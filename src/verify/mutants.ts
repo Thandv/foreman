@@ -100,23 +100,36 @@ const FLIP: Record<string, [MutantOp, string]> = {
 const NOT_A_STATEMENT = /^(const|let|var|return|if|else|for|while|do|switch|case|default|break|continue|throw|try|catch|finally|import|export|type|interface|declare|function|class|async\s+function|enum|namespace|module)\b/;
 const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]/.test(c);
 
-/** The line with string, template and comment text blanked to spaces, so columns are kept and nothing in them matches. */
-function codeOnly(line: string): string {
-  let out = '';
-  let quote: string | null = null;
-  for (let k = 0; k < line.length; k++) {
-    const c = line[k]!;
-    if (quote) {
-      if (c === '\\') { out += '  '; k++; continue; }
-      if (c === quote) quote = null;
-      out += ' ';
-      continue;
+/**
+ * Each line with string, template and comment text blanked to spaces, so columns are kept and nothing in them
+ * matches. A template literal and a block comment carry over to the next line; regex literals are not recognised.
+ */
+function codeLines(source: string): string[] {
+  let template = false;
+  let block = false;
+  return source.split('\n').map((line) => {
+    let out = '';
+    let quote: string | null = template ? '`' : null;
+    for (let k = 0; k < line.length; k++) {
+      const c = line[k]!;
+      if (block) {
+        if (c === '*' && line[k + 1] === '/') { block = false; out += '  '; k++; } else out += ' ';
+        continue;
+      }
+      if (quote) {
+        if (c === '\\') { out += '  '; k++; continue; }
+        if (c === quote) quote = null;
+        out += ' ';
+        continue;
+      }
+      if (c === '/' && line[k + 1] === '/') { out += ' '.repeat(line.length - k); break; }
+      if (c === '/' && line[k + 1] === '*') { block = true; out += '  '; k++; continue; }
+      if (c === "'" || c === '"' || c === '`') { quote = c; out += ' '; continue; }
+      out += c;
     }
-    if (c === '/' && line[k + 1] === '/') return out + ' '.repeat(line.length - k);
-    if (c === "'" || c === '"' || c === '`') { quote = c; out += ' '; continue; }
-    out += c;
-  }
-  return out;
+    template = quote === '`';
+    return out.slice(0, line.length);
+  });
 }
 
 const count = (s: string, c: string): number => s.split(c).length - 1;
@@ -126,11 +139,11 @@ const count = (s: string, c: string): number => s.split(c).length - 1;
  * a continuation (`  a === b;` after `const ok =`) or the tail of a wrapped call breaks the file, and a file that
  * does not load fails its tests, which would read as a killed mutant.
  */
-function standsAlone(all: string[], n: number, stmt: string): boolean {
+function standsAlone(code: string[], n: number, stmt: string): boolean {
   if (count(stmt, '(') !== count(stmt, ')') || count(stmt, '[') !== count(stmt, ']')) return false;
   for (let k = n - 2; k >= 0; k--) {
-    const prev = codeOnly(all[k]!).trim();
-    if (prev === '' || /^(\/\*|\*)/.test(prev)) continue;
+    const prev = code[k]!.trim();
+    if (prev === '') continue;
     return /[;{}]$/.test(prev);
   }
   return true;
@@ -139,13 +152,14 @@ function standsAlone(all: string[], n: number, stmt: string): boolean {
 /** Every mutant the fixed operators offer on the given lines of `source`, in line then column order. */
 export function mutantsFor(source: string, lines: Iterable<number>): Mutant[] {
   const all = source.split('\n');
+  const masked = codeLines(source);
   const out: Mutant[] = [];
   for (const n of [...new Set(lines)].sort((a, b) => a - b)) {
     const raw = all[n - 1];
     if (raw === undefined) continue;
     const trimmed = raw.trim();
-    if (trimmed === '' || /^(\/\/|\/\*|\*)/.test(trimmed) || /^(import|export)\b.*\bfrom\b/.test(trimmed)) continue;
-    const code = codeOnly(raw);
+    const code = masked[n - 1]!;
+    if (code.trim() === '' || trimmed.startsWith('*') || /^(import|export)\b.*\bfrom\b/.test(trimmed)) continue;
     for (let k = 0; k < code.length;) {
       const tok = TOKENS.find((t) => code.startsWith(t, k));
       if (tok) {
@@ -168,7 +182,7 @@ export function mutantsFor(source: string, lines: Iterable<number>): Mutant[] {
       k++;
     }
     const stmt = code.trim();
-    if (stmt.endsWith(';') && !/[{}]/.test(stmt) && !NOT_A_STATEMENT.test(stmt) && /[(=]/.test(stmt) && standsAlone(all, n, stmt)) {
+    if (stmt.endsWith(';') && !/[{}]/.test(stmt) && !NOT_A_STATEMENT.test(stmt) && /[(=]/.test(stmt) && standsAlone(masked, n, stmt)) {
       out.push({ line: n, col: raw.indexOf(trimmed), op: 'delete-statement', from: trimmed, to: '' });
     }
   }
@@ -232,6 +246,9 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     const originals = new Map<string, string>();
     const all: Array<Mutant & { file: string; text: string }> = [];
     for (const c of sources) {
+      // A regular file only: a symlink's blob is its target's path, and writing a mutant would follow the link.
+      const listed = await git(opts.repo, ['ls-tree', '-z', opts.tree, '--', c.path]);
+      if (!/^100(644|755) blob /.test(listed)) continue;
       const after = await blob(opts.repo, opts.tree, c.path);
       if (after === null) continue;
       originals.set(c.path, after);
@@ -296,6 +313,10 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
       }
       const original = originals.get(m.file)!;
       const target = withinScratch(scratch, inside(scratch, m.file)!, m.file);
+      if (!(await fsp.lstat(target).catch(() => null))?.isFile()) {
+        rows.push(row(m, 'could-not-run', 'not a regular file in the scratch tree'));
+        continue;
+      }
       await fsp.writeFile(target, applyMutant(original, m));
       let res: RevertRunResult;
       try {

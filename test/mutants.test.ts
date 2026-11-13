@@ -132,6 +132,20 @@ test('a statement is only deleted when it stands alone: never a continuation lin
   assert.deepEqual(deletes, [5, 6], 'line 2 continues an assignment and line 4 closes a call opened above');
 });
 
+test('operators inside multi-line templates and block comments, and inline block comments, are not mutated', () => {
+  const src = [
+    'const t = `first',
+    '  a < b && c',
+    '  last`;',
+    '/*',
+    '  x === y',
+    '*/',
+    'go(a /* p && q */ || b);',
+  ].join('\n');
+  const seen = mutantsFor(src, [1, 2, 3, 4, 5, 6, 7]).map((m) => `${m.line}:${m.from}->${m.to}`);
+  assert.deepEqual(seen, ['7:||->&&', "7:go(a /* p && q */ || b);->"]);
+});
+
 test('pickMutants keeps all under the cap and spreads deterministically over it', () => {
   const ms = Array.from({ length: 10 }, (_, i) => ({ line: i + 1, col: 0, op: 'logical' as const, from: '&&', to: '||' }));
   assert.equal(pickMutants(ms, 20).length, 10);
@@ -220,6 +234,19 @@ test('the run-time budget bounds the check: mutants past it are not run, and eac
   assert.deepEqual(limits, [250_000, 100_000], 'the mutant run gets only the 100 s left');
   assert.equal(res.mutants[0]!.outcome, 'survived');
   assert.ok(res.mutants.slice(1).every((m) => m.outcome === 'could-not-run' && /budget was spent/.test(m.detail)), JSON.stringify(res.mutants));
+  noScratch(f);
+});
+
+test('a source that is a symlink is never mutated: nothing outside the scratch tree is written', T, async (t) => {
+  const f = fixture(t);
+  const outside = path.join(f.root, 'victim');
+  fs.mkdirSync(outside);
+  const victim = path.join(outside, 'true.js');
+  fs.writeFileSync(victim, 'export const kept = 1;\n');
+  fs.symlinkSync(victim, path.join(f.jail, 'src', 'link.js'));
+  const res = await check(f, { 'src/x.js': SRC, 'test/clamp.test.js': `${HEAD}test('c', () => assert.ok(clamp(1, 0, 2)));\n` });
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'export const kept = 1;\n', 'the link target is untouched');
+  assert.ok(res.mutants.every((m) => m.file === 'src/x.js'), JSON.stringify(res.mutants.map((m) => m.file)));
   noScratch(f);
 });
 

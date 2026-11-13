@@ -248,6 +248,8 @@ export interface AdvisorOpinion {
   style?: string;
   /** Set only on a crew review of a ticket with numbered acceptance: the reviewer's status per item (crewReview.ts). */
   acceptance?: AcceptanceEntry[];
+  /** Set only on a crew review entry whose reviewer read an excerpt: the work was over its reading cap (crewReview.ts). */
+  excerpt?: true;
 }
 
 export interface Verdict {

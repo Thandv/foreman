@@ -299,9 +299,11 @@ cap (`FOREMAN_CREW_CODE_DIFF_CAP_BYTES`, 96 KB; prose
 reviewer is told not to fail the work over what lies past the cut. Its pass
 therefore says nothing about the rest, so a chain that passes such work is
 recorded as `split` with a `FOREMAN CHECK` line naming the reviewers that read
-an excerpt, and it parks for you like any other split (the owner model does not
-sign off a split). A fail stands: a defect seen in part of the work is still a
-defect.
+an excerpt. It parks for you with the note `the reviewer read only an excerpt of
+the work — a person decides` (on the board, `held for you`), and the owner model
+does not sign it off, whatever a later council re-review of the same run says.
+A fail stands: a defect seen in part of the work is still a defect. In the
+shadow-agreement ledger such a split, like any other, is kept and not scored.
 
 **Pre-existing assertions.** When a run's diff modifies a test file that was
 there before the run, a check with no model in it lists what a reader would

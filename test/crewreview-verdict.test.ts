@@ -161,6 +161,25 @@ test('a pass from reviewers who read only an excerpt of the work is split and he
   }, OVER_CAP_DIFF);
 });
 
+test('the excerpt hold survives a later council pass on the same run, and the park note says why', async () => {
+  const { reviewHolds } = await import('../src/gate.ts');
+  const { heldReason } = await import('../src/verify/crewReview.ts');
+  await scenario('pass', 'pass', (out, store, taskId) => {
+    assert.ok(out);
+    assert.equal(heldReason(out.record), 'the reviewer read only an excerpt of the work — a person decides');
+    assert.ok(out.record.council.every((o) => o.excerpt === true), 'each opinion records that its reviewer read an excerpt');
+    const run = store.latestRun(taskId)!;
+    // A council re-review (the board's Re-review, `foreman reverify`) passes the same run afterwards.
+    store.addVerdict({
+      runId: run.id, taskId, verdict: 'pass', disagreement: false, critique: 'council read it',
+      council: [{ model: 'local-0', provider: 'ollama', local: true, verdict: 'pass', confidence: 0.9, critique: 'ok', costUsd: 0, latencyMs: 5 }],
+    });
+    assert.equal(store.getRun(run.id)!.verdict, 'pass', 'the run now reads pass');
+    // hardHumanReason returns this hold whatever the run's latest verdict (gate.ts, `opts.unverified`).
+    assert.equal(reviewHolds(store, taskId).unverified, 'the reviewer read only an excerpt of the work — a person decides');
+  }, OVER_CAP_DIFF);
+});
+
 test('a fail from a reviewer who read an excerpt stands: a defect seen in part of the work is still a defect', async () => {
   await scenario('fail', 'pass', (out) => {
     assert.equal(out?.verdict, 'fail');
