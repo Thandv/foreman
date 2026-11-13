@@ -107,7 +107,7 @@ const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]
  */
 function regexEnd(line: string, k: number, before: string): number {
   const prev = before.trimEnd();
-  if (prev !== '' && !/[(,=:[!&|?{};+\-*%<>~^]$/.test(prev) && !/\b(return|typeof|case)$/.test(prev)) return -1;
+  if (prev !== '' && !/[(,=:[!&|?{};+\-*%<>~^]$/.test(prev) && !/\b(return|typeof|case|await|else|yield|throw|in|of|void|delete|new)$/.test(prev)) return -1;
   let inClass = false;
   for (let j = k + 1; j < line.length; j++) {
     const c = line[j]!;
@@ -254,7 +254,7 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     mutants: picked.map((m) => row(m, 'could-not-run', oneLine(why))), candidates, testFiles, runMs, runs,
   });
 
-  let dir: string | null = null;
+  const dirs: string[] = [];
   try {
     if (!opts.base) throw new Error('the base commit of the work could not be found');
     const base = opts.base;
@@ -286,52 +286,59 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     if (all.length === 0) return na('no changed source line offers a mutant');
     picked = pickMutants(all, maxMutants);
 
-    // --- the scratch tree: the base with the whole reviewed change on it ---
+    // --- scratch trees: the base with the whole reviewed change on it, one fresh tree per run ---
+    // Each tree is complete (its mutant included) before anything runs in it, and nothing is written into it
+    // afterwards: the worker's tests run there, inside the sandbox's write area, and may swap any file, directory or
+    // the tree itself for a link. The revert check keeps the same rule. A tree is removed after its run.
     if (!/^[A-Za-z0-9._-]+$/.test(opts.runId)) return failAll('the run id is not a safe directory name');
-    const scratch = path.join(opts.workRoot, `mutants-${opts.runId}`);
-    if (exists(scratch)) return failAll(`${scratch} already exists`);
     await fsp.mkdir(opts.workRoot, { recursive: true });
-    await checkoutWorktree(opts.repo, scratch, ['--detach'], base);
-    dir = scratch;
-    for (const c of changes) {
-      const gone = c.status === 'D' ? c.path : c.from;
-      if (gone) {
-        const target = inside(scratch, gone);
-        if (target) await fsp.rm(withinScratch(scratch, target, gone), { recursive: true, force: true });
+    const build = async (name: string, mutant: (Mutant & { file: string }) | null): Promise<string> => {
+      const tree = path.join(opts.workRoot, `mutants-${opts.runId}-${name}`);
+      if (exists(tree)) throw new Error(`${tree} already exists`);
+      await checkoutWorktree(opts.repo, tree, ['--detach'], base);
+      dirs.push(tree);
+      for (const c of changes) {
+        const gone = c.status === 'D' ? c.path : c.from;
+        if (gone) {
+          const target = inside(tree, gone);
+          if (target) await fsp.rm(withinScratch(tree, target, gone), { recursive: true, force: true });
+        }
+        if (c.status !== 'D') await writeFromTree(opts.repo, opts.tree, tree, c.path);
       }
-      if (c.status !== 'D') await writeFromTree(opts.repo, opts.tree, scratch, c.path);
-    }
-    await provisionDeps(scratch, opts.repo, { allowInstall: false });
+      if (mutant) {
+        const target = withinScratch(tree, inside(tree, mutant.file)!, mutant.file);
+        await fsp.rm(target, { force: true });
+        await fsp.writeFile(target, applyMutant(originals.get(mutant.file)!, mutant), { flag: 'wx' });
+      }
+      await provisionDeps(tree, opts.repo, { allowInstall: false });
+      return tree;
+    };
+    const drop = async (tree: string): Promise<void> => {
+      await git(opts.repo, ['worktree', 'remove', '--force', tree]).catch(() => '');
+      removeScratch(tree);
+      dirs.splice(dirs.indexOf(tree), 1);
+    };
 
-    const script = nodeTestScript(scratch);
+    const first = await build('clean', null);
+    const script = nodeTestScript(first);
     if (!script) return failAll('the test script is not `node --test`, so the changed test files cannot be run on their own');
-    testFiles = testFiles.filter((f) => isRunnableTest(scratch, f));
+    testFiles = testFiles.filter((f) => isRunnableTest(first, f));
     if (testFiles.length === 0) return na('no changed test file is one the test command runs');
     const cmd = fileCommand(script.flags, testFiles, perRunMs, null);
 
-    // Every write into the scratch tree, the mutant and the restore after it: the path is checked again each time
-    // (the worker's tests ran in between and may have swapped a file or a directory for a link), whatever is there
-    // is removed, never followed, and a new regular file is created. Any failure stops the check (could-not-run).
-    const writeScratch = async (rel: string, content: string): Promise<void> => {
-      const abs = inside(scratch, rel);
-      if (!abs) throw new Error(`${rel} is outside the scratch tree`);
-      const target = withinScratch(scratch, abs, rel);
-      await fsp.rm(target, { force: true });
-      await fsp.writeFile(target, content, { flag: 'wx' });
-    };
-
-    const runOnce = async (limit: number): Promise<RevertRunResult> => {
+    const runIn = async (tree: string, limit: number): Promise<RevertRunResult> => {
       if (aborted()) throw new Error('the run was aborted');
       const started = now();
       runs++;
-      const res = await opts.run(scratch, cmd, limit);
+      const res = await opts.run(tree, cmd, limit);
       runMs += Math.max(0, now() - started - (res.waitedMs ?? 0));
       if (res.refused) throw new Error(`the sandbox refused the command: ${oneLine(res.output)}`);
       return res;
     };
 
     // --- before any mutant: the tests must pass, or no survivor means anything ---
-    const clean = await runOnce(Math.min(perRunMs, budgetMs));
+    const clean = await runIn(first, Math.min(perRunMs, budgetMs));
+    await drop(first);
     if (aborted()) return null;
     if (!clean.passed || clean.timedOut) {
       return failAll(clean.timedOut ? 'the changed tests timed out before any mutant was applied' : 'the changed tests do not pass in the scratch tree before any mutant');
@@ -340,19 +347,14 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     const limit = Math.min(perRunMs, Math.max(30_000, 3 * runMs));
 
     const rows: MutantRow[] = [];
-    for (const m of picked) {
+    for (const [k, m] of picked.entries()) {
       if (budgetMs - runMs <= 0) {
         rows.push(row(m, 'could-not-run', `not run: the ${Math.round(budgetMs / 1000)} s run-time budget was spent`));
         continue;
       }
-      const original = originals.get(m.file)!;
-      await writeScratch(m.file, applyMutant(original, m));
-      let res: RevertRunResult;
-      try {
-        res = await runOnce(Math.min(limit, budgetMs - runMs));
-      } finally {
-        await writeScratch(m.file, original);
-      }
+      const tree = await build(String(k + 1), m);
+      const res = await runIn(tree, Math.min(limit, budgetMs - runMs));
+      await drop(tree);
       if (aborted()) return null;
       rows.push(res.timedOut ? row(m, 'could-not-run', 'timed out with the mutant in place') : row(m, res.passed ? 'survived' : 'killed'));
     }
@@ -367,11 +369,11 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     if (aborted()) return null;
     return failAll(messageOf(err));
   } finally {
-    if (dir) {
-      await git(opts.repo, ['worktree', 'remove', '--force', dir]).catch(() => '');
-      removeScratch(dir);
-      await git(opts.repo, ['worktree', 'prune']).catch(() => '');
+    for (const tree of [...dirs]) {
+      await git(opts.repo, ['worktree', 'remove', '--force', tree]).catch(() => '');
+      removeScratch(tree);
     }
+    await git(opts.repo, ['worktree', 'prune']).catch(() => '');
   }
 }
 

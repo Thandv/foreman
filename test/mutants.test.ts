@@ -266,6 +266,20 @@ test('a test that swaps the mutated file for a symlink cannot make the restore w
   noScratch(f);
 });
 
+test('a test that swaps its whole scratch tree for a link cannot make the daemon write outside it', T, async (t) => {
+  const f = fixture(t);
+  const outside = path.join(f.root, 'outside');
+  fs.mkdirSync(path.join(outside, 'src'), { recursive: true });
+  // On the first mutant (`n < lo` gone) the worker's test replaces the tree it runs in with a link to an outside directory.
+  const swap = `${HEAD}import fs from 'node:fs';\nimport path from 'node:path';\n` +
+    "const root = path.resolve(new URL('..', import.meta.url).pathname);\n" +
+    `if (!fs.readFileSync(path.join(root, 'src/x.js'), 'utf8').includes('n < lo')) { fs.rmSync(root, { recursive: true, force: true }); fs.symlinkSync(${JSON.stringify(outside)}, root); }\n` +
+    "test('c', () => assert.ok(clamp));\n";
+  await check(f, { 'src/x.js': SRC, 'test/clamp.test.js': swap });
+  assert.deepEqual(fs.readdirSync(path.join(outside, 'src')), [], 'nothing was written into the outside directory');
+  assert.doesNotMatch(sh(f.repo, 'worktree', 'list'), /mutants-/);
+});
+
 test('a regex literal does not throw the masking off: later lines are still read as code', () => {
   const src = [
     'const re = /[`]/;',

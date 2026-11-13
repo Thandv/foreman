@@ -113,8 +113,9 @@ tests did not notice. It decides nothing (`src/verify/mutants.ts`).
   most 20 per run, spread evenly over the changed lines when there are more.
 - **How**: a scratch worktree at the run's base gets the whole **reviewed tree**'s change (never the live worktree).
   The changed test files run once clean — if they do not pass there, every mutant is `could not run` — then once per
-  mutant with that one line changed, the file restored after each. Only a `node … --test …` script can be aimed at
-  the changed test files.
+  mutant, each in a fresh scratch worktree built with that one line changed. Nothing is written into a tree after the
+  worker's tests have run in it (they may swap any path in it, the tree itself included, for a link); each tree is
+  removed after its run. Only a `node … --test …` script can be aimed at the changed test files.
 - **What each mutant gets**: `killed` (the tests failed), `survived` (they passed: either they do not check that
   line, or the mutant is equivalent — the reviewer decides which), or `could not run` (timed out, budget spent, or the
   check failed — never a clean result).
