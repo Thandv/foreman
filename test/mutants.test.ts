@@ -250,6 +250,33 @@ test('a source that is a symlink is never mutated: nothing outside the scratch t
   noScratch(f);
 });
 
+test('a test that swaps the mutated file for a symlink cannot make the restore write outside the scratch tree', T, async (t) => {
+  const f = fixture(t);
+  const victim = path.join(f.root, 'victim.js');
+  fs.writeFileSync(victim, 'export const kept = 1;\n');
+  // The worker's test sees the first mutant (`n < lo` gone) and replaces the source with a link to an outside file.
+  const swap = `${HEAD}import fs from 'node:fs';\n` +
+    "const p = new URL('../src/x.js', import.meta.url).pathname;\n" +
+    `if (!fs.readFileSync(p, 'utf8').includes('n < lo')) { fs.rmSync(p); fs.symlinkSync(${JSON.stringify(victim)}, p); }\n` +
+    "test('c', () => assert.ok(clamp));\n";
+  const res = await check(f, { 'src/x.js': SRC, 'test/clamp.test.js': swap });
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'export const kept = 1;\n', 'the outside file is untouched');
+  assert.ok(fs.lstatSync(victim).isFile());
+  assert.ok(res.status === 'ran' || res.status === 'could-not-run', res.reason);
+  noScratch(f);
+});
+
+test('a regex literal does not throw the masking off: later lines are still read as code', () => {
+  const src = [
+    'const re = /[`]/;',
+    'const re2 = /a\\/*/;',
+    'const ok = a === b;',
+    'const t = `x < y`;',
+  ].join('\n');
+  const seen = mutantsFor(src, [1, 2, 3, 4]).map((m) => `${m.line}:${m.from}->${m.to}`);
+  assert.deepEqual(seen, ['3:===->!==']);
+});
+
 test('tests that fail before any mutant make the check could-not-run, never a clean result', T, async (t) => {
   const f = fixture(t);
   const res = await check(f, { 'src/x.js': SRC, 'test/clamp.test.js': `${HEAD}test('red', () => assert.equal(clamp(1, 0, 2), 99));\n` });

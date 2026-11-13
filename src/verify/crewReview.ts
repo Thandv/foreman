@@ -433,7 +433,7 @@ export function heldReason(verdict: (Pick<Verdict, 'council'> & { verdict?: Coun
   const owed = verdict?.verdict && verdict.verdict !== 'fail' ? owedItems(verdict) : [];
   // A pass given on an excerpt (see excerptReaders in crewReview): read off the opinions, so a later verdict on the
   // same run — a council re-review — does not lift it.
-  const excerpt = verdict?.verdict !== 'fail' && (verdict?.council ?? []).some((o) => o.excerpt && !o.error);
+  const excerpt = Boolean(verdict?.verdict) && verdict?.verdict !== 'fail' && (verdict?.council ?? []).some((o) => o.excerpt && !o.error);
   if (!held.length && !owed.length && !excerpt) return null;
   const list = (entries: AcceptanceEntry[]): string => `acceptance item${entries.length > 1 ? 's' : ''} ${entries.map((e) => e.item).join(', ')}`;
   const unverified = held.filter((e) => e.status === 'not-verifiable');

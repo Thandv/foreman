@@ -101,8 +101,27 @@ const NOT_A_STATEMENT = /^(const|let|var|return|if|else|for|while|do|switch|case
 const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]/.test(c);
 
 /**
+ * Where a regex literal starting at `k` ends (its closing `/`), or -1 when the `/` is a division. A regex is a `/`
+ * that follows an operator, an opening bracket, `return` or the start of the code (`before` is the code so far);
+ * it ends at the first unescaped `/` outside a character class, on the same line.
+ */
+function regexEnd(line: string, k: number, before: string): number {
+  const prev = before.trimEnd();
+  if (prev !== '' && !/[(,=:[!&|?{};+\-*%<>~^]$/.test(prev) && !/\b(return|typeof|case)$/.test(prev)) return -1;
+  let inClass = false;
+  for (let j = k + 1; j < line.length; j++) {
+    const c = line[j]!;
+    if (c === '\\') { j++; continue; }
+    if (c === '[') inClass = true;
+    else if (c === ']') inClass = false;
+    else if (c === '/' && !inClass) return j;
+  }
+  return -1;
+}
+
+/**
  * Each line with string, template and comment text blanked to spaces, so columns are kept and nothing in them
- * matches. A template literal and a block comment carry over to the next line; regex literals are not recognised.
+ * matches. A template literal and a block comment carry over to the next line; a regex literal is blanked too.
  */
 function codeLines(source: string): string[] {
   let template = false;
@@ -124,6 +143,10 @@ function codeLines(source: string): string[] {
       }
       if (c === '/' && line[k + 1] === '/') { out += ' '.repeat(line.length - k); break; }
       if (c === '/' && line[k + 1] === '*') { block = true; out += '  '; k++; continue; }
+      if (c === '/') {
+        const end = regexEnd(line, k, out);
+        if (end > k) { out += ' '.repeat(end - k + 1); k = end; continue; }
+      }
       if (c === "'" || c === '"' || c === '`') { quote = c; out += ' '; continue; }
       out += c;
     }
@@ -286,6 +309,17 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
     if (testFiles.length === 0) return na('no changed test file is one the test command runs');
     const cmd = fileCommand(script.flags, testFiles, perRunMs, null);
 
+    // Every write into the scratch tree, the mutant and the restore after it: the path is checked again each time
+    // (the worker's tests ran in between and may have swapped a file or a directory for a link), whatever is there
+    // is removed, never followed, and a new regular file is created. Any failure stops the check (could-not-run).
+    const writeScratch = async (rel: string, content: string): Promise<void> => {
+      const abs = inside(scratch, rel);
+      if (!abs) throw new Error(`${rel} is outside the scratch tree`);
+      const target = withinScratch(scratch, abs, rel);
+      await fsp.rm(target, { force: true });
+      await fsp.writeFile(target, content, { flag: 'wx' });
+    };
+
     const runOnce = async (limit: number): Promise<RevertRunResult> => {
       if (aborted()) throw new Error('the run was aborted');
       const started = now();
@@ -312,17 +346,12 @@ export async function mutantsCheck(opts: MutantsOptions): Promise<MutantsResult 
         continue;
       }
       const original = originals.get(m.file)!;
-      const target = withinScratch(scratch, inside(scratch, m.file)!, m.file);
-      if (!(await fsp.lstat(target).catch(() => null))?.isFile()) {
-        rows.push(row(m, 'could-not-run', 'not a regular file in the scratch tree'));
-        continue;
-      }
-      await fsp.writeFile(target, applyMutant(original, m));
+      await writeScratch(m.file, applyMutant(original, m));
       let res: RevertRunResult;
       try {
         res = await runOnce(Math.min(limit, budgetMs - runMs));
       } finally {
-        await fsp.writeFile(target, original);
+        await writeScratch(m.file, original);
       }
       if (aborted()) return null;
       rows.push(res.timedOut ? row(m, 'could-not-run', 'timed out with the mutant in place') : row(m, res.passed ? 'survived' : 'killed'));
