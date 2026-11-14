@@ -174,10 +174,10 @@ export function spawnStreaming(cmd: string, args: string[], opts: SpawnOptions):
           buf = buf.slice(nl + 1);
           if (line.trim()) deliver(line, stream);
         }
-        // Guard against a child that never emits a newline.
-        if (buf.length > 1_000_000) {
+        // Guard against a child that never emits a newline: split, keeping the rest.
+        while (buf.length > 1_000_000) {
           deliver(buf.slice(0, 1_000_000), stream);
-          buf = '';
+          buf = buf.slice(1_000_000);
         }
       });
       child[stream]?.on('end', () => {
