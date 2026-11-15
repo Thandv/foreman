@@ -43,6 +43,8 @@ export interface CrewReviewOutcome {
   error?: string;
   /** The reviewer's status per judged acceptance item; absent when the ticket has none. */
   acceptance?: AcceptanceEntry[];
+  /** It read an excerpt: the work was over its reading cap. */
+  excerpt?: true;
 }
 
 export interface CrewVerdict {
@@ -424,11 +426,15 @@ export function owedItems(verdict: Pick<Verdict, 'council'> | null | undefined):
  * that did not fill the field in — a person reading the note must be able to tell a reviewer that was not shown the
  * source from one that answered in the wrong shape — and "says … is not met" is a status list a chair passed over.
  * (That last one only on a verdict that is not a FAIL: a failed review's missing item goes to the repair round.)
+ * "read only an excerpt" is a chain that passed work over its reading cap.
  */
 export function heldReason(verdict: (Pick<Verdict, 'council'> & { verdict?: CouncilVerdict }) | null | undefined): string | null {
   const held = heldItems(verdict);
   const owed = verdict?.verdict && verdict.verdict !== 'fail' ? owedItems(verdict) : [];
-  if (!held.length && !owed.length) return null;
+  // A pass given on an excerpt (see excerptReaders in crewReview): read off the opinions, so a later verdict on the
+  // same run — a council re-review — does not lift it.
+  const excerpt = Boolean(verdict?.verdict) && verdict?.verdict !== 'fail' && (verdict?.council ?? []).some((o) => o.excerpt && !o.error);
+  if (!held.length && !owed.length && !excerpt) return null;
   const list = (entries: AcceptanceEntry[]): string => `acceptance item${entries.length > 1 ? 's' : ''} ${entries.map((e) => e.item).join(', ')}`;
   const unverified = held.filter((e) => e.status === 'not-verifiable');
   const unreported = held.filter((e) => e.status !== 'not-verifiable');
@@ -437,6 +443,7 @@ export function heldReason(verdict: (Pick<Verdict, 'council'> & { verdict?: Coun
     owed.length ? `says ${list(owed)} ${owed.length > 1 ? 'are' : 'is'} not met${!unverified.length && first ? ` (${first.slice(0, 160)})` : ''}, and a chair passed the work` : '',
     unverified.length ? `could not verify ${list(unverified)}${first ? ` (${first.slice(0, 160)})` : ''}` : '',
     unreported.length ? `gave no status for ${list(unreported)}` : '',
+    excerpt ? 'read only an excerpt of the work' : '',
   ].filter(Boolean);
   return `the reviewer ${parts.join(' and ')} — a person decides`;
 }
@@ -862,6 +869,7 @@ function asOpinion(outcome: CrewReviewOutcome): AdvisorOpinion {
     style: outcome.style,
     ...(outcome.error ? { error: outcome.error } : {}),
     ...(outcome.acceptance?.length ? { acceptance: outcome.acceptance } : {}),
+    ...(outcome.excerpt ? { excerpt: true as const } : {}),
   };
 }
 
@@ -1479,6 +1487,8 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // reviewOne never rejects, so there is no partial-failure case to unwind.
   const settled = await Promise.all(pb.reviewers.map((reviewer) => reviewOne(reviewer)));
   const reviews = settled.map((s) => s.outcome);
+  // Kept on each reviewer's opinion, so the hold it causes (heldReason) outlives a later verdict on the same run.
+  for (const r of reviews) if (bounded.get(r.style)?.truncated) r.excerpt = true;
   for (const s of settled) for (const line of s.notes) onNote?.(line);
 
   // A cancel or a daemon stop that landed mid-fan-out reads as reviewers that
@@ -1682,7 +1692,12 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // path at once, whenever the local council had passed the work. A chair saw less of the source than the reviewer
   // whose list says the item is not met, so its pass is not a pass either: a person decides.
   const owed = verdict === 'pass' ? owedItems({ council: usable.map(asOpinion) }) : [];
-  const recorded: CouncilVerdict = verdict === 'pass' && (held.length || owed.length || lostReviewers.length) ? 'split' : verdict;
+  // The same for a pass given on part of the work. A reviewer whose diff was over its reading cap read an excerpt
+  // and was told not to fail over what lay past the cut (PARTIAL_READ_NOTICE), so its pass says nothing about the
+  // rest. A fail stands: a defect seen in part of the work is still a defect.
+  const excerptReaders = verdict === 'pass' ? usable.filter((r) => r.excerpt) : [];
+  const recorded: CouncilVerdict =
+    verdict === 'pass' && (held.length || owed.length || lostReviewers.length || excerptReaders.length) ? 'split' : verdict;
   if (owed.length) {
     critiques.push(
       `FOREMAN CHECK (deterministic): a chair passed this work, but the reviewer's own acceptance status has ` +
@@ -1696,6 +1711,14 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
       `FOREMAN CHECK (deterministic): ${lostReviewers.map((r) => `${r.role} (${r.style})`).join(', ')} gave no usable answer. ` +
         'A review the chain did not give is not a pass: held for a person.',
     );
+  }
+  if (excerptReaders.length) {
+    const who = excerptReaders.map((r) => `${r.role} (${r.style})`).join(', ');
+    critiques.push(
+      `FOREMAN CHECK (deterministic): ${who} read an excerpt — the work exceeded the reviewer's reading cap. ` +
+        'A pass on part of the work is not a pass: held for a person.',
+    );
+    onNote?.(`crew review held for a person: ${who} read an excerpt of the work`);
   }
   if (held.length && recorded === 'split') {
     critiques.push(

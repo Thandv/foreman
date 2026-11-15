@@ -41,6 +41,7 @@ async function scenario(
   senior: Answer,
   architect: Answer,
   fn: (out: CrewVerdict | null, store: Store, taskId: string) => void | Promise<void>,
+  diff = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1,2 @@\n a\n+b',
 ): Promise<void> {
   const base = fs.realpathSync(scratchDir('foreman-crewverdict-'));
   const root = path.join(base, 'repo');
@@ -71,7 +72,7 @@ async function scenario(
     const t = store.addTask({ title: 'T', prompt: 'the brief', kind: 'code', runner: 'claude-code', role: 'dev', playbook: 'pair', acceptance: '1. works' });
     const out = await crewReview({
       task: store.getTask(t.id)!, runId: store.startRun(t.id).id, store,
-      diff: 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1,2 @@\n a\n+b',
+      diff,
     });
     await fn(out, store, t.id);
   } finally {
@@ -139,6 +140,51 @@ test('a lost reviewer does not soften a surviving fail', async () => {
   await scenario('fail', 'throw', (out) => {
     assert.equal(out?.verdict, 'fail');
   });
+});
+
+/** A code diff over the crew chain's 96 KB reading cap, so every code reviewer reads an excerpt. */
+const OVER_CAP_DIFF = [1, 2].map((n) =>
+  `diff --git a/f${n}.ts b/f${n}.ts\n--- a/f${n}.ts\n+++ b/f${n}.ts\n@@ -0,0 +1,2000 @@\n` +
+    Array.from({ length: 2000 }, (_, i) => `+export const v${n}_${i} = ${i}; // padding to cross the cap`).join('\n'),
+).join('\n');
+
+test('a pass from reviewers who read only an excerpt of the work is split and held, never a pass', async () => {
+  assert.ok(OVER_CAP_DIFF.length > 96_000, 'the fixture is over the cap');
+  await scenario('pass', 'pass', (out, store, taskId) => {
+    assert.ok(out);
+    assert.equal(out.verdict, 'split');
+    assert.equal(out.record.verdict, 'split');
+    assert.match(out.critique, /FOREMAN CHECK \(deterministic\)/);
+    assert.match(out.critique, /senior \(code-review\), architect \(code-review\) read an excerpt/);
+    assert.match(out.critique, /held for a person/);
+    assert.deepEqual(store.verdictsForTask(taskId).map((v) => v.verdict), ['split'], 'the split is the recorded verdict');
+  }, OVER_CAP_DIFF);
+});
+
+test('the excerpt hold survives a later council pass on the same run, and the park note says why', async () => {
+  const { reviewHolds } = await import('../src/gate.ts');
+  const { heldReason } = await import('../src/verify/crewReview.ts');
+  await scenario('pass', 'pass', (out, store, taskId) => {
+    assert.ok(out);
+    assert.equal(heldReason(out.record), 'the reviewer read only an excerpt of the work — a person decides');
+    assert.ok(out.record.council.every((o) => o.excerpt === true), 'each opinion records that its reviewer read an excerpt');
+    const run = store.latestRun(taskId)!;
+    // A council re-review (the board's Re-review, `foreman reverify`) passes the same run afterwards.
+    store.addVerdict({
+      runId: run.id, taskId, verdict: 'pass', disagreement: false, critique: 'council read it',
+      council: [{ model: 'local-0', provider: 'ollama', local: true, verdict: 'pass', confidence: 0.9, critique: 'ok', costUsd: 0, latencyMs: 5 }],
+    });
+    assert.equal(store.getRun(run.id)!.verdict, 'pass', 'the run now reads pass');
+    // hardHumanReason returns this hold whatever the run's latest verdict (gate.ts, `opts.unverified`).
+    assert.equal(reviewHolds(store, taskId).unverified, 'the reviewer read only an excerpt of the work — a person decides');
+  }, OVER_CAP_DIFF);
+});
+
+test('a fail from a reviewer who read an excerpt stands: a defect seen in part of the work is still a defect', async () => {
+  await scenario('fail', 'pass', (out) => {
+    assert.equal(out?.verdict, 'fail');
+    assert.doesNotMatch(out?.critique ?? '', /read an excerpt/);
+  }, OVER_CAP_DIFF);
 });
 
 test('the chair of a two-reviewer chain gets a third of the timeout, never under 1000 ms', () => {
