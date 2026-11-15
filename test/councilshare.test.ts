@@ -4,18 +4,19 @@ import assert from 'node:assert/strict';
 import { Store } from '../src/queue.ts';
 import { Broker } from '../src/budget.ts';
 import { Scheduler, withDeadline } from '../src/scheduler.ts';
+import { RunClock } from '../src/runClock.ts';
 
 const ollamaInFlight = (b: Broker): number =>
   (b as unknown as { inFlight: Map<string, number> }).inFlight.get('ollama') ?? 0;
 
-/** A broker whose chat settles only when its signal aborts. */
+/** A broker whose chat settles only when its signal aborts, a turn later, as a real fetch does. */
 function hangingBroker(store: Store): Broker {
   return new Broker(store, {
     guardResidency: false,
     fitsFn: async () => true,
     chatFn: (o) =>
       new Promise((_resolve, reject) => {
-        o.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        o.signal?.addEventListener('abort', () => setImmediate(() => reject(new Error('aborted'))), { once: true });
       }),
   });
 }
@@ -70,4 +71,32 @@ test('the shadow council is aborted the same way when its share runs out', async
   assert.ok(shadowSignal, 'the shadow council was started');
   assert.equal(shadowSignal.aborted, true);
   assert.equal(run.signal.aborted, false);
+});
+
+test('a council that ignores the abort still gives the next stage its turn: the settle wait is bounded', { timeout: 10_000 }, async () => {
+  const run = new AbortController();
+  assert.equal(await withDeadline(() => new Promise<never>(() => {}), 1, run.signal, 20), null);
+});
+
+test("the run's council (not just the shadow) gets the share's signal, and the share's expiry aborts it", async () => {
+  const store = new Store(':memory:');
+  const t = store.addTask({ title: 'c', prompt: 'true', runner: 'shell', maxAttempts: 1 });
+  let councilSignal: AbortSignal | undefined;
+  const sched = new Scheduler(store, {
+    verifyEnabled: true,
+    taskTimeoutMs: 60_000,
+    // A deadline already past (its expiry never fires) gives the council the 1s floor share.
+    runClock: (budget, onExpire) => new RunClock(budget, onExpire, () => Date.now() - 3_600_000, { set: () => null, clear: () => {} }),
+    verify: (args) => { councilSignal = args.signal; return waitsOn(args.signal); },
+  });
+  try {
+    await sched.drain(20_000);
+    assert.ok(councilSignal, 'the council was started');
+    assert.equal(councilSignal.aborted, true);
+    assert.equal(store.getTask(t.id)!.status, 'awaiting-approval');
+    assert.ok(store.eventsForTask(t.id).some((e) => /council ran out of its share/.test(e.message)));
+  } finally {
+    await sched.stop();
+    store.close();
+  }
 });
