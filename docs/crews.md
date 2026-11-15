@@ -178,6 +178,13 @@ timeline says why (`filed for the operator: …`). It waits for the ticket it wa
 follow-up, but the AI's follow-ups of that ticket do not queue behind it. A mere description of an OS (`crashes on Linux`,
 `taken on macOS`, `make it work on Windows`) is an ordinary follow-up.
 
+A **blocker** the worker cannot act on from its worktree is not sent back as a repair demand. That covers a fault in
+Foreman or its environment, a rebase or merge, the state of another ticket, and data the worker cannot read. The
+reviewer starts such a blocker's title with `(operator)`, and a blocker that asks for work on another host counts the
+same way. The review is then recorded as a split and held for you, with the blocker listed under `FOR THE OPERATOR`.
+The review's other blockers are listed with it there. None of them is repaired or filed as a ticket: name the ones
+you want done in a retry note.
+
 An owner-tier planner decomposes the ask into an epic of tickets (roles,
 dependencies, acceptance criteria, points) shown before queuing. In the
 verify lane, the playbook's reviewer chain reads the diff — code review,

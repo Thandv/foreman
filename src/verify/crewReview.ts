@@ -96,7 +96,7 @@ export interface CrewReviewOptions {
  * Bump when a style template or the reply contract changes: it is part of the
  * cache key, so a change invalidates every stale cached review.
  */
-export const CREW_REVIEW_VERSION = 4;
+export const CREW_REVIEW_VERSION = 5;
 
 /** Runaway-spawning cap from the plan: five issues per verdict, never more. */
 export const MAX_ISSUES = 5;
@@ -213,6 +213,9 @@ const SHARED_CONTRACT = [
   '- never file an issue about a file, section or artifact you were not shown or could not open. If something you',
   '  expected is missing, say so in the critique; a ticket to chase it sends the next worker hunting for nothing.',
   '- severity "blocker" means this cannot ship as-is; anything smaller is "normal".',
+  '- a blocker the worker cannot act on from its worktree — a fault in Foreman or its environment, a rebase or merge,',
+  '  the state of another ticket, data the worker cannot read — starts its title with "(operator)": the review is then',
+  '  held for the operator instead of sent back to the worker.',
   '- role is the crew role that should pick the issue up. issues may be empty.',
   `- ${OPERATOR_CHECKS}`,
   '- Demand behaviour, not exact source text. If a demand needs a test to find a literal string in the source,',
@@ -1097,6 +1100,16 @@ export function formatDroppedIssues(events: RunEvent[]): string {
 /** Tag on a follow-up only the operator can do; the board lists it in 'Yours to do' (assignee human). */
 export const OPERATOR_TAG = '(operator)';
 
+/**
+ * A blocker no worker can act on from its worktree: the reviewer tagged it "(operator)" (a Foreman or environment
+ * fault, a rebase, another ticket's state, data the worker cannot read), or it asks for work on a host this one is
+ * not.
+ */
+function isOperatorBlocker(issue: CrewIssue): boolean {
+  return issue.severity === 'blocker' &&
+    (issue.title.startsWith(OPERATOR_TAG) || hostImpossibleReason(`${issue.title}\n${issue.prompt}`) !== null);
+}
+
 const OS_NAMES: Record<string, NodeJS.Platform> = { linux: 'linux', windows: 'win32', macos: 'darwin', 'mac os': 'darwin', darwin: 'darwin' };
 // A request to do something somewhere: the verb opens a clause ("Recapture …", "…; re-run …", "Please verify …").
 // "crashes on Linux", "taken on macOS", "make it work on Windows" open with no such verb and stay with a worker.
@@ -1565,7 +1578,9 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // Read from the PRE-slice set: the cap decides what gets FILED, never what
   // gets HEARD, so a flood of normals cannot push a later blocker off the end
   // and out of the verdict.
-  const blockers = raised.filter((i) => i.severity === 'blocker');
+  // A blocker the worker cannot act on is the operator's: it holds the review below, never fails it into a repair.
+  const forOperator = raised.filter(isOperatorBlocker);
+  const blockers = raised.filter((i) => i.severity === 'blocker' && !forOperator.includes(i));
   if (verdict === 'pass' && blockers.length) {
     // A blocker cannot ride a pass: the reviewer said this cannot ship as-is.
     verdict = 'fail';
@@ -1663,7 +1678,8 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // go into the critique — which becomes the repair notes — and only
   // normal-severity follow-ups are filed.
   const replayed = new Set(usable.filter((r) => r.cached).flatMap((r) => r.issues));
-  const repairedInPlace = verdict === 'fail' ? issues.filter((i) => i.severity === 'blocker') : [];
+  // A review held for the operator runs no repair, so its other blockers are listed for the operator below instead.
+  const repairedInPlace = verdict === 'fail' && !forOperator.length ? issues.filter((i) => i.severity === 'blocker') : [];
   if (repairedInPlace.length) {
     critiques.push(
       'BLOCKERS TO FIX IN THIS REPAIR (not filed as separate tickets):\n' +
@@ -1682,7 +1698,19 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // path at once, whenever the local council had passed the work. A chair saw less of the source than the reviewer
   // whose list says the item is not met, so its pass is not a pass either: a person decides.
   const owed = verdict === 'pass' ? owedItems({ council: usable.map(asOpinion) }) : [];
-  const recorded: CouncilVerdict = verdict === 'pass' && (held.length || owed.length || lostReviewers.length) ? 'split' : verdict;
+  const recorded: CouncilVerdict = forOperator.length || (verdict === 'pass' && (held.length || owed.length || lostReviewers.length)) ? 'split' : verdict;
+  if (forOperator.length) {
+    critiques.push(
+      'FOREMAN CHECK (deterministic): FOR THE OPERATOR — the review raised blocker(s) the worker cannot act on from its ' +
+        'worktree. A repair round would deliver nothing: held for a person.\n' +
+        forOperator.map((i) => `- ${i.title.replace(`${OPERATOR_TAG} `, '')}: ${i.prompt}`).join('\n') +
+        (blockers.length
+          ? '\nThe review\'s other blockers, not repaired or filed (name them in a retry note to have them done):\n' +
+            blockers.map((i) => `- ${i.title}: ${i.prompt}`).join('\n')
+          : ''),
+    );
+    onNote?.(`crew review held for a person: ${forOperator.length} blocker(s) only the operator can act on`);
+  }
   if (owed.length) {
     critiques.push(
       `FOREMAN CHECK (deterministic): a chair passed this work, but the reviewer's own acceptance status has ` +
@@ -1731,7 +1759,9 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // paid for, and a replay on every repair/retry round would file them again.
   // At depth nothing is filed, so a replayed issue left over is dropped
   // (recorded) like a fresh one rather than vanishing.
-  const fresh = issues.filter((i) => (tooDeep || !replayed.has(i)) && !repairedInPlace.includes(i));
+  // A held review files none of its blockers: the operator decides on them.
+  const fresh = issues.filter((i) => (tooDeep || !replayed.has(i)) && !repairedInPlace.includes(i) &&
+    !(forOperator.length && i.severity === 'blocker'));
   // Cancellation between the verdict and the filing still spawns work nobody
   // asked for; the verdict row above is the last state a canceled run writes.
   const filed = halted(opts.signal) ? [] : fileIssues(store, task, pb, fresh, { branch: opts.branch, runId }, onNote);
