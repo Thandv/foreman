@@ -66,9 +66,9 @@ test('POST /api/tasks that hits a real BUSY answers 503 ledger busy, retry', asy
 });
 
 test('POST /api/tasks that hits a real FULL answers 507 ledger disk full', async () => {
-  // A real FULL from a scratch DB with a low page cap. Store.addTask's own
-  // ROLLBACK would mask it (SQLite has already rolled back), so the route's
-  // store is made to throw the captured real error.
+  // A real FULL from a scratch DB with a low page cap, thrown by a stub store:
+  // this pins the route's mapping alone. test/add-task-atomic.test.ts drives a
+  // full ledger through the real Store.addTask.
   const scratch = new DatabaseSync(path.join(scratchDir('ft-full-'), 'full.db'));
   scratch.exec('CREATE TABLE t (x)');
   scratch.exec('PRAGMA max_page_count = 3');

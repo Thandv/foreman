@@ -2,7 +2,12 @@ import { scratchDir } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import type { AddressInfo } from 'node:net';
 import { Store } from '../src/queue.ts';
+import { Scheduler } from '../src/scheduler.ts';
+import { createServer } from '../src/server.ts';
+
+process.env['FOREMAN_PREWARM'] = 'off';
 
 const DAY = 86_400_000;
 
@@ -85,5 +90,38 @@ test('the status event is emitted once, after the commit', () => {
   s.on('event', () => seen.push(s.db.isTransaction));
   s.addTask({ title: 'emit', prompt: 'x' });
   assert.deepEqual(seen, [false]);
+  s.close();
+});
+
+test('POST /api/tasks on a really full ledger answers 507, not 400', async () => {
+  const s = scratchStore();
+  fillUp(s);
+  const server = createServer(s, new Scheduler(s, { maxWorkers: 1, tickMs: 5, verifyEnabled: false }));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'big', prompt: 'x'.repeat(200_000) }),
+    });
+    const body = (await res.json()) as { error: string };
+    assert.deepEqual([res.status, body.error], [507, 'ledger disk full: database or disk is full']);
+  } finally {
+    server.close();
+    s.close();
+  }
+});
+
+test('an error from the ROLLBACK itself never replaces the original error, and nothing is half-written', () => {
+  const s = scratchStore();
+  // RAISE(ABORT) undoes the statement only, so the transaction is still open and the guard must roll it back.
+  s.db.exec(`CREATE TEMP TRIGGER boom BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'the original error'); END`);
+  const exec = s.db.exec.bind(s.db);
+  (s.db as { exec: unknown }).exec = (sql: string) => {
+    exec(sql);
+    if (sql === 'ROLLBACK') throw new Error('the rollback failed too');
+  };
+  assert.equal(caught(() => s.addTask({ title: 'x', prompt: 'p' })).message, 'the original error');
+  assert.equal(s.db.isTransaction, false);
+  assert.equal(Number((s.db.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number }).n), 0);
   s.close();
 });
