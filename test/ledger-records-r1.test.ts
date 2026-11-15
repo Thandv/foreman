@@ -53,6 +53,7 @@ test('the landed tree is the merge\'s own second parent: a branch moved after th
   try {
     const base = git(f.dir, 'rev-parse', 'HEAD');
     const out = await applyApproval(f.store, f.task.id, {
+      principal: 'operator',
       // What a process a run left behind can do while the merged main is being checked: point the branch elsewhere.
       mainCheck: async (dir) => {
         git(dir, 'update-ref', `refs/heads/${f.run.branch!}`, base);
@@ -73,11 +74,12 @@ test('an --as-is landing of another tree stays `corrected` by the trees when the
   const f = await reviewed();
   try {
     fs.writeFileSync(path.join(f.jail, 'late.txt'), 'written after the review\n');
-    const refused = await applyApproval(f.store, f.task.id, {});
+    const refused = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     const now = /--as-is ([0-9a-f]{40})$/.exec(refused.merge.reason)?.[1] ?? '';
     assert.match(now, /^[0-9a-f]{40}$/, refused.merge.reason);
     const base = git(f.dir, 'rev-parse', 'HEAD');
     const out = await applyApproval(f.store, f.task.id, {
+      principal: 'operator',
       acceptTree: now,
       mainCheck: async (dir) => {
         // A commit that holds exactly the reviewed tree, and the branch pointed at it: the row must not read it.
@@ -101,7 +103,7 @@ test('a decision row cannot be replaced: INSERT OR REPLACE on an existing id is 
   const store = new Store(':memory:');
   try {
     const t = store.addTask({ title: 'x', prompt: 'p', runner: 'echo' });
-    const row = store.addDecision({ taskId: t.id, action: 'cancel', note: 'the first word' });
+    const row = store.addDecision({ taskId: t.id, action: 'cancel', actorId: 'operator', note: 'the first word' });
     const replace = store.db.prepare("INSERT OR REPLACE INTO decisions (id, task_id, at, action, actor, note) VALUES (?, ?, 1, 'approve', 'human', 'rewritten')");
     assert.throws(() => replace.run(row.id, t.id), /append-only/);
     assert.deepEqual(store.decisionsForTask(t.id), [row], 'the row is exactly as written');
@@ -109,7 +111,7 @@ test('a decision row cannot be replaced: INSERT OR REPLACE on an existing id is 
     const ignore = store.db.prepare("INSERT OR IGNORE INTO decisions (id, task_id, at, action, actor, note) VALUES (?, ?, 1, 'approve', 'human', 'ignored')");
     assert.throws(() => ignore.run(row.id, t.id), /append-only/);
     assert.deepEqual(store.decisionsForTask(t.id), [row]);
-    assert.equal(store.addDecision({ taskId: t.id, action: 'retry' }).action, 'retry');
+    assert.equal(store.addDecision({ taskId: t.id, action: 'retry', actorId: 'operator' }).action, 'retry');
     assert.equal(store.decisionsForTask(t.id).length, 2);
   } finally {
     store.close();
@@ -122,10 +124,10 @@ test('an approval of a conflict round that cannot land is one row too: not merge
   const f = await reviewed();
   try {
     fs.writeFileSync(path.join(f.dir, 'a.txt'), 'MAIN\n'); git(f.dir, 'commit', '-qam', 'main moved');
-    const first = await applyApproval(f.store, f.task.id, { note: 'go' });
+    const first = await applyApproval(f.store, f.task.id, { principal: 'operator', note: 'go' });
     assert.match(first.merge.reason, /^merge conflict/);
     assert.equal(f.store.getTask(f.task.id)!.status, 'queued', 'precondition: requeued as a conflict round');
-    const second = await applyApproval(f.store, f.task.id, { note: 'go again' });
+    const second = await applyApproval(f.store, f.task.id, { principal: 'operator', note: 'go again' });
     assert.equal(second.merge.merged, false);
     const all = f.store.decisionsForTask(f.task.id);
     assert.deepEqual(
@@ -147,7 +149,7 @@ test('a rejection carries the reviewed tree it turned down; a desk ticket that o
     store.setRunMeta(run.id, { reviewedTree: tree });
     store.endRun(run.id, 'succeeded', { exitCode: 0, summary: 'ok' });
     store.setStatus(t.id, 'awaiting-approval');
-    applyRejection(store, t.id, 'no');
+    applyRejection(store, t.id, 'no', 'operator');
     assert.deepEqual(store.decisionsForTask(t.id).map((d) => [d.action, d.runId, d.reviewedTree]), [['reject', run.id, tree]]);
 
     // Finished on the operator's own desk after an earlier run: the approval rules on no run.
@@ -156,7 +158,7 @@ test('a rejection carries the reviewed tree it turned down; a desk ticket that o
     store.setRunMeta(earlier.id, { reviewedTree: tree });
     store.endRun(earlier.id, 'failed', { exitCode: 1, summary: 'gave up' });
     store.setStatus(desk.id, 'awaiting-human');
-    await applyApproval(store, desk.id, { note: 'did it myself' });
+    await applyApproval(store, desk.id, { principal: 'operator', note: 'did it myself' });
     assert.deepEqual(store.decisionsForTask(desk.id).map((d) => [d.runId, d.reviewedTree, d.statusAfter]), [[null, null, 'done']]);
 
     const epic = store.addTask({ title: 'epic', prompt: 'p', runner: 'echo', isEpic: true });

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { secretWarning, servicePlist, skippedSecrets, stableNodePath } from './service.ts';
-import { config, daemonUrl } from './config.ts';
+import { config, daemonUrl, effectiveConfig } from './config.ts';
 import { humanDuration, sweepJails } from './archive.ts';
 import {
   backupIfDue, backupMb, backupNow, backupSettings, requireNoInterruptedRestore, restoreFrom, sameDiskWarning,
@@ -13,6 +14,9 @@ import { APPROVAL_DRAIN_CAP_MS, approvals, pruneStaleMainWorktrees } from './gat
 import { runDrill } from './drill.ts';
 import { localOnly, modeSummary } from './localOnly.ts';
 import { sandboxMode, sandboxSummary, selfTest } from './security/sandbox.ts';
+import { ensureHostSecret, HOST_SECRET_HEADER } from './security/hostSecret.ts';
+import { landingDoctorLines, loadLanding } from './landing/config.ts';
+import { useLanding } from './landing/mr.ts';
 import { probeCloud } from './models.ts';
 import { skillVariantFor, tierModel } from './roles.ts';
 import { workerSuiteInJail } from './doctorJail.ts';
@@ -22,6 +26,8 @@ import { acquireDaemonLock } from './lock.ts';
 import { stopDaemon, systemDescribe, systemListeners } from './daemonOwner.ts';
 import { Store } from './queue.ts';
 import { Scheduler } from './scheduler.ts';
+import { registerExtension } from './extensions.ts';
+import { alignExtension } from './align/extension.ts';
 import { listen } from './server.ts';
 import { installProcessRecorder } from './runners/freezeInstall.ts';
 import { freezeSweepOptionsFromEnv, runFreezeSweep } from './runners/freezeSweep.ts';
@@ -30,7 +36,7 @@ import { Tracer } from './trace.ts';
 import { benchModels, benchPath } from './bench.ts';
 import { Broker } from './budget.ts';
 import { checkOllamaParallelism, prewarmRoster, residentSummary } from './warm.ts';
-import { computeLatencyReport, formatDuration } from './latency.ts';
+import { computeLatencyReport, computeSuiteStat, formatDuration } from './latency.ts';
 import { formatPlaybookWarning, getPlaybook, playbooksDir } from './playbooks.ts';
 import { planNoteHome } from './assistant/crewPlan.ts';
 import { crewAdvisories, formatDroppedIssues } from './verify/crewReview.ts';
@@ -45,6 +51,11 @@ const USAGE = `foreman — parallel agent mission control
 
   foreman serve                          start the daemon + board (${daemonUrl(config.host, config.port)})
   foreman stop                            stop the daemon and wait for it to exit
+  foreman hold --reason <text>            claim no new work; running work, the gate, reconcile and re-checks go on
+                                          (in memory: a daemon restart clears it)
+  foreman resume                          lift the hold; the next tick claims new work again
+  foreman land-clear <repo>               release a repo a crash left mid-merge, or a merge request left unsynced,
+                                          once you have checked its checkout
   foreman add <title> --prompt <text>     queue a task
         [--kind code|writing|research|general] [--runner echo|shell|claude-code|codex-cli|api]
         [--repo <path>] [--priority N] [--after <id>[,<id>]] [--sensitivity S0|S1|S2]
@@ -68,7 +79,7 @@ const USAGE = `foreman — parallel agent mission control
                                           record work you landed by hand: the ticket becomes done and its
                                           dependents are revived (refused unless the commit is on the base branch)
   foreman deps <taskId> --drop <depId>    drop one dependency edge (refused on a running ticket; there is no --add)
-  foreman approve <taskId> [--note <text>] accept the staged artifacts (waits for the merge and its check)
+  foreman approve <taskId> [--note <text>] accept the staged artifacts (waits for the merge; its check runs on)
                                           --as-is <tree sha> lands work that changed after its review, by naming
                                           the tree to land (the refusal prints it)
         [--corrected | --clean]           for the record only: the work needed a fix beyond the reviewed diff (say, a
@@ -91,11 +102,17 @@ const USAGE = `foreman — parallel agent mission control
   foreman reverify <taskId>... | --split  re-run the REVIEW on work already done, keeping the work.
                                           --split takes every task parked on a split verdict
   foreman rm <taskId>                     delete a task
+  foreman token create --host-admin --name <name> [--service] [--expires 30d]
+                                          mint a principal's token with this machine's host-admin
+                                          secret; the first one turns sign-in on for good
   foreman watch                           live table in the terminal
   foreman tools ls|show|rm|quarantine|release [<name>]   the forged-tool catalog
   foreman prune [--days N] [--keep-deps N] reclaim worktrees, branches, old ledger rows, dep caches
   foreman trace <taskId>                  full JSON reconstruction of a task
   foreman service                         print a launchd plist for this install
+  foreman config --effective              each setting src/config.ts resolves, its value and env|default; then the
+                                          names only of the other FOREMAN_* variables set; then, with
+                                          FOREMAN_LANDING=mr, each landing.json mapping and token: set|unset
   foreman backup [--to <dir>]             one verified, gzipped copy of the database, now (the daemon
                                           takes one a day by itself; keeps 7 dailies + 4 weeklies,
                                           in the copy dir too)
@@ -226,7 +243,26 @@ const flagStr = (args: Args, key: string): string | undefined => {
   return typeof v === 'string' ? v : undefined;
 };
 
-const base = daemonUrl(config.host, config.port);
+const base = config.cliUrl;
+
+/** Hosts a token may cross in clear text: this machine. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * The headers every HTTP call carries: the bearer token when FOREMAN_TOKEN is set, then the caller's own (the
+ * host-secret header, where it applies). A token is refused, before any request, for http:// to a host that is not
+ * this machine. The token is only ever in the header, never in a message.
+ */
+function requestHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = config.cliToken;
+  if (token) {
+    const url = new URL(base);
+    if (url.protocol !== 'https:' && !LOOPBACK_HOSTS.has(url.hostname)) {
+      throw new Error(`refusing to send FOREMAN_TOKEN over ${url.protocol}// to ${url.host}: use an https FOREMAN_URL`);
+    }
+  }
+  return { ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra };
+}
 
 /** `--skills a,b` as a list; `--skills default` as null (the role's default); undefined when the flag is absent. */
 function skillsFlag(args: Args): string[] | null | undefined {
@@ -271,7 +307,8 @@ const yesNo = (v: boolean | null | undefined, unknown = 'not stated'): string =>
 
 /** One decision as `foreman show` and the confirmation line print it: action, who, corrected, the trees short, the note's head. */
 function decisionLine(d: Decision): string {
-  const parts = [`${d.action} by ${d.actor}`];
+  // Who acted, after the kind of actor; a row from before actor ids were recorded has none.
+  const parts = [`${d.action} by ${d.actor}${d.actorId ? ` (${d.actorId})` : ''}`];
   if (d.action === 'approve') {
     parts.push(`corrected: ${yesNo(d.corrected)}${d.correctedSource ? ` (${d.correctedSource === 'trees' ? 'the trees differ' : 'stated'})` : ''}`);
     parts.push(`merged: ${yesNo(d.merged, 'n/a')}${d.asIs ? ' (--as-is)' : ''}`);
@@ -333,15 +370,17 @@ function refuseCorrectedFlags(args: Args, cmd: string): void {
  * all. `fetch` gives up on a response whose headers take longer than 300s
  * (undici's headersTimeout, not settable without undici itself), and a
  * planner given a repo snapshot legitimately takes longer than that; the
- * daemon would finish the plan and nobody would be listening. node:http has
- * no such ceiling, so this waits as long as the daemon's own timeouts allow.
+ * daemon would finish the plan and nobody would be listening. node:http (and
+ * node:https, for an https FOREMAN_URL) has no such ceiling, so this waits as
+ * long as the daemon's own timeouts allow.
  */
 function apiCallLong(path: string, body: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
-    const req = http.request(`${base}${path}`, {
+    const request = new URL(base).protocol === 'https:' ? https.request : http.request;
+    const req = request(`${base}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      headers: requestHeaders({ 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) }),
     }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
@@ -363,12 +402,13 @@ function apiCallLong(path: string, body: unknown): Promise<any> {
   });
 }
 
-async function apiCall(path: string, init?: RequestInit): Promise<any> {
+async function apiCall(path: string, init?: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }): Promise<any> {
+  const headers = requestHeaders({ ...(init?.body ? { 'content-type': 'application/json' } : {}), ...init?.headers });
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
       ...init,
-      headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+      headers,
     });
   } catch (err) {
     // A bare `catch {}` here reported every failure as "is foreman serve
@@ -392,6 +432,18 @@ async function apiCall(path: string, init?: RequestInit): Promise<any> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   return body;
+}
+
+/**
+ * The header that lets a request carry allowCore or mint a token (src/security/hostSecret.ts); the secret is created
+ * on first use.
+ * It is this machine's secret, so it goes only to this machine's daemon: any other FOREMAN_URL is refused.
+ */
+function hostAdminHeaders(): Record<string, string> {
+  if (base !== daemonUrl(config.host, config.port)) {
+    throw new Error(`the host-admin secret (--allow-core, token create --host-admin) goes only to the local daemon (${daemonUrl(config.host, config.port)}), not FOREMAN_URL ${base}`);
+  }
+  return { [HOST_SECRET_HEADER]: ensureHostSecret(config.home) };
 }
 
 function slugify(title: string): string {
@@ -478,8 +530,14 @@ async function main(): Promise<number> {
       process.stderr.write(`foreman: ${sandboxProblem}\n`);
       return 1;
     }
+    // FOREMAN_LANDING=mr with <home>/landing.json (landing/config.ts): validated once, here; a bad file or a refused
+    // token file is a refusal to start. Approvals in a mapped repo then open a merge request (landing/mr.ts).
+    const landing = loadLanding(config.home, config.landing);
+    useLanding(landing, config.home);
     const releaseLock = acquireDaemonLock();
-    const store = new Store(config.dbPath);
+    // The one opener that migrates an older ledger; every other command refuses it.
+    const store = new Store(config.dbPath, { migrate: true });
+    registerExtension(alignExtension);
     const scheduler = new Scheduler(store);
     const tracer = new Tracer(store);
     tracer.start();
@@ -491,6 +549,7 @@ async function main(): Promise<number> {
     process.stdout.write(`home ${config.home}\n`);
     process.stdout.write(`mode ${modeSummary()}\n`);
     process.stdout.write(`${await sandboxSummary()}\n`);
+    for (const line of landing?.describe(config.home) ?? []) process.stdout.write(`${line}\n`);
     if (sandboxMode() === 'all') {
       process.stdout.write('FOREMAN_SANDBOX=all: the claude-code worker is not sandboxed in this build; `all` behaves as `tests`\n');
     }
@@ -596,7 +655,8 @@ async function main(): Promise<number> {
         let capTimer: NodeJS.Timeout | undefined;
         const capped = new Promise<'capped'>((r) => { capTimer = setTimeout(() => r('capped'), APPROVAL_DRAIN_CAP_MS); });
         try {
-          if ((await Promise.race([scheduler.stop(), capped])) === 'capped') {
+          // Only an exit 0 is clean; a second call mid-drain can raise the code, so it is read at the end.
+          if ((await Promise.race([scheduler.stop(() => exitCode === 0), capped])) === 'capped') {
             process.stderr.write(`shutdown: the scheduler did not stop within ${APPROVAL_DRAIN_CAP_MS}ms; exiting anyway\n`);
             // stop() ends by killing the groups of runs that never settled; it did not get there, so that is done here.
             store.killLiveRunGroups();
@@ -673,6 +733,16 @@ async function main(): Promise<number> {
   }
 
   switch (cmd) {
+    case 'config': {
+      if (args.flags['effective'] !== true) throw new Error('usage: foreman config --effective');
+      const { knobs, others } = effectiveConfig();
+      const nameW = Math.max(...knobs.map((k) => k.name.length));
+      const valueW = Math.max(...knobs.map((k) => k.value.length));
+      for (const k of knobs) process.stdout.write(`${k.name.padEnd(nameW)}  ${k.value.padEnd(valueW)}  ${k.source}\n`);
+      process.stdout.write(`${others.length} other FOREMAN_* names are read in place (not shown)${others.length ? `: ${others.join(', ')}` : ''}\n`);
+      for (const line of loadLanding(config.home, config.landing)?.describe(config.home) ?? []) process.stdout.write(`${line}\n`);
+      return 0;
+    }
     case 'backup': {
       // Runs with or without the daemon: the copy is taken through a
       // read-only connection, so a live daemon is not disturbed.
@@ -713,8 +783,10 @@ async function main(): Promise<number> {
       if (!title) throw new Error('usage: foreman add <title> --prompt <text>');
       const after = flagStr(args, 'after');
       const skills = skillsFlag(args) ?? null;
+      const allowCore = Boolean(args.flags['allow-core']);
       const task = await apiCall('/api/tasks', {
         method: 'POST',
+        headers: allowCore ? hostAdminHeaders() : undefined,
         body: JSON.stringify({
           title,
           prompt,
@@ -728,7 +800,7 @@ async function main(): Promise<number> {
           testCmd: flagStr(args, 'test-cmd') ?? null,
           role: flagStr(args, 'role') ?? null,
           playbook: flagStr(args, 'playbook') ?? null,
-          allowCore: Boolean(args.flags['allow-core']),
+          allowCore,
           assignee: flagStr(args, 'assignee') ?? null,
           mergeOnApprove: args.flags['no-merge'] ? false : undefined,
           maxRepairs: flagStr(args, 'repairs') === undefined ? undefined : Number(flagStr(args, 'repairs')),
@@ -1116,10 +1188,10 @@ async function main(): Promise<number> {
         throw new Error('--corrected, --clean and --review-source go with approve');
       }
       if (reviewSource !== undefined && reviewSource.length > 200) throw new Error(`--review-source is ${reviewSource.length} characters; at most 200 are kept`);
-      // An approve merges and then runs the repo's whole suite on the merged
-      // HEAD (postMerge.ts) before it answers; on a large repo that took longer than
-      // fetch's 300s header timeout, and the CLI reported a timeout for a
-      // merge that had landed. node:http has no such ceiling.
+      // An approve answers once its merge has settled, which can wait behind
+      // another landing in the repo (src/landing/queue.ts); fetch's 300s header
+      // timeout once reported a timeout for a merge that had landed. node:http
+      // has no such ceiling.
       const t = cmd === 'approve'
         ? await apiCallLong(`/api/tasks/${taskId}/approve`, {
           ...(note === undefined ? {} : { note }),
@@ -1135,6 +1207,9 @@ async function main(): Promise<number> {
         });
       process.stdout.write(`${t.id} → ${t.status}\n`);
       if (t.merge?.branch) process.stdout.write(`merge: ${t.merge.reason}\n`);
+      if (cmd === 'approve' && t.postMerge === 'pending') {
+        process.stdout.write('main check: pending — runs in the background; a red main shows as MAIN IS RED on the timeline\n');
+      }
       if (t.registration && t.registration.reason !== 'not a tool task') {
         process.stdout.write(`tool: ${t.registration.reason}\n`);
       }
@@ -1143,8 +1218,8 @@ async function main(): Promise<number> {
       if (cmd === 'cancel' && typeof t.warning === 'string') process.stdout.write(`${t.warning}\n`);
       // An approval that lands nothing read exactly like one that did, bar one quiet line: on an earlier trial an
       // approved ADR (kind writing) was taken for landed. Said last and loudly, from what the daemon already answers
-      // (merge.ts's reason for a ticket with merge-on-approve off, and the run that holds the branch).
-      if (cmd === 'approve' && t.merge?.merged === false && t.merge.branch && /merge-on-approve disabled/.test(String(t.merge.reason))) {
+      // (merge.ts's code for a ticket with merge-on-approve off, and the run that holds the branch).
+      if (cmd === 'approve' && t.merge?.code === 'merge-disabled' && t.merge.branch) {
         const runs: Array<{ branch?: string | null; worktreePath?: string | null }> =
           (await apiCall(`/api/tasks/${taskId}`).catch(() => null))?.runs ?? [];
         const where = runs.find((r) => r.branch === t.merge.branch && r.worktreePath)?.worktreePath ?? `branch ${t.merge.branch}`;
@@ -1198,6 +1273,50 @@ async function main(): Promise<number> {
       });
       process.stdout.write(`${t.id} → ${t.status}\n`);
       process.stdout.write(recordedLine('reject', t.decision));
+      return 0;
+    }
+    case 'hold': {
+      const reason = flagStr(args, 'reason');
+      if (!reason) throw new Error('usage: foreman hold --reason <text>');
+      await apiCall('/api/dispatch-hold', { method: 'POST', body: JSON.stringify({ reason }) });
+      process.stdout.write(`new work held: ${reason} (foreman resume lifts it)\n`);
+      return 0;
+    }
+    case 'resume': {
+      await apiCall('/api/dispatch-hold', { method: 'DELETE' });
+      process.stdout.write('new work resumed\n');
+      return 0;
+    }
+    case 'land-clear': {
+      const repo = args._[1];
+      if (!repo) throw new Error('usage: foreman land-clear <repo>');
+      await apiCall('/api/land-interrupted/clear', { method: 'POST', body: JSON.stringify({ repo: path.resolve(repo) }) });
+      process.stdout.write(`${path.resolve(repo)}: interrupted landing cleared; held work released\n`);
+      return 0;
+    }
+    case 'token': {
+      const usage = 'usage: foreman token create --host-admin --name <name> [--service] [--expires <n>d|<n>h]';
+      const name = flagStr(args, 'name');
+      if (args._[1] !== 'create' || args.flags['host-admin'] !== true || !name) throw new Error(usage);
+      const expires = flagStr(args, 'expires');
+      const ttl = expires === undefined ? null : /^([1-9]\d{0,4})([dh])$/.exec(expires);
+      if (ttl === null && expires !== undefined) throw new Error(`--expires takes a whole number of days or hours (30d, 12h); ${usage}`);
+      const minted = await apiCall('/api/tokens', {
+        method: 'POST',
+        headers: hostAdminHeaders(),
+        body: JSON.stringify({
+          name,
+          kind: args.flags['service'] === true ? 'service' : 'human',
+          ...(ttl ? { expiresInMs: Number(ttl[1]) * (ttl[2] === 'd' ? 86_400_000 : 3_600_000) } : {}),
+        }),
+      });
+      process.stderr.write(
+        `token ${minted.tokenId} for ${minted.principal.kind} ${minted.principal.name} (${minted.principal.id}` +
+          `${minted.principalCreated ? ', new principal' : ''}), ` +
+          `${minted.expiresAt === null ? 'no expiry' : `expires ${new Date(minted.expiresAt).toISOString()}`}. ` +
+          'It is shown once, below; send it as FOREMAN_TOKEN.\n',
+      );
+      process.stdout.write(`${minted.token}\n`);
       return 0;
     }
     case 'rm': {
@@ -1369,6 +1488,7 @@ async function main(): Promise<number> {
       const allowCore = Boolean(args.flags['allow-core']);
       const d = await apiCall('/api/improve', {
         method: 'POST',
+        headers: allowCore && confirm ? hostAdminHeaders() : undefined,
         body: JSON.stringify({
           area: flagStr(args, 'area') ?? null,
           confirm,
@@ -1410,7 +1530,8 @@ async function main(): Promise<number> {
         const noModel = Boolean(args.flags['no-model']);
         if (!noModel) await probeCloud().catch(() => null);
         const broker = noModel ? null : (): Broker => new Broker((writer.store ??= openLedgerForReceipt(config.dbPath)));
-        const { report, paths } = await runDebrief(store, broker, subject, { notes, noModel, maxUsd });
+        const { report, paths, warnings } = await runDebrief(store, broker, subject, { notes, noModel, maxUsd });
+        for (const w of warnings) process.stderr.write(`warning: ${w}\n`);
         process.stdout.write(args.flags['json'] ? `${JSON.stringify(report, null, 2)}\n` : renderShort(report, paths));
       } finally {
         store.close();
@@ -1923,6 +2044,12 @@ async function main(): Promise<number> {
               `${formatDuration(s.p90Ms).padEnd(9)}${s.count ? `${s.shareOfTotalPct.toFixed(1)}%` : '—'}\n`,
           );
         }
+        const suite = computeSuiteStat(raw);
+        process.stdout.write(
+          `\nSUITE      ${suite.suiteRuns ? `p50 ${formatDuration(suite.suiteP50Ms)}  p95 ${formatDuration(suite.suiteP95Ms)}  over ${suite.suiteRuns} run(s), slot wait excluded` : '— no run has a recorded suite time'}\n` +
+            `SLOT WAIT  p95 ${formatDuration(suite.slotWaitP95Ms)}  over ${raw.length} run(s)\n` +
+            `WORKER WAIT p95 ${formatDuration(suite.workerSlotWaitP95Ms)}  over ${raw.length} run(s)\n`,
+        );
         return 0;
       }
       // Read before /api/doctor: its liveness pings load every local model, so residency read after them reported
@@ -1982,6 +2109,9 @@ async function main(): Promise<number> {
       // own environment, and its /api/doctor does not report skills.
       process.stdout.write(`${skillsDoctorLine()}\n`);
       process.stdout.write(`${await workerSuiteInJail()}\n`);
+      // As this shell's FOREMAN_LANDING and landing.json have it; asks the forge only when a mapping exists.
+      const landing = loadLanding(config.home, config.landing);
+      if (landing) for (const line of [...landing.describe(config.home), ...await landingDoctorLines(landing)]) process.stdout.write(`${line}\n`);
       if (d.bench) {
         process.stdout.write(`\nbench (${new Date(d.bench.measuredAt).toLocaleString()}):\n`);
         for (const m of [...d.bench.models].sort((a: { score: number }, b: { score: number }) => b.score - a.score)) {

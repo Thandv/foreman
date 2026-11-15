@@ -1342,12 +1342,12 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   }
 
   const acceptance = boundBrief(task.acceptance ?? '', config.acceptanceBytes);
-  const tracked = opts.treeDir ? trackedListing(opts.treeDir) : '';
+  const tracked = opts.treeDir ? await trackedListing(opts.treeDir) : '';
   const judged = judgedItems(task, opts.tests ?? null);
   const extras: ReviewPromptExtras = {
     reportPath: opts.reportPath ?? null,
     foremanNote: opts.foremanNote ?? null,
-    cited: opts.treeDir ? citedSourceBlock(opts.diff, opts.treeDir, opts.workerReport ?? null) : '',
+    cited: opts.treeDir ? await citedSourceBlock(opts.diff, opts.treeDir, opts.workerReport ?? null) : '',
   };
   // The caller's timeout is the budget for the WHOLE chain, not for each call:
   // it is what is left of the task deadline. The reviewers run concurrently and
@@ -1421,6 +1421,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
 
     try {
       const res = await ownerCall(prompt, {
+        sensitivity: task.sensitivity,
         signal: opts.signal,
         model,
         maxTurns: REVIEW_MAX_TURNS,
@@ -1578,7 +1579,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
   // met as written. Said here, it reaches the chair's evidence and, through
   // the critique, the next repair round's notes.
   if (verdict === 'fail' && opts.treeDir) {
-    const missing = ungroundedLiterals(critiques.join('\n'), opts.treeDir);
+    const missing = await ungroundedLiterals(critiques.join('\n'), opts.treeDir);
     if (missing.length) {
       critiques.push(literalNote(missing));
       onNote?.(`crew review demands ${missing.length} source string(s) found nowhere in the tree`);
@@ -1618,6 +1619,7 @@ export async function crewReview(opts: CrewReviewOptions): Promise<CrewVerdict |
     });
     try {
       const res = await ownerCall(prompt, {
+        sensitivity: task.sensitivity,
         signal: opts.signal,
         model: chairModel,
         maxTurns: 1,

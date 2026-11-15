@@ -3,16 +3,25 @@
 Every `FOREMAN_*` variable `src/` reads has one row below; `scripts/checks/config-truth.ts` (run by `npm run verify`)
 fails when a variable is read and has no row, or has a row and is never read. "Unset" means the variable is not in the
 environment. Leave a variable unset rather than empty or wrong. A number read in `src/config.ts` keeps its default when
-empty, and a value that is not a number throws. The numbers read in `budget.ts` and the slot code check the parsed
+empty, and a value that is not a number throws, except the settings it reads on each call for one module: those never
+throw. A value they cannot use keeps the default (`FOREMAN_ASSIGNEE`, `FOREMAN_MIN_FREE_MB`, `FOREMAN_GIT_TIMEOUT_MS`,
+`FOREMAN_LIMIT_BACKOFF_MS`, `FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`, `FOREMAN_WORKER_SUITE`), and an empty
+`FOREMAN_SLOT_WAIT_CREDIT_MS` or `FOREMAN_LEFTOVER_SAMPLE_MS` reads as 0. The numbers read in `budget.ts` and the slot code check the parsed
 value and keep the default. A reader written as `value ?? default` uses an empty value as it is: an empty path or URL
 stays empty (for example `FOREMAN_TOOLS_DIR`, `FOREMAN_OLLAMA_URL`), an empty number reads as 0, and a value that is
 not a number reads as NaN (for example `FOREMAN_HIGH_PRIORITY`, `FOREMAN_TOOL_QUARANTINE_AFTER`,
 `FOREMAN_TOOL_TIMEOUT_MS`, `FOREMAN_PREWARM_TIMEOUT_MS`, `FOREMAN_FAST_VERIFY_MAX_LINES`, `FOREMAN_IMPROVE_PRIORITY`,
-`FOREMAN_IMPROVE_BUDGET_USD`, `FOREMAN_MODEL_TIMEOUT_MS`, `FOREMAN_API_MAX_TURNS`). `FOREMAN_RUN_ID` and
-`FOREMAN_WORKER_TEST_CMD` are set by Foreman for a worker's session, never by you, and a few more are read only by
+`FOREMAN_IMPROVE_BUDGET_USD`, `FOREMAN_MODEL_TIMEOUT_MS`, `FOREMAN_API_MAX_TURNS`). `FOREMAN_RUN_ID`,
+`FOREMAN_RUN_TOKEN` and `FOREMAN_WORKER_TEST_CMD` are set by Foreman for a worker's session, never by you, and a few more are read only by
 tests; none of those is in the table. Two families are read under names built at run time, so they are not rows:
 `FOREMAN_MODEL_<ALIAS>` pins the model behind a gateway alias (`src/models.ts`), and `FOREMAN_PERSONA_URL_<ID>`
 overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/align/personas.ts`).
+
+`foreman config --effective` prints each setting `src/config.ts` resolves (the rows below whose "Read in" is
+`src/config.ts`): its name, the value in effect and whether it came from the environment (`env`, set and not empty) or
+the default. Where an empty value reads as 0 or `''` (`FOREMAN_AGENTS_DIR`, `FOREMAN_PLAYBOOKS_DIR`,
+`FOREMAN_SLOT_WAIT_CREDIT_MS`, `FOREMAN_ECHO_STEP_MS`, `FOREMAN_LEFTOVER_SAMPLE_MS`), an empty value shows as `env`. Its last line counts and names every other `FOREMAN_*` variable set in the environment; those are read
+where they are used, so their values are never printed, only their names. No setting it prints is a secret: `FOREMAN_TOKEN` is read in `src/config.ts` and never printed.
 
 | Name | Default | Effect | Read in |
 |---|---|---|---|
@@ -22,13 +31,16 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_TOOLS_DIR` | `$FOREMAN_TOOLBOX` | Overrides the catalog directory outright (used in tests) | `src/tools/catalog.ts` |
 | `FOREMAN_PORT` | `4100` | Port the daemon and board listen on; workers use it to reach the daemon for a test slot | `src/config.ts` |
 | `FOREMAN_HOST` | `127.0.0.1` | Address the daemon binds. A non-loopback address is refused unless `FOREMAN_ALLOW_REMOTE=1` | `src/config.ts` |
+| `FOREMAN_URL` | `http://<FOREMAN_HOST>:<FOREMAN_PORT>` | Daemon the CLI's HTTP commands reach (`add`, `ls`, `approve`, `watch`, ...). It does not move the daemon and is not passed to workers | `src/config.ts` |
+| `FOREMAN_TOKEN` | unset | Bearer token the CLI sends as `Authorization: Bearer`, only in that header; a daemon without auth ignores it. The CLI refuses to send it over `http://` to a host other than this machine, before any request. Not passed to workers, and never printed by `config --effective` | `src/config.ts` |
 | `FOREMAN_ALLOW_REMOTE` | unset | `1` lets the daemon bind a non-loopback address; the API can run shell commands, so this is an explicit decision | `src/server.ts` |
 | `FOREMAN_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` names the API accepts, for a reverse proxy or a LAN name (loopback and the bind address are always accepted) | `src/server.ts` |
 | `FOREMAN_MAX_WORKERS` | `4` | Tasks run at once in the work lane (at least 1) | `src/config.ts` |
 | `FOREMAN_MAX_VERIFYING` | `2 x FOREMAN_MAX_WORKERS` | Tasks allowed in the verify lane at once (at least 1) | `src/config.ts` |
 | `FOREMAN_MAX_VERIFIES` | `2` | Cap on test commands running at once, FIFO across all tasks: gate checks, playbook checks, the post-merge main check and its re-run, and a worker's full-suite run through the slot wrapper (`src/verify/testSlot.ts`, which leases a slot from the daemon). A single-file `node --test` a worker runs directly takes no slot | `src/verify/slots.ts` |
 | `FOREMAN_SLOT_WAIT_MS` | `600000` (10 min) | How long the slot wrapper waits for a slot before giving up | `src/verify/testSlot.ts` |
-| `FOREMAN_SLOT_WAIT_CREDIT_MS` | `1800000` (30 min) | How much of a worker's own wait for a test slot is not charged to its run clock | `src/runClock.ts` |
+| `FOREMAN_SLOT_WAIT_CREDIT_MS` | `1800000` (30 min) | How much of a worker's own wait for a test slot is not charged to its run clock | `src/config.ts` |
+| `FOREMAN_WORKER_SUITE` | `full` | Who runs a code ticket's full suite. `full`: the worker runs it once through the slot wrapper before it finishes. `targeted`: the worker's brief asks it to run only the tests for what it changed and says the gate runs the full suite, whose result is the one that counts; the worker-suite line then reads `worker suite: not run (FOREMAN_WORKER_SUITE=targeted)`. Advisory: the worker's tools are the same either way, so a full run it still makes goes through the wrapper and takes a slot. Anything but `targeted` is `full`. See [lifecycle](lifecycle.md) | `src/config.ts` |
 | `FOREMAN_TASK_TIMEOUT_MS` | `1800000` (30 min); `5400000` (90 min) on the local plane | Hard ceiling on one run's wall clock; the local default applies under local-only mode or the cloud fallback | `src/config.ts` |
 | `FOREMAN_TEST_TIMEOUT_MIN` | `30` | Minutes before a test command Foreman runs is killed | `src/verify/tests.ts` |
 | `FOREMAN_TEST_REAL_HOME` | unset | `1` runs test commands with the real home instead of a private one; refused while the sandbox is on | `src/verify/tests.ts` |
@@ -56,18 +68,22 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_REVERT_TESTS` | off | `on` runs each test a code diff adds or changes with the diff's non-test files put back to base, and shows the per-test table to the reviewer and the owner gate. Anything but `on`/`off` throws. See [The revert check, per test](security.md#the-revert-check-per-test-foreman_revert_tests) | `src/config.ts` |
 | `FOREMAN_DEBUG` | off | `1` writes one `[foreman debug]` line per event to stderr: model and HTTP calls (start, end, status, ms, sizes), subprocess spawns (program name, argument count, cwd, exit code, ms) and swallowed errors (error type only). Never a prompt, body, argument, URL query or error message; secrets are redacted. Unset or `0`: no output at all | `src/config.ts` |
 | `FOREMAN_VERIFY` | on | `off` skips the review (the pre-review checks, the council and the crew chain). The tests still run and a failure still sends the work back; work that passes parks for approval unreviewed | `src/scheduler.ts` |
-| `FOREMAN_POSTMERGE_CHECK` | on | `off` skips the main check after a merge | `src/postMerge.ts` |
+| `FOREMAN_POSTMERGE_CHECK` | on | `off` skips the main check after a merge | `src/config.ts` |
+| `FOREMAN_POSTMERGE_MODE` | `coalesced` | `coalesced` runs one main check per repo at a time, at the newest merged HEAD, covering every merge before it with the same test command; `per-merge` runs one per merge, at its own merge HEAD. Anything else fails the start. See [lifecycle](lifecycle.md) | `src/config.ts` |
+| `FOREMAN_LANDING` | `merge` | `merge` merges an approved ticket in the local checkout. `mr` lands each repo mapped in `<FOREMAN_HOME>/landing.json` through a GitLab merge request; a repo not in the file, or no file, lands as with `merge`. Both switches are needed, so a stray file changes nothing. Anything else fails the start. See [Merge-request landing](#merge-request-landing-landingjson) | `src/config.ts` |
+| `FOREMAN_MR_POLL_MS` | `10000` | How often, in ms, an open merge request is polled (`FOREMAN_LANDING=mr`) | `src/config.ts` |
+| `FOREMAN_MR_TIMEOUT_MIN` | `120` | Minutes after an approval opened its merge request that an MR still not merged sends the ticket back to the gate (`FOREMAN_LANDING=mr`); an MR the forge has merged is not timed out. See [lifecycle](lifecycle.md) | `src/config.ts` |
 | `FOREMAN_FAST_VERIFY` | off | `1` or `on` gives a whitespace-only diff, or a small one that touches only docs or config, one review instead of the full council (anything but a pass goes on to the full council); code and security-adjacent paths never qualify | `src/verify/triage.ts` |
 | `FOREMAN_FAST_VERIFY_MAX_LINES` | `20` | Largest changed-line count that still counts as small | `src/verify/triage.ts` |
 | `FOREMAN_CREW_REVIEW` | `escalate` | `always` runs the crew chain on every ticket and its verdict lands; anything else escalates to it only when needed | `src/verify/crewReview.ts` |
 | `FOREMAN_GATE` | `human` | `owner` lets the Owner model decide a ticket this process watched park at the gate when neither the ticket (`--gate`), its playbook nor the board's switch says who decides; never under local-only mode or while the Claude CLI is down. See [Crew mode](crews.md#crew-mode) | `src/gate.ts` |
 | `FOREMAN_GATE_BATCH` | on | `off` gates tickets one by one instead of in batches | `src/gate.ts` |
-| `FOREMAN_ASSIGNEE` | `ai` | `ai` or `human`: who a ticket is assigned to when neither the ticket nor its playbook says. The board's toggle, once flipped, wins over this variable | `src/assign.ts` |
+| `FOREMAN_ASSIGNEE` | `ai` | `ai` or `human`: who a ticket is assigned to when neither the ticket nor its playbook says. The board's toggle, once flipped, wins over this variable | `src/config.ts` |
 | `FOREMAN_COUNCIL_DEADLINE_SHARE` | `0.4` | Share of the remaining run time the gate council may use (clamped to 0.1-0.9, at least 30 s) | `src/scheduler.ts` |
 | `FOREMAN_COUNCIL_MAX_TOKENS` | `350` | Output-token ceiling on a council advisor or chair call | `src/config.ts` |
 | `FOREMAN_COUNCIL_NUM_CTX` | `16384` | Context-window ceiling of a council call | `src/verify/council.ts` |
 | `FOREMAN_HIGH_PRIORITY` | `5` | Priority at which a ticket gets one rung more review | `src/verify/council.ts` |
-| `FOREMAN_LIMIT_BACKOFF_MS` | `900000` (15 min) | How long a provider that reported a usage limit is left alone | `src/providerLimit.ts` |
+| `FOREMAN_LIMIT_BACKOFF_MS` | `900000` (15 min) | How long a provider that reported a usage limit is left alone | `src/config.ts` |
 | `FOREMAN_DAILY_USD_CAP` | `5` | Daily ceiling on model spend in dollars; 0 or less means no cap | `src/budget.ts` |
 | `FOREMAN_DAILY_SUBSCRIPTION_USD_CAP` | `200` | Daily ceiling on notional subscription spend, at list price | `src/budget.ts` |
 | `FOREMAN_IMPROVE_PRIORITY` | `-10` | Priority of a self-improvement task (below real work) | `src/improve.ts` |
@@ -85,7 +101,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_CLAUDE_ARGS` | unset | Extra arguments for the Claude CLI, split on whitespace | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_PERMISSION_MODE` | `acceptEdits` | `--permission-mode` passed to the Claude CLI | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_CONFIG_DIR` | `$FOREMAN_HOME/claude-config` | Folder all worker config directories live under | `src/runners/claudeIsolation.ts` |
-| `FOREMAN_CLAUDE_ENV_ALLOW` | unset | Extra environment variable names (comma or space separated, exact) a worker may inherit from the daemon | `src/runners/claudeIsolation.ts` |
+| `FOREMAN_CLAUDE_ENV_ALLOW` | unset | Extra environment variable names (comma or space separated, exact) a `claude-code` or `codex-cli` worker may inherit from the daemon | `src/runners/claudeIsolation.ts` |
 | `FOREMAN_CLAUDE_ALLOWED_TOOLS` | the slot wrapper, `npm run`, `npx tsc`, `node --test`, read-only git, plus web tools a playbook grants | `;`-separated replacement for the worker's allowed-tools list; `none` allows nothing extra | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_DISALLOWED_TOOLS` | `npm test`, `npm t`, `npm run test`, `npm run verify`, and web tools a playbook does not grant | `;`-separated replacement for the worker's denied-tools list; `none` denies nothing | `src/runners/cliRunners.ts` |
 | `FOREMAN_CLAUDE_RESUME` | on | `off` stops a repair round resuming the worker's previous Claude session | `src/scheduler.ts` |
@@ -108,7 +124,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_OLLAMA_KEEP_ALIVE_COLD` | `5m` | Keep-alive for any other local model | `src/budget.ts` |
 | `FOREMAN_PREWARM` | on | `off` skips loading the roster's models at start | `src/warm.ts` |
 | `FOREMAN_PREWARM_TIMEOUT_MS` | `120000` | Time allowed to load one model | `src/warm.ts` |
-| `FOREMAN_GIT_TIMEOUT_MS` | `120000` | Longest any daemon-side git process may run before it is killed with SIGKILL; the call then fails with `git <subcommand> timed out after <n>ms`. An empty, non-numeric or non-positive value keeps the default | `src/gitTimeout.ts` |
+| `FOREMAN_GIT_TIMEOUT_MS` | `120000` | Longest any daemon-side git process may run before it is killed with SIGKILL; the call then fails with `git <subcommand> timed out after <n>ms`. An empty, non-numeric or non-positive value keeps the default | `src/config.ts` |
 | `FOREMAN_DOWNSHIFT` | on | `off` stops a local model stepping down to a smaller one that fits | `src/budget.ts` |
 | `FOREMAN_DOWNSHIFT_HOLD_MS` | `600000` (10 min) | How long a model that did not fit is skipped before it is tried again | `src/budget.ts` |
 | `FOREMAN_VRAM_GUARD` | on | `off` dispatches without the memory-fit check (single-model installs) | `src/budget.ts` |
@@ -120,25 +136,25 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_GATEWAY_IN_RATE` | `3` | Dollars per million input tokens charged for a gateway call | `src/models.ts` |
 | `FOREMAN_GATEWAY_OUT_RATE` | `15` | Dollars per million output tokens charged for a gateway call | `src/models.ts` |
 | `FOREMAN_GATEWAY_CONCURRENCY` | `4` | Concurrent gateway calls | `src/budget.ts` |
-| `FOREMAN_AGENTS_DIR` | `$FOREMAN_HOME/agents` | Where agent definitions are read | `src/agents.ts` |
-| `FOREMAN_PLAYBOOKS_DIR` | `$FOREMAN_HOME/playbooks` | Where playbooks are read | `src/playbooks.ts` |
+| `FOREMAN_AGENTS_DIR` | `$FOREMAN_HOME/agents` | Where agent definitions are read | `src/config.ts` |
+| `FOREMAN_PLAYBOOKS_DIR` | `$FOREMAN_HOME/playbooks` | Where playbooks are read | `src/config.ts` |
 | `FOREMAN_SKILLS_DIR` | unset | The skills repository; unset turns skills off | `src/config.ts` |
 | `FOREMAN_SKILL_BRIEF_BYTES` | `9000` | Byte budget for the skills block of one brief | `src/config.ts` |
-| `FOREMAN_TRACE_SINK` | unset | URL each trace event is also posted to | `src/trace.ts` |
+| `FOREMAN_TRACE_SINK` | unset | URL each trace event is also posted to: at most 32 posts in flight (an event past that is dropped, not queued) and each aborted after 10 s | `src/trace.ts` |
 | `FOREMAN_TRACE_KEY` | unset | Bearer key sent with posts to the trace sink | `src/trace.ts` |
 | `FOREMAN_BACKUP` | on | `off` turns the ledger backup off | `src/backup.ts` |
 | `FOREMAN_BACKUP_DIR` | `$FOREMAN_HOME/backups` | Where backups are written | `src/backup.ts` |
 | `FOREMAN_BACKUP_COPY_DIR` | unset | A second copy on another disk; unset, `serve` warns | `src/backup.ts` |
 | `FOREMAN_DEPS_MODE` | `clone` | How a worktree gets its dependencies: `clone`, `symlink` or `off` | `src/deps.ts` |
-| `FOREMAN_IGNORE_TRAINING_LOCK` | unset | `1` keeps the queue running while an adapter trains (otherwise it pauses) | `src/scheduler.ts` |
-| `FOREMAN_MIN_FREE_MB` | `2048` | Free megabytes required on the volume holding `FOREMAN_HOME` (and on a task's repo volume) before a new run is dispatched. Below it dispatch pauses with one `dispatch paused: disk` event and resumes when space returns; running work is untouched. Empty, negative or non-numeric falls back to the default | `src/diskSpace.ts` |
+| `FOREMAN_IGNORE_TRAINING_LOCK` | unset | `1` keeps the queue running while an adapter trains (otherwise it pauses) | `src/align/extension.ts` |
+| `FOREMAN_MIN_FREE_MB` | `2048` | Free megabytes required on the volume holding `FOREMAN_HOME` (and on a task's repo volume) before a new run is dispatched. Below it dispatch pauses with one `dispatch paused: disk` event and resumes when space returns; running work is untouched. Empty, negative or non-numeric falls back to the default | `src/config.ts` |
 | `FOREMAN_SANDBOX` | `tests` | `off`, `tests` or `all`: what runs inside the sandbox; anything else throws. `src/deps.ts` reads it only to warn that `FOREMAN_DEPS_MODE=symlink` leaves a sandboxed command without its dependencies. See [The sandbox](security.md#the-sandbox-foreman_sandbox) | `src/security/sandbox.ts`, `src/deps.ts` |
 | `FOREMAN_SANDBOX_RO` | unset | Colon-separated extra read-only paths for a sandboxed command | `src/security/sandbox.ts` |
 | `FOREMAN_SANDBOX_DENY_PORTS` | `8000,8001,8002,3010` | Loopback ports a sandboxed command may not connect to, besides the control port (at most 4; a bad list is refused) | `src/security/sandbox.ts` |
 | `FOREMAN_SANDBOX_ALLOW` | unset | Allowances a sandboxed command gets only when named (comma or space separated): `fsevents`, file watching, is the only one; an unknown name is refused | `src/security/sandbox.ts` |
 | `FOREMAN_FREEZE_SWEEP_GRACE_MS` | `2000` | Shortens the start-up freeze sweep's grace (digits only) | `src/runners/freezeSweep.ts` |
 | `FOREMAN_FREEZE_SWEEP_CAP_MS` | grace plus 5 s | Shortens the start-up freeze sweep's cap (digits only; never above grace plus 5 s) | `src/runners/freezeSweep.ts` |
-| `FOREMAN_LEFTOVER_SAMPLE_MS` | `3000` | Interval between samples of a command's process tree while it runs, used to find processes it leaves behind; `0` turns sampling off (an empty value also reads as 0) | `src/runners/proctree.ts` |
+| `FOREMAN_LEFTOVER_SAMPLE_MS` | `3000` | Interval between samples of a command's process tree while it runs, used to find processes it leaves behind; `0` turns sampling off (an empty value also reads as 0) | `src/config.ts` |
 | `FOREMAN_PYTHON` | `/opt/homebrew/bin/python3` (`python3` for catalog tools) | Python for training, persona serving and catalog tools | `src/align/train.ts`, `src/align/governor.ts`, `src/align/personaAdopt.ts`, `src/align/personaServe.ts`, `src/tools/run.ts` |
 | `FOREMAN_ALIGN_DIR` | `$FOREMAN_HOME/align` | Alignment data and local-model lock | `src/align/extract.ts` |
 | `FOREMAN_CLAUDE_PROJECTS` | `~/.claude/projects` | Claude Code transcripts read for alignment | `src/align/extract.ts` |
@@ -149,7 +165,7 @@ overrides a persona's server URL (default `http://127.0.0.1:<port>/v1`, `src/ali
 | `FOREMAN_TRAIN_NICE` | `19` | `nice` level of a training run | `src/align/governor.ts` |
 | `FOREMAN_SERVE_NICE` | `10` | `nice` level of a persona server | `src/align/personaServe.ts` |
 | `FOREMAN_PERSONAS_DIR` | `$FOREMAN_HOME/personas` | Where personas live | `src/align/personas.ts` |
-| `FOREMAN_PERSONA_PORT_BASE` | `4200` | First port persona servers use (plus a hash of the persona id, under 200) | `src/align/personas.ts` |
+| `FOREMAN_PERSONA_PORT_BASE` | `4200` | First port persona servers use (plus a hash of the persona id, under 200). A persona whose port another process already answers is not served: serving it, at daemon start or by `foreman persona serve`, fails and names this variable | `src/align/personas.ts` |
 | `FOREMAN_PERSONA_BASE` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Base model new personas train from | `src/align/personas.ts` |
 
 A daemon stop (`foreman stop`, a launchd restart, an upgrade) is not a verdict on the work in flight: each running
@@ -158,3 +174,33 @@ last started fresh sends it to your desk instead (Give to AI puts it back in the
 do Retry and a repair round). A cancel ends the run for good — a Retry you issue meanwhile stands. Marking a ticket
 done from your own desk lands nothing; if an interrupted run's worktree is still on disk, you are told where it is, so
 you can commit and merge that work yourself.
+
+### Merge-request landing (`landing.json`)
+
+With `FOREMAN_LANDING=mr`, `<FOREMAN_HOME>/landing.json` maps a repo's absolute, resolved path to where it lands:
+
+```json
+{
+  "/work/app": {
+    "mode": "mr", "forge": "gitlab", "baseUrl": "https://gitlab.example.com", "project": "group/app",
+    "pushUrl": "https://gitlab.example.com/group/app.git", "targetBranch": "main", "requirePipeline": true
+  }
+}
+```
+
+Every field is required and no other is allowed. `baseUrl` and an http(s) `pushUrl` must be `https://`, or `http://`
+on a loopback host, with no credentials, query or fragment; `pushUrl` may instead be an absolute local path (a bare
+repo, as the local fake GitLab uses). The file is read once, at start (`src/landing/config.ts`): a relative repo path,
+a mode other than `mr`, an unknown or missing key or a bad URL stops the start with a `LandingConfigError` naming the
+repo and the field. The token is `<FOREMAN_HOME>/secrets/gitlab-token`, never an environment variable (see
+[The GitLab token](security.md#the-gitlab-token-foreman_landingmr)). `foreman config --effective` and the start-up
+output list each mapping and `token: set` or `token: unset`. `foreman doctor` asks GitLab for each mapped project and
+prints a FAIL line when its merge method is not `merge` or it requires squash (landing is confirmed by the merge
+commit's second parent being the reviewed commit), when merged results pipelines or merge trains are on (the pipeline
+gate reads the pipeline of the source branch head), or when the project cannot be read (no default branch, unknown
+project, refused token). Each approval checks the same settings and refuses with the reason. Doctor calls
+the network only for a real GitLab in the file. Commits reach `pushUrl` only through a Foreman-owned mirror under
+`<FOREMAN_HOME>/forge/`, never by a fetch or push in the repo itself (see
+[The forge mirror](security.md#the-forge-mirror-srclandingpushts)). The repo path is matched against the checkout's top
+level as git reports it. What an approval in a mapped repo does is in
+[lifecycle](lifecycle.md) (merge, "By merge request").

@@ -1,6 +1,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { constants as fsConstants, promises as fsp } from 'node:fs';
 import path from 'node:path';
+import { config } from '../config.ts';
 import { FREEZE_MEMBERS_MAX, activeRecorder, type FreezeGroup, type FreezeRecorder } from './freezeRecord.ts';
 
 /**
@@ -135,7 +136,7 @@ export function signalGroups(groups: Iterable<number>, sig: NodeJS.Signals): num
  * signalled on a normal 'close' otherwise, so a `cmd >/dev/null 2>&1 &` kept
  * running after the run was handed on — and could, for one, rewrite the jail's
  * git config between the daemon's driver listing and its git call
- * (isolate.ts driverlessEnv / pinnedGit).
+ * (gitExec.ts driverlessEnv / pinnedGit).
  *
  * Once the command has exited its pid is gone and anything it orphaned is
  * launchd's child, so the ppid walk alone finds nothing. What still ties a
@@ -470,8 +471,7 @@ export interface ReaperOptions {
 
 /** Samples of a command's tree are taken this often while it runs (FOREMAN_LEFTOVER_SAMPLE_MS; 0 = off). */
 export function leftoverSampleMs(): number {
-  const raw = Number(process.env['FOREMAN_LEFTOVER_SAMPLE_MS'] ?? 3_000);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 3_000;
+  return config.leftoverSampleMs;
 }
 
 /** At most this many processes are remembered per command (a suite that forks thousands stops adding, not growing). */

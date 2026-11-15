@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { signalGroups, snapshotPs, treeGroups, type PsRow } from './runners/proctree.ts';
 import { FILED_PREFIX } from './verify/followUpChain.ts';
-import { openDb, rowToArtifact, rowToDecision, rowToEvent, rowToRun, rowToTask } from './db.ts';
+import { openDb, rowToArtifact, rowToDecision, rowToEvent, rowToPrincipal, rowToRun, rowToTask } from './db.ts';
 import { rowToArchive, rowToMemory, rowToVerdict } from './db.ts';
 // Runtime edge queue → retro: retro.ts only type-imports Store back (erased),
 // so there is no runtime cycle. The epic close is where a retrospective is owed.
@@ -19,10 +19,13 @@ import {
 import { nextRunAt, parseSpec } from './schedule.ts';
 import { assertTicketSkills } from './skills.ts';
 import type {
-  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Run, RunEvent, Stage, Task, TaskStatus, Verdict,
+  AdvisorOpinion, Artifact, Assignee, CouncilVerdict, Decision, DecisionActor, GateMode, MemoryFact, Principal, PrincipalKind, ReservedActorId, Run,
+  RunEvent, Stage, Task, TaskStatus, Verdict,
 } from './types.ts';
-import { pinnedGit, removeJail } from './isolate.ts';
-import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
+import { pinnedGit } from './gitExec.ts';
+import { removeJail } from './isolate.ts';
+import { chairRuled, DECISION_ACTIONS, reviewLabel, DECISION_ACTORS, DEFAULT_ACTOR_ID, RUN_ENDED_REASONS, TERMINAL_STATUSES } from './types.ts';
+import { PRINCIPAL_KINDS, RESERVED_ACTOR_IDS } from './types.ts';
 
 /** The most of a decision's note the ledger keeps, in UTF-8 bytes, marker included. */
 export const DECISION_NOTE_MAX_BYTES = 16 * 1024;
@@ -31,8 +34,12 @@ export const REVIEW_SOURCE_MAX = 200;
 /** How much of the note the timeline's `decision` event carries; the whole note is in the row. */
 export const DECISION_EVENT_NOTE = 300;
 
-/** What a path hands Store.addDecision: the row less its id and time, every approve-only field optional. */
-export type NewDecision = Pick<Decision, 'taskId' | 'action'> & Partial<Omit<Decision, 'id' | 'at' | 'taskId' | 'action' | 'noteCutBytes'>>;
+/** What a path hands Store.addDecision: the row less its id and time, who acted, every approve-only field optional. */
+export type NewDecision = Pick<Decision, 'taskId' | 'action'> & { actorId: string }
+  & Partial<Omit<Decision, 'id' | 'at' | 'taskId' | 'action' | 'actorId' | 'noteCutBytes'>>;
+
+/** A principal's name: lowercase, at most 64 characters, safe in a commit trailer. */
+export const PRINCIPAL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /** A note cut to the ledger's bound, with a marker saying how much went; `cut` is the bytes not stored. */
 export function boundDecisionNote(note: string | null | undefined): { note: string | null; cut: number } {
@@ -78,6 +85,8 @@ export interface NewTask {
   maxRepairs?: number;
   scheduleId?: string | null;
   parentId?: string | null;
+  /** Who asked for the task (a principal id, or 'operator' with auth off). Absent: the parent's creator; null: none. */
+  createdBy?: string | null;
   allowCore?: boolean;
   /** Branch or commit the jail is cut from; null/undefined means HEAD. */
   baseRef?: string | null;
@@ -201,6 +210,26 @@ export interface RedRepo {
   attempts?: number;
 }
 
+/** A landing a crash cut short, found at daemon start (Store.adoptInterruptedLandings). */
+export interface InterruptedLanding {
+  repo: string;
+  taskId: string;
+  /** Epoch ms its merge began. */
+  since: number;
+}
+
+/** This scheduler start and the unclean exits before it (Store.recordDaemonStart). */
+export interface DaemonStart {
+  id: number;
+  /** Daemons in a row, up to this start, that exited without an orderly stop. */
+  crashes: number;
+  /** Starts within CRASH_LOOP_WINDOW_MS, this one included, that followed an unclean exit. */
+  recentUncleanStarts: number;
+}
+
+/** The window in which unclean starts are counted toward a crash loop (scheduler.ts holds dispatch on one). */
+export const CRASH_LOOP_WINDOW_MS = 10 * 60_000;
+
 /** How an admission core-guard finding is written in a task's timeline (scheduler.ts). */
 export const CORE_GUARD_PREFIX = 'CORE-GUARD: ';
 
@@ -257,10 +286,11 @@ export function safeRecord(store: Store, event: Parameters<Store['record']>[0]):
 export class Store extends EventEmitter {
   readonly db: DatabaseSync;
 
-  constructor(dbPath: string) {
+  /** `migrate: true` only for `foreman serve`: any other opener refuses a ledger with an older schema (see openDb). */
+  constructor(dbPath: string, opts: { migrate?: boolean } = {}) {
     super();
     this.setMaxListeners(0);
-    this.db = openDb(dbPath);
+    this.db = openDb(dbPath, opts);
     this.loadRedRepos();
   }
 
@@ -270,10 +300,20 @@ export class Store extends EventEmitter {
 
   // ---------------------------------------------------------------- events
 
+  private listenerErrorCount = 0;
+  private readonly listenerErrorLoggedAt = new WeakMap<(ev: RunEvent) => void, number>();
+
+  /** Event listener throws caught by record() since this Store opened. */
+  get listenerErrors(): number {
+    return this.listenerErrorCount;
+  }
+
   /**
-   * Writes the event row, then emits it. The emit is after the INSERT, so a
-   * throw (a listener's, say) does not always mean the event was not written.
-   * Use safeRecord where the write is only informational.
+   * Writes the event row, then hands it to each 'event' listener in turn. A
+   * listener that throws is counted (listenerErrors) and reported on stderr at
+   * most once a minute per listener; it fails neither record() nor the
+   * listeners after it. A throw from record() is the INSERT's. Use safeRecord
+   * where the write is only informational.
    */
   record(
     e: { taskId?: string | null; runId?: string | null; type: RunEvent['type']; stage?: Stage | null; message: string },
@@ -291,8 +331,29 @@ export class Store extends EventEmitter {
       stage: e.stage ?? null,
       message: e.message,
     };
-    this.emit('event', ev);
+    this.deliver(ev);
     return ev;
+  }
+
+  // rawListeners, not listeners: a once() wrapper must run to remove itself.
+  // A failure goes to stderr, not record(): recording it would recurse.
+  private deliver(ev: RunEvent): void {
+    for (const listener of this.rawListeners('event') as ((ev: RunEvent) => void)[]) {
+      try {
+        listener.call(this, ev);
+      } catch (err) {
+        this.listenerErrorCount++;
+        const now = Date.now();
+        const last = this.listenerErrorLoggedAt.get(listener);
+        if (last !== undefined && now - last < 60_000) continue;
+        this.listenerErrorLoggedAt.set(listener, now);
+        try {
+          process.stderr.write(`foreman: event listener failed on event ${ev.id} (${ev.type}): ${err instanceof Error ? err.message : String(err)}\n`);
+        } catch {
+          /* stderr is gone; nothing left to tell */
+        }
+      }
+    }
   }
 
   eventsSince(sinceId: number, limit = 500): RunEvent[] {
@@ -322,6 +383,25 @@ export class Store extends EventEmitter {
   }
 
   /**
+   * Drop a task's events older than its last `keep`, as the scheduler does at
+   * the end of every run. The admission core-guard warning is written first in
+   * a run and read back for every later park note (withCoreGuard), so it is
+   * never pruned. Nor is a `decision` (what was decided at the gate, by whom,
+   * with what note) or a run's `skills` line (which skills its brief carried):
+   * one of each per decision or run, and a long ticket's log pushed both out.
+   */
+  pruneTaskEvents(taskId: string, keep: number): void {
+    this.db
+      .prepare(
+        `DELETE FROM events WHERE task_id = ? AND id NOT IN
+           (SELECT id FROM events WHERE task_id = ? ORDER BY id DESC LIMIT ?)
+           AND type NOT IN ('decision', 'skills')
+           AND NOT (type = 'warning' AND substr(message, 1, ?) = ?)`,
+      )
+      .run(taskId, taskId, keep, CORE_GUARD_PREFIX.length, CORE_GUARD_PREFIX);
+  }
+
+  /**
    * A park note with the admission core-guard warnings of the task's latest
    * run in front of it: the ticket names a protected path, and whoever decides
    * at the gate should know that before reading the rest. Read back from the
@@ -345,6 +425,9 @@ export class Store extends EventEmitter {
    * event on the task's timeline with its short form. Append-only: no method
    * here updates or deletes a row, and the table refuses both (db.ts). This
    * only records; it is called once the decision has already taken effect.
+   * `actorId` is who acted, always named: the principal's id, or a reserved
+   * actor id. A Store method below whose caller names nobody passes its
+   * actor's reserved id (DEFAULT_ACTOR_ID: a person is the operator).
    */
   addDecision(d: NewDecision): Decision {
     if (!DECISION_ACTIONS.includes(d.action)) throw new Error(`unknown decision action: ${String(d.action)}`);
@@ -355,12 +438,12 @@ export class Store extends EventEmitter {
     const decisionId = id('d');
     this.db
       .prepare(
-        `INSERT INTO decisions (id, task_id, run_id, at, action, actor, note, note_cut_bytes, status_after, reviewed_tree,
-           landed_tree, as_is, merged, merge_reason, corrected, corrected_source, review_source, extra)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO decisions (id, task_id, run_id, at, action, actor, actor_id, note, note_cut_bytes, status_after,
+           reviewed_tree, landed_tree, as_is, merged, merge_reason, corrected, corrected_source, review_source, extra)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        decisionId, d.taskId, d.runId ?? null, Date.now(), d.action, actor, note, cut, d.statusAfter ?? null,
+        decisionId, d.taskId, d.runId ?? null, Date.now(), d.action, actor, d.actorId, note, cut, d.statusAfter ?? null,
         d.reviewedTree ?? null, d.landedTree ?? null, flag(d.asIs), flag(d.merged), d.mergeReason ?? null,
         flag(d.corrected), d.corrected == null ? null : (d.correctedSource ?? 'operator'),
         d.reviewSource?.trim() ? d.reviewSource.trim().slice(0, REVIEW_SOURCE_MAX) : null,
@@ -441,6 +524,10 @@ export class Store extends EventEmitter {
     for (const dep of deps) {
       if (!this.getTaskRow(dep)) throw new Error(`dependency not found: ${dep}`);
     }
+    // A child a run or a plan files is asked for by whoever asked for its parent; a task with neither has no creator.
+    const createdBy = input.createdBy !== undefined
+      ? input.createdBy
+      : input.parentId ? this.getTask(input.parentId)?.createdBy ?? null : null;
 
     const now = Date.now();
     const taskId = id('t');
@@ -471,8 +558,8 @@ export class Store extends EventEmitter {
     try {
       this.db
         .prepare(
-          `INSERT INTO tasks (id,title,prompt,kind,repo,agent,runner,sensitivity,budget_usd,priority,status,attempts,max_attempts,created_at,updated_at,test_cmd,merge_on_approve,max_repairs,schedule_id,parent_id,allow_core,role,playbook,points,acceptance,is_epic,gate,base_ref,assignee,forbidden_paths,skills)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO tasks (id,title,prompt,kind,repo,agent,runner,sensitivity,budget_usd,priority,status,attempts,max_attempts,created_at,updated_at,test_cmd,merge_on_approve,max_repairs,schedule_id,parent_id,created_by,allow_core,role,playbook,points,acceptance,is_epic,gate,base_ref,assignee,forbidden_paths,skills)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           taskId, title, prompt, kind,
@@ -483,6 +570,7 @@ export class Store extends EventEmitter {
           input.maxRepairs ?? 1,
           input.scheduleId ?? null,
           input.parentId ?? null,
+          createdBy,
           input.allowCore ? 1 : 0,
           input.role ?? null,
           input.playbook ?? null,
@@ -542,14 +630,22 @@ export class Store extends EventEmitter {
   }
 
   setStatus(taskId: string, status: TaskStatus, error?: string | null): void {
+    const now = Date.now();
+    // awaiting_since is decided from the status before this call (the CASE reads the old row): entering the gate
+    // stamps it, staying there keeps it, leaving clears it.
     this.db
-      .prepare('UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?')
-      .run(status, error ?? null, Date.now(), taskId);
+      .prepare(
+        `UPDATE tasks SET awaiting_since = CASE WHEN ? <> 'awaiting-approval' THEN NULL
+           WHEN status = 'awaiting-approval' THEN awaiting_since ELSE ? END,
+         status = ?, error = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(status, now, status, error ?? null, now, taskId);
     this.record({ taskId, type: 'status', message: error ? `${status}: ${error}` : status });
     // The single funnel every status transition passes through (the gate, the
     // scheduler, cancel). One extra lookup only when a task with a parent
-    // moves, so an epic settles the moment its last ticket does rather than a
-    // tick later — and reopens the moment one of them starts over.
+    // moves, so an epic settles the moment its last ticket does (a tick later
+    // when that ticket is still under its landing hold) — and reopens the
+    // moment one of them starts over.
     const parent = this.parentIdOf(taskId);
     if (!parent) return;
     if (TERMINAL_STATUSES.includes(status)) this.closeEpicIfComplete(parent);
@@ -615,7 +711,9 @@ export class Store extends EventEmitter {
       this.setStatus(epicId, 'canceled', 'every ticket under this epic was deleted');
       return;
     }
-    if (children.some((c) => !TERMINAL_STATUSES.includes(String(c['status']) as TaskStatus))) return;
+    // A child still under its landing hold (an MR not merged yet, a merge not yet checked) has not landed; the epic
+    // settles on the reconcileBlocked after the hold ends.
+    if (children.some((c) => !TERMINAL_STATUSES.includes(String(c['status']) as TaskStatus) || this.landing.has(String(c['id'])))) return;
     const bad = children.find((c) => String(c['status']) !== 'done');
     this.setStatus(
       epicId,
@@ -652,7 +750,7 @@ export class Store extends EventEmitter {
    * path, and the sibling is queued by the next reconcile. Any real dependent still refuses the delete, as does an
    * order-edge sibling that is running or already terminal (dropDependency would refuse it); nothing is changed then.
    */
-  deleteTask(taskId: string): void {
+  deleteTask(taskId: string, actorId?: string): void {
     const dependents = this.db
       .prepare('SELECT task_id FROM task_deps WHERE depends_on = ?')
       .all(taskId) as Record<string, unknown>[];
@@ -687,7 +785,7 @@ export class Store extends EventEmitter {
     if (children.length) {
       this.db.prepare('UPDATE tasks SET parent_id = NULL, updated_at = ? WHERE parent_id = ?').run(Date.now(), taskId);
     }
-    for (const d of dependents) this.dropDependency(String(d['task_id']), taskId, 'human');
+    for (const d of dependents) this.dropDependency(String(d['task_id']), taskId, 'human', actorId);
     this.db.prepare('DELETE FROM events WHERE task_id = ?').run(taskId);
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
   }
@@ -791,14 +889,15 @@ export class Store extends EventEmitter {
     return [...this.redRepos];
   }
 
-  /** Tasks approved whose merge has not settled yet; see beginLanding. */
+  /** Tasks approved whose landing has not settled yet; see beginLanding. */
   private readonly landing = new Set<string>();
 
   /**
-   * An approved task whose work is still being merged. It is already `done`,
-   * but its dependents must not start until the merge lands — they are cut
-   * from the repo's HEAD. In-process only: a daemon that dies mid-merge holds
-   * nothing, exactly as it holds no merge.
+   * An approved task whose work is still landing. It is already `done`, but
+   * its dependents must not start until the merge lands and the HEAD it made
+   * passes its post-merge check (gate.ts) — they are cut from the repo's HEAD.
+   * In-process only: a daemon that dies mid-merge holds the repo through the
+   * durable landing marker instead (openLanding, adoptInterruptedLandings).
    */
   beginLanding(taskId: string): void {
     this.landing.add(taskId);
@@ -811,6 +910,116 @@ export class Store extends EventEmitter {
   /** Whether an approved task's merge is still in flight (see beginLanding). */
   isLanding(taskId: string): boolean {
     return this.landing.has(taskId);
+  }
+
+  /** Landing markers this Store wrote and has not closed: live merges, never taken for interrupted ones. */
+  private readonly openLandings = new Set<number>();
+
+  /**
+   * Repos whose landing a crash cut short (adoptInterruptedLandings) or that holdLanding held, keyed by resolved repo
+   * path: the markers land-clear deletes, and the tasks whose landing hold it ends.
+   */
+  private readonly interrupted = new Map<string, InterruptedLanding & { ids: number[]; tasks: string[] }>();
+
+  /** The durable marker of a merge under way (gate.ts): written before the merge, closed once its ref update is recorded. */
+  openLanding(repo: string, taskId: string, runId: string | null): number {
+    const id = Number(this.db
+      .prepare('INSERT INTO landings (repo, task_id, run_id, started_at) VALUES (?, ?, ?, ?)')
+      .run(path.resolve(repo), taskId, runId, Date.now()).lastInsertRowid);
+    this.openLandings.add(id);
+    return id;
+  }
+
+  closeLanding(id: number): void {
+    this.db.prepare('DELETE FROM landings WHERE id = ?').run(id);
+    this.openLandings.delete(id);
+  }
+
+  /**
+   * At daemon start: every landing row this process did not write is a merge a crash cut short. Its repo's dependents
+   * are held (reconcileBlocked) and it is listed in /api/state until the operator clears it (clearLandInterrupted).
+   * A row whose approval opened a merge request (landing/mr.ts) also sends its `done` ticket back to the gate: the
+   * pending-MR table is in memory, so nothing follows that MR any more.
+   */
+  adoptInterruptedLandings(): void {
+    const rows = this.db.prepare('SELECT id, repo, task_id, started_at FROM landings ORDER BY started_at, id').all() as Record<string, unknown>[];
+    for (const r of rows) {
+      const id = Number(r['id']);
+      if (this.openLandings.has(id)) continue;
+      this.unfollowedMr(String(r['task_id']), Number(r['started_at']));
+      const repo = path.resolve(String(r['repo']));
+      const known = this.interrupted.get(repo);
+      if (known) {
+        if (!known.ids.includes(id)) known.ids.push(id);
+        continue;
+      }
+      const taskId = String(r['task_id']);
+      this.interrupted.set(repo, { repo, taskId, since: Number(r['started_at']), ids: [id], tasks: [] });
+      this.record({
+        taskId, type: 'warning',
+        message: `land-interrupted(${repo}): the daemon stopped during the merge of ${taskId}; new work cut from this repo is held. ` +
+          `Check the checkout (git status, git log), then foreman land-clear ${repo}`,
+      });
+    }
+  }
+
+  /**
+   * A `done` ticket whose approval after `since` (its landing row's start) opened a merge request: back to
+   * awaiting-approval with the reason. Its MR stays on the forge: approving again reuses it. A row holdLanding kept
+   * after the forge merged the MR (its `land-held` warning, written after `since`) is not an open MR: the ticket stays
+   * done, and land-clear releases its dependents once the operator has synced the checkout.
+   */
+  private unfollowedMr(taskId: string, since: number): void {
+    if (this.getTask(taskId)?.status !== 'done') return;
+    if (this.warningsWithPrefix(taskId, 'land-held(').some((w) => w.ts >= since)) return;
+    const approval = this.decisionsForTask(taskId).filter((d) => d.action === 'approve').at(-1);
+    const iid = approval && approval.at >= since ? approval.extra?.['mrIid'] : undefined;
+    if (typeof iid !== 'number') return;
+    this.setStatus(taskId, 'awaiting-approval', this.withCoreGuard(taskId,
+      `approved, but not landed: the daemon restarted while its merge request !${iid} was open, and nothing follows it now — ` +
+      `after foreman land-clear, approve again to follow it (the open MR is reused), or, if it merged at the reviewed commit, ` +
+      `foreman landed ${taskId} --commit <sha>`));
+    this.record({ taskId, type: 'status', message: `merge request !${iid} back to the gate: the daemon restarted while it was open` });
+  }
+
+  /**
+   * Holds `repo` the way a cut-short landing does, until the operator's `foreman land-clear`: a merge request's merge
+   * that could not be confirmed, or not synced into the checkout (landing/mr.ts). Its dependents stay held, the repo's
+   * other merge requests are not merged, and it is listed in /api/state. The task's landing hold and its durable
+   * `marker` pass to the repo's hold: land-clear ends the one and deletes the other.
+   */
+  holdLanding(repo: string, taskId: string, reason: string, marker: number): void {
+    const key = path.resolve(repo);
+    const held = this.interrupted.get(key) ?? { repo: key, taskId, since: Date.now(), ids: [], tasks: [] };
+    held.ids.push(marker);
+    held.tasks.push(taskId);
+    this.interrupted.set(key, held);
+    this.record({
+      taskId, type: 'warning',
+      message: `land-held(${key}): ${reason}; new work cut from this repo is held. ` +
+        `Sync the checkout by hand (git status, git log), then foreman land-clear ${key}`,
+    });
+  }
+
+  landInterrupted(repo: string | null | undefined): InterruptedLanding | null {
+    const found = repo ? this.interrupted.get(path.resolve(repo)) : undefined;
+    return found ? { repo: found.repo, taskId: found.taskId, since: found.since } : null;
+  }
+
+  interruptedLandings(): InterruptedLanding[] {
+    return [...this.interrupted.values()].map(({ repo, taskId, since }) => ({ repo, taskId, since }));
+  }
+
+  /** The operator's word that a cut-short or held landing's repo is sound again; false when none was held. */
+  clearLandInterrupted(repo: string): boolean {
+    const key = path.resolve(repo);
+    const found = this.interrupted.get(key);
+    if (!found) return false;
+    for (const id of found.ids) this.closeLanding(id);
+    for (const taskId of found.tasks) this.endLanding(taskId);
+    this.interrupted.delete(key);
+    this.record({ taskId: found.taskId, type: 'status', message: `land-interrupted(${key}) cleared by the operator; held work released` });
+    return true;
   }
 
   /**
@@ -904,8 +1113,9 @@ export class Store extends EventEmitter {
         (String(d['status']) === 'done' && !this.landing.has(String(d['id'])))
         || (orderOnly(String(d['id'])) && ended(String(d['status']))))) {
         const task = this.getTask(taskId);
-        // A red main is no base to cut new work from: held until it is green.
-        if (task && this.repoRed(task.repo)) continue;
+        // A red main is no base to cut new work from: held until it is green. Nor is a checkout a crash left
+        // mid-merge: held until the operator clears it.
+        if (task && (this.repoRed(task.repo) || this.landInterrupted(task.repo))) continue;
         this.setStatus(taskId, task ? readyStatus(effectiveAssignee(task, undefined, this.defaultAssignee())) : 'queued');
         changed++;
       }
@@ -959,10 +1169,10 @@ export class Store extends EventEmitter {
     return Number(row?.['n'] ?? 0);
   }
 
-  /** Everything parked at the gate, oldest first — the owner gate's work list. */
+  /** Everything parked at the gate, longest parked first — the owner gate's work list. */
   awaitingApproval(limit = 100): Task[] {
     const rows = this.db
-      .prepare("SELECT * FROM tasks WHERE status = 'awaiting-approval' ORDER BY updated_at ASC LIMIT ?")
+      .prepare("SELECT * FROM tasks WHERE status = 'awaiting-approval' ORDER BY COALESCE(awaiting_since, updated_at) ASC LIMIT ?")
       .all(limit) as Record<string, unknown>[];
     return rows.map((r) => rowToTask(r, this.depsOf(String(r['id']))));
   }
@@ -981,10 +1191,46 @@ export class Store extends EventEmitter {
   }
 
   /**
-   * Crash recovery: any run still marked running belongs to a dead process.
-   * Requeue its task if it has attempts left, otherwise fail it.
+   * At scheduler start: write this start's row and read the ones before it. `crashes` is how many daemons in a row
+   * exited without an orderly stop (markCleanExit) up to this start, 0 when the last one stopped in order or there is
+   * no earlier start; `recentUncleanStarts` counts the starts within CRASH_LOOP_WINDOW_MS, this one included, that
+   * followed such an exit. Rows no longer needed for either count are pruned.
    */
-  recoverOrphans(): number {
+  recordDaemonStart(): DaemonStart {
+    const now = Date.now();
+    const id = Number(this.db.prepare('INSERT INTO daemon_starts (at, clean_exit) VALUES (?, 0)').run(now).lastInsertRowid);
+    const lastClean = Number((this.db
+      .prepare('SELECT COALESCE(MAX(id), 0) AS id FROM daemon_starts WHERE clean_exit = 1 AND id < ?')
+      .get(id) as Record<string, unknown>)['id']);
+    const crashes = Number((this.db
+      .prepare('SELECT COUNT(*) AS n FROM daemon_starts WHERE id > ? AND id < ?')
+      .get(lastClean, id) as Record<string, unknown>)['n']);
+    const cutoff = now - CRASH_LOOP_WINDOW_MS;
+    // A start is unclean when the row just before it was never marked clean.
+    const recentUncleanStarts = Number((this.db
+      .prepare(`SELECT COUNT(*) AS n FROM daemon_starts s WHERE s.at >= ?
+        AND (SELECT p.clean_exit FROM daemon_starts p WHERE p.id < s.id ORDER BY p.id DESC LIMIT 1) = 0`)
+      .get(cutoff) as Record<string, unknown>)['n']);
+    // Pruning can drop the row just before an in-window start, which then counts as clean: it can only undercount.
+    // Rows after the last clean stop are kept for `crashes`, so a ledger with no clean stop yet is never pruned.
+    this.db.prepare('DELETE FROM daemon_starts WHERE id < ? AND at < ?').run(lastClean, cutoff);
+    return { id, crashes, recentUncleanStarts };
+  }
+
+  /** An orderly stop of the daemon that recordDaemonStart returned `id` to. */
+  markCleanExit(id: number): void {
+    this.db.prepare('UPDATE daemon_starts SET clean_exit = 1 WHERE id = ?').run(id);
+  }
+
+  /**
+   * Crash recovery: any run still marked running belongs to a dead process.
+   * Requeue its task if it has attempts left, otherwise fail it. After an
+   * unclean exit (`crashes` > 0, recordDaemonStart) one task in flight is the
+   * likely cause and keeps that path, its text naming the crashes it was in flight for; several
+   * cannot be told apart, so each gets one stop refund (requeueAfterStop) and
+   * shares its bound. Returns how many tasks were in flight.
+   */
+  recoverOrphans(crashes = 0): number {
     const now = Date.now();
     // A killed daemon reaps nothing, but every run row carries its child's
     // pgid. Kill any group that survived before requeueing, so a retry never
@@ -1004,12 +1250,24 @@ export class Store extends EventEmitter {
       .prepare("SELECT id FROM tasks WHERE status IN ('running','verifying')")
       .all() as Record<string, unknown>[];
     for (const row of stuck) {
+      if (crashes > 0 && stuck.length > 1) {
+        this.requeueAfterStop(String(row['id']));
+        continue;
+      }
       this.endLostRun(String(row['id']), {
-        failed: 'interrupted by daemon restart; no attempts left',
+        failed: `interrupted by daemon restart${crashes > 0 ? this.crashesInFlight(String(row['id'])) : ''}; no attempts left`,
         requeued: 'requeued after daemon restart',
       });
     }
     return stuck.length;
+  }
+
+  /** `; in flight across N daemon crashes`, N being this task's runs that a restart interrupted (recoverOrphans). */
+  private crashesInFlight(taskId: string): string {
+    const n = Number((this.db
+      .prepare("SELECT COUNT(*) AS n FROM runs WHERE task_id = ? AND summary = 'interrupted by daemon restart'")
+      .get(taskId) as Record<string, unknown>)['n']);
+    return `; in flight across ${n} daemon crash${n === 1 ? '' : 'es'}`;
   }
 
   /**
@@ -1024,7 +1282,7 @@ export class Store extends EventEmitter {
     if (Number(row['attempts']) >= Number(row['max_attempts'])) {
       this.setStatus(taskId, 'failed', texts.failed);
     } else {
-      this.db.prepare("UPDATE tasks SET status = 'queued', updated_at = ? WHERE id = ?").run(Date.now(), taskId);
+      this.db.prepare("UPDATE tasks SET status = 'queued', awaiting_since = NULL, updated_at = ? WHERE id = ?").run(Date.now(), taskId);
       // `safe` (the live daemon's reconcile): a failed write must not stop the epic from being reopened.
       if (opts.safe) safeRecord(this, { taskId, type: 'status', message: texts.requeued });
       else this.record({ taskId, type: 'status', message: texts.requeued });
@@ -1112,9 +1370,10 @@ export class Store extends EventEmitter {
   recentRunsForLatency(limit: number): {
     runId: string; taskId: string; taskStatus: string; taskUpdatedAt: number;
     events: { stage: string; ts: number }[];
+    suiteMs: number; verifyWaitMs: number; workerSlotWaitMs: number;
   }[] {
     const runs = this.db
-      .prepare('SELECT id, task_id FROM runs ORDER BY started_at DESC LIMIT ?')
+      .prepare('SELECT id, task_id, suite_ms, verify_wait_ms, worker_slot_wait_ms FROM runs ORDER BY started_at DESC LIMIT ?')
       .all(Math.max(0, limit)) as Record<string, unknown>[];
     return runs.map((r) => {
       const runId = String(r['id']);
@@ -1131,6 +1390,9 @@ export class Store extends EventEmitter {
         taskStatus: task ? String(task['status']) : '',
         taskUpdatedAt: task ? Number(task['updated_at']) : 0,
         events: events.map((e) => ({ stage: String(e['stage']), ts: Number(e['ts']) })),
+        suiteMs: Number(r['suite_ms']),
+        verifyWaitMs: Number(r['verify_wait_ms']),
+        workerSlotWaitMs: Number(r['worker_slot_wait_ms']),
       };
     });
   }
@@ -1275,7 +1537,7 @@ export class Store extends EventEmitter {
    * if anything it waits on has not finished; reconcileBlocked() promotes it
    * when they do.
    */
-  retry(taskId: string, note?: string | null, extra?: Record<string, unknown> | null): Task {
+  retry(taskId: string, note?: string | null, extra?: Record<string, unknown> | null, actorId?: string): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     // The run this retry turns away from, for the decision row written at the end.
@@ -1365,7 +1627,7 @@ export class Store extends EventEmitter {
       .sort((a, b) => b.startedAt - a.startedAt)[0];
     this.db.prepare('UPDATE tasks SET carry_run = ? WHERE id = ?').run(carry?.id ?? null, taskId);
     const retried = this.getTask(taskId)!;
-    this.noteDecision({ taskId, runId: retriedRun, action: 'retry', note, statusAfter: retried.status, extra });
+    this.noteDecision({ taskId, runId: retriedRun, action: 'retry', actorId: actorId ?? DEFAULT_ACTOR_ID.human, note, statusAfter: retried.status, extra });
     return retried;
   }
 
@@ -1377,7 +1639,7 @@ export class Store extends EventEmitter {
    * database. Only an operator command calls this; nothing automatic does.
    * Dependents the failure killed are revived to wait on the decision.
    */
-  reopen(taskId: string, note?: string | null): Task {
+  reopen(taskId: string, note?: string | null, actorId?: string): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     if (task.status !== 'failed') throw new Error(`task ${taskId} is ${task.status}; only a failed task can be reopened`);
@@ -1400,7 +1662,7 @@ export class Store extends EventEmitter {
     this.record({ taskId, type: 'status', message: why.slice(0, 500) });
     this.reviveDependents(taskId);
     const reopened = this.getTask(taskId)!;
-    this.noteDecision({ taskId, runId: run.id, action: 'reopen', note, statusAfter: reopened.status });
+    this.noteDecision({ taskId, runId: run.id, action: 'reopen', actorId: actorId ?? DEFAULT_ACTOR_ID.human, note, statusAfter: reopened.status });
     return reopened;
   }
 
@@ -1460,7 +1722,7 @@ export class Store extends EventEmitter {
    * (error `dependency <dep> ended as failed|rejected|canceled`), which is revived through the reviveDependents
    * path (to `blocked`; reconcileBlocked then queues it). There is deliberately no way to ADD an edge here.
    */
-  dropDependency(taskId: string, dep: string, actor: DecisionActor): Task {
+  dropDependency(taskId: string, dep: string, actor: DecisionActor, actorId?: string): Task {
     if (!DECISION_ACTORS.includes(actor)) throw new Error(`unknown decision actor: ${String(actor)}`);
     const refusal = (why: string): Error => new Error(`cannot drop ${dep} from ${taskId}: ${why}`);
     this.db.exec('BEGIN IMMEDIATE');
@@ -1477,7 +1739,7 @@ export class Store extends EventEmitter {
       }
       this.db.prepare('DELETE FROM task_deps WHERE task_id = ? AND depends_on = ?').run(taskId, dep);
       this.addDecision({
-        taskId, runId: null, action: 'deps-drop', actor,
+        taskId, runId: null, action: 'deps-drop', actor, actorId: actorId ?? DEFAULT_ACTOR_ID[actor],
         note: `dropped dependency ${dep}${failedByThisEdge ? '; the ticket had failed by cascade from it and is revived' : ''}`,
         extra: { dep, statusBefore: task.status },
       });
@@ -1527,7 +1789,8 @@ export class Store extends EventEmitter {
    * for when the daemon returns, with its attempt given back — a routine
    * restart must not fail a ticket on its last attempt (and its dependents and
    * epic with it). Crash loops are bounded by recoverOrphans; a daemon that
-   * keeps STOPPING mid-run is bounded here, by a count kept on the row: after
+   * keeps STOPPING mid-run (or crashing with several runs in flight, which
+   * recoverOrphans refunds here) is bounded here, by a count kept on the row: after
    * MAX_STOP_REQUEUES the ticket goes to the operator's desk instead of round
    * again. Retry, a repair round and Give to AI start the count over.
    */
@@ -1604,7 +1867,7 @@ export class Store extends EventEmitter {
    * gets its abort. A plain cancel leaves the ticket's dependents waiting (reconcileBlocked); `cascade` fails them
    * as a cancel always did, and says so in the decision row.
    */
-  cancel(taskId: string, note?: string | null, opts: { cascade?: boolean } = {}): Task {
+  cancel(taskId: string, note?: string | null, opts: { cascade?: boolean; actorId?: string } = {}): Task {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
     if (TERMINAL_STATUSES.includes(task.status)) throw new Error(`task ${taskId} already ${task.status}`);
@@ -1612,7 +1875,7 @@ export class Store extends EventEmitter {
     this.emit('cancel', taskId);
     // The reason, when one was given, is in the decision row and its timeline
     // event; the status note stays the fixed sentence other code matches on.
-    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
+    this.noteDecision({ taskId, runId: this.latestRun(taskId)?.id ?? null, action: 'cancel', actorId: opts.actorId ?? DEFAULT_ACTOR_ID.human, note, statusAfter: 'canceled', extra: { statusBefore: task.status, ...(opts.cascade ? { cascade: true } : {}) } });
     // Parent first: the container is already terminal when its children close,
     // so closeEpicIfComplete cannot overwrite the cancel with a 'failed'.
     this.cancelDescendants(taskId, `parent ${taskId} was canceled`, new Set([taskId]));
@@ -1631,7 +1894,10 @@ export class Store extends EventEmitter {
    * One transaction: a 'landed' decision (landed_tree = <commit>^{tree}), status done, dependents revived through
    * reviveDependents. The jail is then removed as the scheduler removes a canceled run's; artifacts stay.
    */
-  async markLanded(taskId: string, opts: { commit: string; by?: string | null; note?: string | null; actor: DecisionActor }): Promise<Task> {
+  async markLanded(
+    taskId: string,
+    opts: { commit: string; by?: string | null; note?: string | null; actor: DecisionActor; actorId?: string },
+  ): Promise<Task> {
     const refusal = (why: string): Error => new Error(`cannot mark ${taskId} landed: ${why}`);
     const task = this.getTask(taskId);
     if (!task) throw new Error(`task not found: ${taskId}`);
@@ -1687,7 +1953,7 @@ export class Store extends EventEmitter {
       const late = eligible();
       if (late) throw refusal(late);
       this.addDecision({
-        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, note, statusAfter: 'done', landedTree: tree,
+        taskId, runId: run?.id ?? null, action: 'landed', actor: opts.actor, actorId: opts.actorId ?? DEFAULT_ACTOR_ID[opts.actor], note, statusAfter: 'done', landedTree: tree,
         extra: { statusBefore: task.status, commit: sha, ...(by ? { by } : {}) },
       });
       this.setStatus(taskId, 'done', null);
@@ -1708,6 +1974,16 @@ export class Store extends EventEmitter {
 
 
 
+
+  /**
+   * Store a ticket's skills list (null: the role's default) and log the change.
+   * The caller checks the list first: skills.ts setTicketSkills.
+   */
+  setTaskSkills(taskId: string, names: string[] | null): Task {
+    this.db.prepare('UPDATE tasks SET skills = ?, updated_at = ? WHERE id = ?').run(names ? JSON.stringify(names) : null, Date.now(), taskId);
+    this.record({ taskId, type: 'status', message: names ? `skills set: ${names.join(', ')}` : 'skills cleared: the role default applies' });
+    return this.getTask(taskId)!;
+  }
 
   /**
    * Who decides this task at the gate. Only a task that has not been decided
@@ -1784,6 +2060,107 @@ export class Store extends EventEmitter {
     this.db
       .prepare('INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?')
       .run(key, value, Date.now(), value, Date.now());
+  }
+
+  // ----------------------------------------------------- principals, tokens
+
+  /** Adds a principal. Refuses a reserved actor id, a name outside PRINCIPAL_NAME, and (UNIQUE) a taken name. */
+  addPrincipal(p: { kind: PrincipalKind; name: string; createdBy: string }, now: number = Date.now()): Principal {
+    if (!PRINCIPAL_KINDS.includes(p.kind)) throw new Error(`unknown principal kind: ${String(p.kind)}`);
+    if ((RESERVED_ACTOR_IDS as readonly string[]).includes(p.name)) throw new Error(`principal name is reserved: ${p.name}`);
+    if (!PRINCIPAL_NAME.test(p.name)) throw new Error(`principal name must match ${String(PRINCIPAL_NAME)}: ${JSON.stringify(p.name)}`);
+    const principalId = id('p');
+    this.db
+      .prepare('INSERT INTO principals (id, kind, name, created_by, created_at) VALUES (?,?,?,?,?)')
+      .run(principalId, p.kind, p.name, p.createdBy, now);
+    return { id: principalId, kind: p.kind, name: p.name, createdBy: p.createdBy, createdAt: now, disabledAt: null };
+  }
+
+  /** Disables a principal, which ends every token it holds. False when it is unknown or already disabled. */
+  disablePrincipal(principalId: string, now: number = Date.now()): boolean {
+    return this.db.prepare('UPDATE principals SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL').run(now, principalId).changes > 0;
+  }
+
+  /** Adds a token by the sha256 hex of its secret (the secret itself is never stored); returns the token's id. */
+  addToken(
+    tk: { principalId: string; tokenHash: string; expiresAt?: number | null; createdBy: string },
+    now: number = Date.now(),
+  ): string {
+    if (!/^[0-9a-f]{64}$/.test(tk.tokenHash)) throw new Error('token hash must be sha256 hex (64 lowercase hex characters)');
+    const tokenId = id('tk');
+    this.db
+      .prepare('INSERT INTO api_tokens (id, principal_id, token_hash, expires_at, created_by, created_at) VALUES (?,?,?,?,?,?)')
+      .run(tokenId, tk.principalId, tk.tokenHash, tk.expiresAt ?? null, tk.createdBy, now);
+    return tokenId;
+  }
+
+  /**
+   * The host-admin mint (src/security/mint.ts), in one transaction: the principal named, added as `kind` when there is
+   * none, then a token for it, then exactly one event, 'principal-minted' when the principal is new and 'token-minted'
+   * when it is not, naming both and never the secret. The event is in the transaction so no mint is ever without
+   * one. Refuses, writing nothing, a disabled principal (its token could never authenticate) and one of another kind.
+   */
+  mintHostAdminToken(
+    m: { name: string; kind: PrincipalKind; tokenHash: string; expiresAt: number | null },
+    now: number = Date.now(),
+  ): { principal: Principal; tokenId: string; principalCreated: boolean } {
+    const createdBy: ReservedActorId = 'operator';
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT * FROM principals WHERE name = ?').get(m.name) as Record<string, unknown> | undefined;
+      const existing = row ? rowToPrincipal(row) : null;
+      if (existing && existing.disabledAt !== null) throw new Error(`principal ${m.name} is disabled`);
+      if (existing && existing.kind !== m.kind) throw new Error(`principal ${m.name} is a ${existing.kind} principal, not a ${m.kind} one`);
+      const principal = existing ?? this.addPrincipal({ kind: m.kind, name: m.name, createdBy }, now);
+      const tokenId = this.addToken({ principalId: principal.id, tokenHash: m.tokenHash, expiresAt: m.expiresAt, createdBy }, now);
+      this.record({
+        type: existing ? 'token-minted' : 'principal-minted',
+        message: JSON.stringify({ name: principal.name, principalId: principal.id, kind: principal.kind, tokenId, hostAdmin: true }),
+      });
+      this.db.exec('COMMIT');
+      return { principal, tokenId, principalCreated: !existing };
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Revokes a token. False when it is unknown or already revoked. */
+  revokeToken(tokenId: string, now: number = Date.now()): boolean {
+    return this.db.prepare('UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now, tokenId).changes > 0;
+  }
+
+  /** The principal a token hash belongs to, or null unless the token is unrevoked and unexpired at `now` and the principal enabled. */
+  principalByTokenHash(tokenHash: string, now: number = Date.now()): Principal | null {
+    const row = this.db
+      .prepare(
+        `SELECT p.* FROM api_tokens t JOIN principals p ON p.id = t.principal_id
+         WHERE t.token_hash = ? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > ?) AND p.disabled_at IS NULL`,
+      )
+      .get(tokenHash, now) as Record<string, unknown> | undefined;
+    return row ? rowToPrincipal(row) : null;
+  }
+
+  /** The principal with this id while it is enabled, or null (unknown, disabled, or a reserved actor id). */
+  livePrincipal(principalId: string): Principal | null {
+    const row = this.db.prepare('SELECT * FROM principals WHERE id = ? AND disabled_at IS NULL').get(principalId) as Record<string, unknown> | undefined;
+    return row ? rowToPrincipal(row) : null;
+  }
+
+  /** The kind of the principal with this id, enabled or disabled, or null (unknown, or a reserved actor id). */
+  principalKind(principalId: string): PrincipalKind | null {
+    const row = this.db.prepare('SELECT kind FROM principals WHERE id = ?').get(principalId) as { kind: string } | undefined;
+    return row ? (row.kind as PrincipalKind) : null;
+  }
+
+  /** Enabled human principals. */
+  humanPrincipalCount(): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM principals WHERE kind = 'human' AND disabled_at IS NULL").get() as { n: number }).n);
+  }
+
+  /** True once any principal has ever been added: principals are never deleted, so this never turns back. */
+  hasAnyPrincipal(): boolean {
+    return this.db.prepare('SELECT 1 FROM principals LIMIT 1').get() !== undefined;
   }
 
   /**
@@ -2033,7 +2410,7 @@ export class Store extends EventEmitter {
         this.setStatus(child.id, 'canceled', reason);
         this.emit('cancel', child.id);
         // Foreman's own doing, not a person's word about this ticket: recorded as the system's.
-        this.noteDecision({ taskId: child.id, runId: this.latestRun(child.id)?.id ?? null, action: 'cancel', actor: 'system', note: reason, statusAfter: 'canceled', extra: { statusBefore: child.status } });
+        this.noteDecision({ taskId: child.id, runId: this.latestRun(child.id)?.id ?? null, action: 'cancel', actor: 'system', actorId: DEFAULT_ACTOR_ID.system, note: reason, statusAfter: 'canceled', extra: { statusBefore: child.status } });
       }
       // Still recurse through an already-terminal child: a failed nested epic
       // can have live tickets of its own.
@@ -2175,6 +2552,16 @@ export class Store extends EventEmitter {
   /** Accumulate time a run's test commands queued for a verify slot. */
   addVerifyWait(runId: string, ms: number): void {
     this.db.prepare('UPDATE runs SET verify_wait_ms = verify_wait_ms + ? WHERE id = ?').run(Math.round(ms), runId);
+  }
+
+  /** Accumulate time a run's test commands ran, their slot wait excluded. */
+  addSuiteMs(runId: string, ms: number): void {
+    this.db.prepare('UPDATE runs SET suite_ms = suite_ms + ? WHERE id = ?').run(Math.round(ms), runId);
+  }
+
+  /** Accumulate time a run's worker's own suite runs queued for a test slot (Scheduler.slotQueued). */
+  addWorkerSlotWait(runId: string, ms: number): void {
+    this.db.prepare('UPDATE runs SET worker_slot_wait_ms = worker_slot_wait_ms + ? WHERE id = ?').run(Math.round(ms), runId);
   }
 
   setTestsPassed(runId: string, passed: boolean): void {
@@ -2458,10 +2845,13 @@ export class Store extends EventEmitter {
    * own much larger ceiling. The thing worth stopping here is a runaway loop —
    * a gate re-deciding the same ticket every tick — and a loop is just as
    * expensive against a subscription's rate limits as against a card.
+   *
+   * A claude-code worker's own spend (kind 'worker', one receipt per run) is
+   * left out: it is recorded, not capped. Capping it is a separate decision.
    */
   spentTodaySubscription(): number {
     const row = this.db
-      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE day = ? AND provider = 'claude-cli'")
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE day = ? AND provider = 'claude-cli' AND kind <> 'worker'")
       .get(new Date().toISOString().slice(0, 10)) as Record<string, unknown> | undefined;
     return Number(row?.['n'] ?? 0);
   }
@@ -2474,9 +2864,10 @@ export class Store extends EventEmitter {
     return Number(row?.['n'] ?? 0);
   }
 
+  /** What the per-task cap (`--budget`) counts: every receipt of the task but its claude-code worker's own spend. */
   spentOnTask(taskId: string): number {
     const row = this.db
-      .prepare('SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE task_id = ?')
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS n FROM receipts WHERE task_id = ? AND kind <> 'worker'")
       .get(taskId) as Record<string, unknown> | undefined;
     return Number(row?.['n'] ?? 0);
   }
@@ -2728,6 +3119,8 @@ export class Store extends EventEmitter {
           title: template.title || String(row['title']),
           deps: [],
           scheduleId,
+          // No person asked for this run of it: the template, which the client wrote, never names nor inherits one.
+          createdBy: null,
         }));
       } catch (err) {
         this.record({ type: 'error', message: `schedule ${scheduleId} failed: ${(err as Error).message}` });
@@ -2810,7 +3203,7 @@ export class Store extends EventEmitter {
     const task = this.getTask(taskId);
     if (!task || (task.preReviewRepairs ?? 0) >= cap) return false;
     this.db
-      .prepare('UPDATE tasks SET pre_review_repairs = pre_review_repairs + 1, repair_notes = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET pre_review_repairs = pre_review_repairs + 1, repair_notes = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, awaiting_since = NULL, updated_at = ? WHERE id = ?')
       .run(notes.slice(0, 8000), 'queued', Date.now(), taskId);
     this.record({ taskId, type: 'status', message: `pre-review repair round ${(task.preReviewRepairs ?? 0) + 1} queued` });
     const parent = this.parentIdOf(taskId);
@@ -2833,7 +3226,7 @@ export class Store extends EventEmitter {
     if (!task || task.repairs >= task.maxRepairs) return false;
     const notes = conflictRepairNotes(null, testCmd);
     this.db
-      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, base_ref = NULL, carry_run = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, base_ref = NULL, carry_run = ?, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, awaiting_since = NULL, updated_at = ? WHERE id = ?')
       .run(notes.slice(0, 8000), approvedRunId, 'queued', Date.now(), taskId);
     this.record({ taskId, type: 'status', message: `merge conflict on approval; repair round ${task.repairs + 1} queued: the approved diff is applied onto current main` });
     const parent = this.parentIdOf(taskId);
@@ -2893,7 +3286,7 @@ export class Store extends EventEmitter {
     this.db
       // gate_decision goes with attempts: the repaired work is not the work the
       // gate already ruled on, so it is re-gated deliberately.
-      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, carry_run = NULL, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, updated_at = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET repairs = repairs + 1, repair_notes = ?, carry_run = NULL, attempts = 0, stop_requeues = 0, gate_decision = NULL, status = ?, awaiting_since = NULL, updated_at = ? WHERE id = ?')
       .run(critique.slice(0, 8000), 'queued', Date.now(), taskId);
     this.record({ taskId, type: 'status', message: `repair round ${task.repairs + 1} queued` });
     // This path moves the row by raw SQL, so setStatus's reopen hook never

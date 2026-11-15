@@ -90,7 +90,7 @@ test('the owner CLI lane is refused under local-only, not just the gate', () => 
   // still sent prompts off the machine while the flag promised nothing would.
   process.env['FOREMAN_LOCAL_ONLY'] = '1';
   try {
-    return ownerCall('judge this diff').then(
+    return ownerCall('judge this diff', { sensitivity: 'S1' }).then(
       () => assert.fail('local-only must refuse the hosted owner CLI'),
       (err: Error) => {
         assert.ok(err instanceof OwnerCallError);

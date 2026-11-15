@@ -1,5 +1,5 @@
 import { loadPersonas, personaServerUrl, type Persona } from './personas.ts';
-import { personaServerPid, servePersona } from './personaServe.ts';
+import { answersModels, personaServerPid, servePersona } from './personaServe.ts';
 
 /**
  * Who owns an adopted persona's `mlx_lm.server`.
@@ -46,12 +46,7 @@ export class PersonaUnavailable extends Error {}
  */
 export async function personaReachable(persona: Persona, timeoutMs = 3_000): Promise<boolean> {
   if (personaServerPid(persona.id) === null) return false;
-  try {
-    const res = await fetch(`${personaServerUrl(persona.id)}/models`, { signal: AbortSignal.timeout(timeoutMs) });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return answersModels(personaServerUrl(persona.id), timeoutMs);
 }
 
 /**

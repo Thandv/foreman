@@ -143,6 +143,11 @@ class Store {
       this.scheduleRefresh();
     };
 
+    // The daemon replays a bounded number of missed events; further behind, it
+    // sends one `gap` frame instead. Only a fresh snapshot is whole again, and
+    // refresh() resumes lastEventId from it.
+    src.addEventListener('gap', () => void this.refresh());
+
     src.onerror = () => {
       // EventSource would retry this URL itself, with the stale `since` baked
       // in; close it and own the retry so the next attempt resumes correctly.
@@ -177,7 +182,7 @@ export function budgetRatio(budget) {
 // POST /api/tasks/:id/approve answers 200 with `{ ...task, merge, registration }`
 // (server.ts → gate.ts applyApproval). Approving and *landing* are two different
 // outcomes: mergeApproved() aborts a conflicting merge and returns
-// `{ merged: false, reason: 'merge conflict, aborted — resolve <branch> by
+// `{ merged: false, code: 'conflict', reason: 'merge conflict, aborted — resolve <branch> by
 // hand: …', branch }` on the same 200. A tool task lands by registration
 // instead, and `{ registered: false, reason }` comes back the same way.
 //
@@ -185,8 +190,11 @@ export function budgetRatio(budget) {
 // goes unnoticed until someone wonders why main never moved, so the message
 // the operator reads is derived here — once — for the drawer and the palette.
 
-/** Merge outcomes that are a deliberate skip, not a failure to shout about. */
-const BENIGN_MERGE = /^(nothing to merge|merge-on-approve disabled|branch has no commits ahead|closed: nothing to change|task is )/;
+/**
+ * Merge outcomes that are a deliberate skip, not a failure to shout about —
+ * by the typed `code` (MergeCode in src/merge.ts); the reason is only shown.
+ */
+const SKIPPED_MERGE_CODES = new Set(['not-approved', 'nothing-to-merge', 'merge-disabled', 'nothing-ahead', 'nothing-to-change-closed']);
 /** Same, for the tool registry: a code task is simply not a tool task. */
 const BENIGN_REGISTRATION = /^not a tool task/;
 
@@ -304,9 +312,13 @@ export function approvalOutcome(result, label = 'Approved') {
   const registration = result?.registration;
 
   if (merge?.branch) {
-    if (merge.merged) return { ok: true, message: `${label} — merged ${merge.branch}` };
+    if (merge.merged) {
+      // The post-merge check runs on after the answer; its outcome reaches the board as timeline events.
+      const check = result.postMerge === 'pending' ? '; main check running' : '';
+      return { ok: true, message: `${label} — merged ${merge.branch}${check}` };
+    }
     const reason = oneLine(merge.reason) || 'the branch did not land';
-    if (!BENIGN_MERGE.test(reason)) {
+    if (!SKIPPED_MERGE_CODES.has(merge.code)) {
       return { ok: false, message: `${label}, but ${merge.branch} did not land: ${reason}` };
     }
     return { ok: true, message: `${label} — ${reason}` };

@@ -148,7 +148,7 @@ test('doctor line: with the worker-home fix reverted, a relative FOREMAN_HOME is
   fs.copyFileSync(path.join(SRC, 'src', 'doctorJail.ts'), path.join(clone, 'src', 'doctorJail.ts'));
   execFileSync('git', ['add', '-A'], { cwd: clone, stdio: 'ignore' });
   edit('src/config.ts', 'if (process.env.FOREMAN_HOME) process.env.FOREMAN_HOME = home;', '');
-  edit('src/runners/claudeIsolation.ts', '{ ...out, FOREMAN_HOME: config.home, ...', '{ ...out, ...');
+  edit('src/runners/claudeIsolation.ts', 'return { ...out, FOREMAN_HOME: config.home };', 'return { ...out };');
   edit('src/runners/cliRunners.ts', 'const env: NodeJS.ProcessEnv = { FOREMAN_HOME: config.home };', 'const env: NodeJS.ProcessEnv = {};');
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'revert t1'], { cwd: clone, stdio: 'ignore' });
   const daemonCwd = scratch('daemon');

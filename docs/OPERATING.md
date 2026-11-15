@@ -9,14 +9,19 @@ it says otherwise, and none runs inside a worker session (see [Commands](command
 
 | Command | What it does |
 |---|---|
-| `foreman approve <taskId> [--note <text>]` | Accepts the staged work. Waits for the merge and for the check on the merged `HEAD`, so it can take as long as your suite. Prints `merge: <reason>`. |
+| `foreman approve <taskId> [--note <text>]` | Accepts the staged work. Waits for the merge (behind any landing already under way in the repo), not for the check on the merged `HEAD`, which runs on in the background. Prints `merge: <reason>` and `main check: pending`; a red main shows as `MAIN IS RED` on the timeline. |
 | `foreman approve <taskId> --as-is <tree sha>` | Lands work whose tree changed after its review. The refusal prints the tree to name; naming it is the decision. Recorded as corrected unless it is the reviewed tree. |
 | `foreman retry <taskId> [--note <text>]` | Requeues a task that ended (`failed`, `rejected` or `canceled`). The note is binding on the worker and on every reviewer; write what to do differently. `--skills <a>[,<b>]\|default` changes the skills for the new attempt. |
 | `foreman reopen <taskId> [--note <text>]` | Puts a task that failed review back at the human gate with its work intact, for you to decide. Nothing runs again. |
 | `foreman cancel <taskId> [--note <text>] [--cascade]` | Stops a queued or running task. A task that is already closed is refused. The note is recorded and never blocks the cancel. Its dependents wait in `blocked` for you to drop, land or retry it; `--cascade` fails them instead. |
 
 `reject` and `cancel` differ: `reject` answers work that is waiting for you; `cancel` stops a task that is not decided.
-Every approve, reject, cancel, retry and reopen is one row in the ledger's `decisions` table.
+Every approve, reject, cancel, retry and reopen is one row in the ledger's `decisions` table. Its `actor` says what
+kind of actor decided (`human`, `owner-model` or `system`) and its `actor_id` says who: the principal whose bearer token
+the request carried, or a reserved id — `operator` for a person while auth is off, `owner-model` for the owner gate,
+`system` for a ticket an epic's cancel took down. A row from before `actor_id` existed has none. `foreman show` prints
+it after the actor (`cancel by human (operator)`) and `foreman trace` lists the rows under `decisions`. Approve and
+reject run through one path that takes the principal who decided: the request's, or `owner-model` for the owner gate.
 
 **What cancel does to the worktree.** Cancelling a running task ends its run, and a worktree that run created is removed
 with it, unless the run had already reached its review: reviewed work that is cancelled is kept on disk for you to
@@ -37,12 +42,50 @@ a parent also cancels its descendants.
   backup next to the database does not survive that disk, and Foreman warns when both are on one disk.
   `FOREMAN_BACKUP=off` turns the daily one off.
 - **Restore.** `foreman restore <file.gz>` replaces the database with a backup. It refuses while the daemon runs and
-  when the file fails its integrity check or is not a Foreman database (no `tasks`, `runs` or `events` table), and it moves the current database aside as `foreman.db.before-restore-<timestamp>` rather than deleting it.
+  when the file fails its integrity check, is not a Foreman database (no `tasks`, `runs` or `events` table) or carries
+  a newer schema version than this Foreman, and it moves the current database aside as `foreman.db.before-restore-<timestamp>` rather than deleting it.
   Stop the daemon first (`foreman stop`), restore, then `foreman serve`.
+- **Schema version.** The database carries its schema version in its header (`PRAGMA user_version`); Foreman stamps it
+  when it opens and migrates the file. A database stamped by a newer Foreman is refused when the store opens it and by
+  `restore`, before anything in it is touched: upgrade Foreman, or restore a backup taken before the upgrade. Only
+  `foreman serve` migrates an older database; every other command refuses one, before anything in it is touched, with
+  "run foreman serve once to upgrade it" (so a CLI from another checkout never rewrites the live ledger's schema).
+  A missing or empty database file is created by any command.
 - **Doctor.** `foreman doctor` probes the models, runners, agents and budget, and runs a scratch-jail check that the
   suite wrapper a worker uses works from inside a jail. `--bench` scores each local model and re-points the roster;
-  `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20). These two read the
-  database directly and need no daemon.
+  `--latency [--n N]` prints median and p90 time per stage over the last N runs (default 20), then a SUITE line (p50
+  and p95 of the time each run's gate suites ran — the gate, its timeout re-run, each playbook check and the revert
+  check, with the time queued for a verify slot taken out; runs with none are left out), a SLOT WAIT line (p95 of
+  the time each run's gate suites queued for a verify slot) and a WORKER WAIT line (p95 of the time each run's worker's
+  own suite runs queued for a slot through the suite wrapper; a request without the run's token is charged to no run).
+  These two read the database directly and need no daemon.
+- **Hold new work.** `foreman hold --reason <text>` stops the daemon claiming queued tasks; `foreman resume` lifts the
+  hold, and the next tick claims again. Everything else in each tick keeps running: work already running finishes,
+  schedules still queue their batches, the owner gate still decides, blocked tasks are still reconciled, and the
+  re-checks (provisional reviews, red mains, dirty checkouts) still run. The hold and its reason are in `GET /api/state`
+  (`dispatchHold`, `null` when there is none), and setting or lifting it records a status event. It is kept in memory
+  only: a daemon restart clears it. It is not the pause `foreman stop` makes, which stops every stage.
+- **A crash mid-merge.** A daemon that dies while an approval is merging leaves a `landings` row. At the next start
+  that repo is listed in `GET /api/state` (`landInterrupted`: repo, task id, when its merge began), the ticket's
+  timeline carries a `land-interrupted(<repo>)` warning, and every `blocked` dependent in that repo stays blocked. The
+  merge may or may not have happened: check the checkout (`git status`, `git log`), finish or undo the merge by hand,
+  then run `foreman land-clear <repo>`; the next tick releases the held work. It is kept until you clear it, across
+  restarts.
+- **A merge request the checkout could not take.** A repo that lands by merge request is held the same way when the
+  forge's merge cannot be confirmed as the reviewed commit, or the checkout cannot be fast-forwarded to it (dirty, not
+  on the target branch): the ticket's timeline carries a `land-held(<repo>): <reason>` warning and the repo is listed
+  in `landInterrupted`, its other merge requests wait unmerged, and its dependents stay blocked. Sync the checkout by
+  hand (`git status`; `git merge --ff-only <sha>` on the target branch), then `foreman land-clear <repo>`.
+- **A crash, and a crash loop.** Each start writes a `daemon_starts` row, and an orderly stop (`foreman stop`, or a
+  signal the daemon shuts down on) marks it `clean_exit` last, so a stop that runs out of time counts as a crash, and
+  so does a stop that exits non-zero, as an uncaught exception's does. After a clean stop, recovery is unchanged.
+  After a crash, one task in flight is taken as the likely cause: its attempt is
+  spent, and when none are left it fails with `in flight across N daemon crashes`, N being the restarts that
+  interrupted one of its runs. Several tasks in flight cannot be told apart, so each gets its attempt back as a daemon stop
+  does, and shares that count: past 3 such requeues the ticket goes to `awaiting-human`. A start after a crash that is
+  the second or later start after a crash within 10 minutes, with other than exactly one task in flight now, starts
+  the daemon under the dispatch hold above, its reason beginning `crash loop:`; find the cause, then `foreman resume`.
+  A start after a clean stop is never held this way.
 - **Restart.** There is no `restart` command. Run `foreman stop` (it waits up to 90 seconds for in-flight work to wind
   down, then reports the daemon still shutting down) and then `foreman serve`. Under launchd, the plist
   `foreman service` prints sets `KeepAlive` to `SuccessfulExit = false`: launchd restarts the daemon only after a
@@ -62,6 +105,13 @@ a parent also cancels its descendants.
 ## Debug logging
 
 Set `FOREMAN_DEBUG=1` in the daemon's environment (in the launchd plist's `EnvironmentVariables`, then reload the job) and read the lines tagged debug in `<home>/daemon.err.log`. Unset it to turn them off.
+
+## Trace sink
+
+With `FOREMAN_TRACE_SINK` set, each event is also posted to that URL, fire-and-forget. At most 32 posts are in flight
+at once; an event that arrives while 32 are pending is dropped for the sink (not queued) and counted, and each post is
+aborted after 10 seconds, so a slow or hung collector costs at most 32 sockets and loses events rather than memory.
+The daily JSONL files under `<home>/traces` are written the same with or without a sink and never drop an event.
 
 ## Reading a failed run
 
@@ -89,6 +139,17 @@ Set `FOREMAN_DEBUG=1` in the daemon's environment (in the launchd plist's `Envir
   whether a worker or a reviewer made it. With local models, raising `FOREMAN_MAX_WORKERS` without it lengthens that
   wait rather than the work done at once.
 - `FOREMAN_DAILY_USD_CAP` (default 5) is the spend cap per day.
+
+**Metrics.** `GET /api/metrics` reports what Foreman already measures, as JSON, or as Prometheus text with
+`?format=prom` (every metric a gauge). It reads and never writes. It has the event loop's p99 delay since the daemon
+started (`eventLoopLagP99Ms`, `null` before the first sample), how long each tick stage took the last time it ran, in
+tick order (`tickStageMs`), tasks by status, suite runs waiting for a verify slot, the gate wait p50 and p90 over the
+last 100 runs (as `foreman doctor --latency` computes it), per repo the p95 age of its tickets at `awaiting-approval`
+(`awaitingApprovalAgeP95Ms`, counted from each ticket's last update, so a gate change resets it; tickets with no repo
+under `(none)`), per repo the p95 time those tickets have been parked (`awaitingSinceParkP95Ms`, Prometheus
+`foreman_awaiting_approval_since_park_p95_ms`, counted from when each entered `awaiting-approval`, or from its last
+update for a ticket parked before that was recorded), and the whole minutes each red repo has been red. Any other
+`format` is a 400.
 
 Start low: four workers with two suite runners fits a laptop. Raise `FOREMAN_MAX_VERIFIES` only when suite runs are
 the wait and the machine has cores to spare. Settings are read at `foreman serve`; restart to change them. See

@@ -131,7 +131,7 @@ const SKILL_NAME_RE = /^[a-z0-9-]{1,64}$/;
 const REVIEWER_STYLES = new Set<string>(['code-review', 'editorial-letter', 'devils-advocate', 'peer-review']);
 
 export function playbooksDir(): string {
-  return process.env['FOREMAN_PLAYBOOKS_DIR'] ?? path.join(config.home, 'playbooks');
+  return config.playbooksDir;
 }
 
 /**

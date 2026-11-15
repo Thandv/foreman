@@ -7,6 +7,7 @@ import type { Playbook } from '../playbooks.ts';
 import type { CrewPlan, CrewTicket } from './crewPlan.ts';
 import { ownerCall } from './ownerCall.ts';
 import type { Store } from '../queue.ts';
+import type { Sensitivity } from '../types.ts';
 import { tierModel } from '../roles.ts';
 import { foremanRoot, PROTECTED_PATHS } from '../security/coreGuard.ts';
 import fs from 'node:fs';
@@ -461,6 +462,8 @@ function ticketBrief(t: CrewTicket): Record<string, unknown> {
 }
 
 export interface CritiquePlanOptions {
+  /** The sensitivity the plan will be queued at; defaults to the queue's S1. */
+  sensitivity?: Sensitivity;
   signal?: AbortSignal;
   timeoutMs?: number;
   store?: Store;
@@ -494,9 +497,10 @@ export async function critiquePlan(
     `TICKETS:\n${JSON.stringify(plan.tickets.map(ticketBrief))}` +
     // The critic judges the plan against the same snapshot the planner saw;
     // without it, it flags committed work as unowned.
-    (plan.repo ? `\n\n${repoBrief(plan.repo, plan.ask)}` : '');
+    (plan.repo ? `\n\n${await repoBrief(plan.repo, plan.ask)}` : '');
   try {
     const { text } = await ownerCall(prompt, {
+      sensitivity: opts.sensitivity ?? 'S1',
       signal: opts.signal,
       model: tierModel('senior'),
       maxTurns: 1,

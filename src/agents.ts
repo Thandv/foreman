@@ -55,7 +55,7 @@ function scan(def: AgentDef): Finding[] {
 }
 
 export function agentsDir(): string {
-  return process.env['FOREMAN_AGENTS_DIR'] ?? path.join(config.home, 'agents');
+  return config.agentsDir;
 }
 
 export interface Catalog {

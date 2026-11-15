@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { config } from './config.ts';
 import { provisionDeps } from './deps.ts';
-import { checkoutWorktree, pinnedGit } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
+import { checkoutWorktree } from './isolate.ts';
 import { withVerifySlot } from './verify/slots.ts';
 import { detectTestCmd, runTests, type SandboxRunOpts } from './verify/tests.ts';
 
@@ -19,7 +21,7 @@ import { detectTestCmd, runTests, type SandboxRunOpts } from './verify/tests.ts'
  */
 
 export function postMergeCheckEnabled(): boolean {
-  return (process.env['FOREMAN_POSTMERGE_CHECK'] ?? '').trim().toLowerCase() !== 'off';
+  return config.postMergeCheck;
 }
 
 export interface MainCheck {
@@ -48,7 +50,7 @@ const runSandboxed: MainTestRunner = (dir, cmd, signal, sandbox) => runTests(dir
 const tailOf = (output: string): string => output.split('\n').slice(-25).join('\n');
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  // Pinned, drivers off (isolate.ts pinnedGit): the repo's config is the one every jail can write.
+  // Pinned, drivers off (gitExec.ts pinnedGit): the repo's config is the one every jail can write.
   return (await pinnedGit(cwd, args)).stdout.trim();
 }
 
@@ -56,15 +58,16 @@ export async function repoHead(repo: string): Promise<string> {
   return git(repo, ['rev-parse', 'HEAD']).catch(() => '');
 }
 
-/** Run the repo's tests on its current HEAD in a throwaway detached worktree. */
+/** Run the repo's tests on `at` (default: its current HEAD) in a throwaway detached worktree. */
 export async function checkMain(
   repo: string,
   testCmd: string | null,
   signal?: AbortSignal,
   run: MainTestRunner = runSandboxed,
+  at?: string,
 ): Promise<MainCheck> {
-  const head = await repoHead(repo);
-  // The pid in the name tells a startup prune whose check this is (gate.ts pruneMainWorktrees).
+  const head = at ?? await repoHead(repo);
+  // The pid in the name tells a startup prune whose check this is (src/landing/verify.ts pruneMainWorktrees).
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `foreman-main-${process.pid}-`));
   try {
     // Checked out with no filter the repo's config names (a smudge there ran in the daemon), by isolate.ts.

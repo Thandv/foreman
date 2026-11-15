@@ -10,8 +10,9 @@ import { modelForTask, tierForTask, tierMaxTurns } from '../roles.ts';
 import { cloudDown, cloudFallback, localOnly, localOnlyLabel } from '../localOnly.ts';
 import { config } from '../config.ts';
 import { testTimeoutMs } from '../verify/tests.ts';
-import { RUN_ID_ENV, WORKER_TEST_CMD_ENV } from '../verify/testSlot.ts';
-import { claudeIsolationArgs, claudeWorkerEnv, outOfJailWrite } from './claudeIsolation.ts';
+import { runToken } from '../verify/slots.ts';
+import { RUN_ID_ENV, RUN_TOKEN_ENV, WORKER_TEST_CMD_ENV } from '../verify/testSlot.ts';
+import { CODEX_ENV, claudeIsolationArgs, claudeWorkerEnv, cliWorkerEnv, outOfJailWrite } from './claudeIsolation.ts';
 
 const exec = promisify(execFile);
 
@@ -54,10 +55,10 @@ export interface CliSpec {
   /**
    * The WHOLE environment every spawn of this CLI gets — the worker AND the
    * `--version` preflight, so the preflight proves the binary runs the way the
-   * worker will run it. It replaces the daemon's environment; a spec without
-   * one inherits the daemon's.
+   * worker will run it. It replaces the daemon's environment: a CLI worker
+   * never inherits the whole of it.
    */
-  env?(task: Pick<Task, 'id'>): NodeJS.ProcessEnv;
+  env(task: Pick<Task, 'id'>): NodeJS.ProcessEnv;
   /** Pull stage/log/usage signal out of one parsed NDJSON object. */
   onEvent(ev: Record<string, unknown>, ctx: RunnerContext, state: CliState): void;
 }
@@ -198,7 +199,7 @@ function makeCliRunner(spec: CliSpec): Runner {
       const provenAt = preflightOk.get(binPath);
       if (provenAt !== undefined && Date.now() - provenAt < PREFLIGHT_TTL_MS) return null;
       try {
-        await exec(binPath, ['--version'], { timeout: 20_000, env: spec.env?.(task) ?? process.env });
+        await exec(binPath, ['--version'], { timeout: 20_000, env: spec.env(task) });
         preflightOk.set(binPath, Date.now());
         return null;
       } catch (e) {
@@ -225,8 +226,8 @@ function makeCliRunner(spec: CliSpec): Runner {
       const code = await spawnStreaming(bin(), args, {
         cwd: ctx.dir,
         signal: AbortSignal.any([ctx.signal, tripwire.signal]),
-        env: { ...spec.env?.(ctx.task), ...workerEnv(ctx.task, ctx.runId) },
-        replaceEnv: spec.env !== undefined,
+        env: { ...spec.env(ctx.task), ...workerEnv(ctx.task, ctx.runId) },
+        replaceEnv: true,
         onSpawn: (pid) => ctx.child(pid),
         onLine: (line, stream) => {
           handleCliLine(spec, ctx, state, line, stream);
@@ -369,8 +370,8 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
 }
 
 /**
- * What a worker session gets on top of its base environment (the daemon's, or
- * the spec's own allowlisted one): the ticket's
+ * What a worker session gets on top of its base environment (always the spec's
+ * own allowlisted one, never the daemon's whole environment): the ticket's
  * test command for the wrapper, and a Bash-tool ceiling long enough for a
  * queued full suite. Only the ceiling (BASH_MAX_TIMEOUT_MS), never the default:
  * a default this long let a worker's `npm run serve` or watch script eat the
@@ -378,12 +379,16 @@ export function workerShellDenylist(task: Pick<Task, 'testCmd'> & Partial<Pick<T
  * asks for the long timeout on its suite run (the shell brief says so); the
  * ceiling never exceeds the task's own timeout. And which run it is, so the
  * wrapper can tell the daemon whose suite is asking for a slot (that wait is
- * not charged to the run, and a run holds one suite run at a time).
+ * not charged to the run, and a run holds one suite run at a time), with the
+ * run's token as proof: a run id alone claims nothing.
  */
 export function workerEnv(task: Pick<Task, 'testCmd'>, runId?: string): NodeJS.ProcessEnv {
-  // Always the daemon's resolved home, so a spec-allowlisted base environment cannot carry a relative one either.
+  // Always the daemon's resolved home, so the spec's allowlisted base environment cannot carry a relative one.
   const env: NodeJS.ProcessEnv = { FOREMAN_HOME: config.home };
-  if (runId) env[RUN_ID_ENV] = runId;
+  if (runId) {
+    env[RUN_ID_ENV] = runId;
+    env[RUN_TOKEN_ENV] = runToken(runId);
+  }
   if (task.testCmd?.trim()) env[WORKER_TEST_CMD_ENV] = task.testCmd.trim();
   const toolMs = Math.min(testTimeoutMs() + 15 * 60_000, config.taskTimeoutMs);
   if (!process.env['BASH_MAX_TIMEOUT_MS']) env['BASH_MAX_TIMEOUT_MS'] = String(toolMs);
@@ -484,6 +489,7 @@ export const codexCliSpec: CliSpec = {
   defaultBin: 'codex',
   argsEnv: 'FOREMAN_CODEX_ARGS',
   buildArgs: (prompt, extra, _task) => ['exec', '--json', ...extra, prompt],
+  env: () => cliWorkerEnv(CODEX_ENV),
   onEvent(ev, ctx, state) {
     const msg = (ev['msg'] ?? ev) as Record<string, unknown>;
     const type = String(msg['type'] ?? ev['type'] ?? '');

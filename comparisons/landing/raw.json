@@ -1,0 +1,191 @@
+[
+  {
+    "scenario": "burst",
+    "mode": "before",
+    "tickets": 20,
+    "landed": 20,
+    "suiteRuns": 41,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 2.05,
+    "workerLeasesPerLanded": 1,
+    "landingsPerHour": 6781,
+    "approveToMergedMs": {
+      "p50": 3146,
+      "p95": 5902
+    },
+    "mergedToVerifiedMs": {
+      "p50": 2032,
+      "p95": 3382
+    },
+    "notLanded": [],
+    "unverified": 0,
+    "red": {
+      "culprit": "t_6cda7fab21",
+      "culpritLanded": true,
+      "named": [
+        "t_6cda7fab21"
+      ],
+      "attributed": true
+    },
+    "errors": []
+  },
+  {
+    "scenario": "burst",
+    "mode": "after",
+    "tickets": 20,
+    "landed": 20,
+    "suiteRuns": 29,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 1.45,
+    "workerLeasesPerLanded": 0,
+    "landingsPerHour": 8061,
+    "approveToMergedMs": {
+      "p50": 3071,
+      "p95": 5798
+    },
+    "mergedToVerifiedMs": {
+      "p50": 1434,
+      "p95": 1841
+    },
+    "notLanded": [],
+    "unverified": 0,
+    "red": {
+      "culprit": "t_a95620e848",
+      "culpritLanded": true,
+      "named": [
+        "t_a95620e848"
+      ],
+      "attributed": true
+    },
+    "errors": []
+  },
+  {
+    "scenario": "steady",
+    "mode": "before",
+    "tickets": 20,
+    "landed": 20,
+    "suiteRuns": 41,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 2.05,
+    "workerLeasesPerLanded": 1,
+    "landingsPerHour": 4025,
+    "approveToMergedMs": {
+      "p50": 383,
+      "p95": 387
+    },
+    "mergedToVerifiedMs": {
+      "p50": 1016,
+      "p95": 1020
+    },
+    "notLanded": [],
+    "unverified": 0,
+    "red": {
+      "culprit": "t_0fae324d06",
+      "culpritLanded": true,
+      "named": [
+        "t_0fae324d06"
+      ],
+      "attributed": true
+    },
+    "errors": []
+  },
+  {
+    "scenario": "steady",
+    "mode": "after",
+    "tickets": 20,
+    "landed": 20,
+    "suiteRuns": 38,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 1.9,
+    "workerLeasesPerLanded": 0,
+    "landingsPerHour": 3874,
+    "approveToMergedMs": {
+      "p50": 380,
+      "p95": 390
+    },
+    "mergedToVerifiedMs": {
+      "p50": 1534,
+      "p95": 1994
+    },
+    "notLanded": [],
+    "unverified": 0,
+    "red": {
+      "culprit": "t_373a065ac0",
+      "culpritLanded": true,
+      "named": [
+        "t_373a065ac0"
+      ],
+      "attributed": true
+    },
+    "errors": []
+  },
+  {
+    "scenario": "mr",
+    "mode": "before",
+    "tickets": 20,
+    "landed": 20,
+    "suiteRuns": 41,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 2.05,
+    "workerLeasesPerLanded": 1,
+    "landingsPerHour": 3526,
+    "approveToMergedMs": {
+      "p50": 6268,
+      "p95": 10476
+    },
+    "mergedToVerifiedMs": {
+      "p50": 8862,
+      "p95": 9143
+    },
+    "notLanded": [],
+    "unverified": 0,
+    "red": {
+      "culprit": "t_4e6a4969a4",
+      "culpritLanded": true,
+      "named": [
+        "t_4e6a4969a4"
+      ],
+      "attributed": true
+    },
+    "errors": []
+  },
+  {
+    "scenario": "mr",
+    "mode": "after",
+    "tickets": 20,
+    "landed": 20,
+    "suiteRuns": 24,
+    "unlandedOwnChecks": 0,
+    "suiteRunsPerLanded": 1.2,
+    "workerLeasesPerLanded": 0,
+    "landingsPerHour": 5285,
+    "approveToMergedMs": {
+      "p50": 6250,
+      "p95": 10407
+    },
+    "mergedToVerifiedMs": {
+      "p50": 5869,
+      "p95": 9153
+    },
+    "notLanded": [],
+    "unverified": 0,
+    "red": {
+      "culprit": "t_c631f911ed",
+      "culpritLanded": true,
+      "named": [
+        "t_ae274f8658",
+        "t_aabe09c76d",
+        "t_07742b3050",
+        "t_df4a201706",
+        "t_61ab0fd7db",
+        "t_0f1ce45903",
+        "t_0d66e215d0",
+        "t_08001b4eb1",
+        "t_b4c652a85a",
+        "t_c631f911ed"
+      ],
+      "attributed": true
+    },
+    "errors": []
+  }
+]

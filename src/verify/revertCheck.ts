@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { provisionDeps } from '../deps.ts';
-import { checkoutWorktree, PINNED, pinnedEnv, pinnedGit, type ChangedFile } from '../isolate.ts';
+import { PINNED, pinnedEnv, pinnedGit } from '../gitExec.ts';
+import { checkoutWorktree, type ChangedFile } from '../isolate.ts';
 import { isTestPath } from './literals.ts';
 import { removeScratch } from './tests.ts';
 
@@ -44,7 +45,7 @@ type FileOutcome = RevertCheckResult['files'][number];
 
 /**
  * Every git call here runs in the daemon, in the operator's repo or in the jail, and both read a config and a git
- * directory the worker can write. So they go through isolate.ts's own (`pinnedGit`): no hooks — `worktree add` runs
+ * directory the worker can write. So they go through gitExec.ts's (`pinnedGit`): no hooks — `worktree add` runs
  * post-checkout — no fsmonitor program, no extra attributes file, no signing, objects read as stored, no GIT_*
  * variable of the daemon's pointing the call at another repository, and every filter and merge driver the config
  * names switched off (`hash-object -- <path>` ran a clean filter, `merge-tree` a merge driver).

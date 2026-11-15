@@ -3,11 +3,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isProtectedPath, PROTECTED_PATHS } from '../src/security/coreGuard.ts';
 
 // Architecture guard: the shape of src/ as the import graph and the environment reads show it.
 //
-// UPDATE RULE: a change that adds an import edge covered below, a FOREMAN_* read outside config.ts, or an import
-// cycle updates the allowlist in this file in its own diff, with a one-line reason, and its reviewer checks that
+// UPDATE RULE: a change that adds an import edge covered below, a FOREMAN_* read outside config.ts, a new src file
+// that touches process.env, or an import cycle updates the allowlist in this file in its own diff, with a one-line reason, and its reviewer checks that
 // entry. An entry that no longer matches anything fails too, so a fixed cycle or a removed read leaves the list in
 // the same diff that fixes it.
 
@@ -74,6 +75,33 @@ export function scanSource(text: string): Spec[] {
   return out;
 }
 
+/** True when the source text references process.env outside a comment (a read, a write or a whole-env pass). */
+export function touchesProcessEnv(text: string): boolean {
+  return /\bprocess\s*\.\s*env\b/.test(stripComments(text));
+}
+
+/** Each value import in `specs` that is neither relative nor a node:* built-in, as "<file>: '<specifier>'". */
+export function bareValueImports(file: string, specs: Spec[]): string[] {
+  return specs.filter((s) => !s.typeOnly && !s.spec.startsWith('.') && !s.spec.startsWith('node:')).map((s) => `${file}: '${s.spec}'`);
+}
+
+/** Each package a package.json object would install at runtime, as "package.json <field>: <name>". */
+export function runtimeDependencies(pkg: Record<string, unknown>): string[] {
+  return ['dependencies', 'optionalDependencies', 'peerDependencies'].flatMap((field) =>
+    Object.keys(pkg[field] ?? {}).map((name) => `package.json ${field}: ${name}`),
+  );
+}
+
+/**
+ * Each unprotected module whose value importers are all protected (and there is at least one), sorted: a helper only
+ * protected code uses, whose behaviour a run can change without touching a protected file.
+ */
+export function protectedOnlyHelpers(graph: Map<string, Set<string>>, isProtected: (f: string) => boolean): string[] {
+  const importers = new Map<string, string[]>();
+  for (const [from, tos] of graph) for (const to of tos) importers.set(to, [...(importers.get(to) ?? []), from]);
+  return [...importers].filter(([to, froms]) => !isProtected(to) && froms.every(isProtected)).map(([to]) => to).sort();
+}
+
 function listTs(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
@@ -86,11 +114,16 @@ const known = new Set(files);
 const value = new Map<string, Set<string>>();
 const typeOnly = new Map<string, Set<string>>();
 const envReads = new Map<string, Set<string>>();
+const processEnvFiles: string[] = [];
+const bareImports: string[] = [];
 for (const f of files) {
   const text = fs.readFileSync(path.join(SRC, '..', f), 'utf8');
   value.set(f, new Set());
   typeOnly.set(f, new Set());
-  for (const { spec, typeOnly: t } of scanSource(text)) {
+  const specs = scanSource(text);
+  bareImports.push(...bareValueImports(f, specs));
+  if (touchesProcessEnv(text)) processEnvFiles.push(f);
+  for (const { spec, typeOnly: t } of specs) {
     if (!spec.startsWith('.')) continue;
     const base = path.posix.normalize(path.posix.join(path.posix.dirname(f), spec));
     const target = [base, `${base}.ts`, `${base}/index.ts`].find((c) => known.has(c));
@@ -126,28 +159,54 @@ function cycles(graph: Map<string, Set<string>>): string[][] {
 }
 
 // (a) Every cycle of value imports, by strongly connected component, with why it is allowed.
-const CYCLES: { files: string[]; reason: string }[] = [
-  {
-    files: ['src/isolate.ts', 'src/security/coreGuard.ts'],
-    reason: 'coreGuard takes driverlessEnv from isolate.ts, and isolate.ts takes changedPaths from coreGuard',
-  },
-];
+const CYCLES: { files: string[]; reason: string }[] = [];
 
 // (b) Edges out of src/security/* beyond config, types, localOnly and security itself, with why.
 const SECURITY_EDGES: Record<string, string> = {
-  'src/security/coreGuard.ts -> src/isolate.ts': 'coreGuard takes driverlessEnv from isolate.ts',
+  'src/security/coreGuard.ts -> src/gitExec.ts': 'coreGuard takes driverlessEnv from gitExec.ts',
 };
 
 // (c) The modules queue.ts imports as values.
 const QUEUE_IMPORTS = [
-  'src/archive.ts', 'src/assign.ts', 'src/assistant/retro.ts', 'src/db.ts', 'src/isolate.ts', 'src/runners/proctree.ts',
-  'src/schedule.ts', 'src/skills.ts', 'src/types.ts', 'src/verify/followUpChain.ts',
+  'src/archive.ts', 'src/assign.ts', 'src/assistant/retro.ts', 'src/db.ts', 'src/gitExec.ts', 'src/isolate.ts',
+  'src/runners/proctree.ts', 'src/schedule.ts', 'src/skills.ts', 'src/types.ts', 'src/verify/followUpChain.ts',
 ];
+
+// (d) Value edges into src/align/ and src/prose/ from the rest of src/, with why. The core reaches the alignment and
+// prose features only through these.
+const ALIGN_PROSE_EDGES: Record<string, string> = {
+  'src/assistant/repoBrief.ts -> src/align/redact.ts': 'the repo brief redacts secrets before it leaves the machine',
+  'src/cli.ts -> src/align/extension.ts': '`serve` registers the align extension (persona start, local-model-lock hold)',
+  'src/cli.ts -> src/align/dataset.ts': '`align` builds its datasets (dynamic import)',
+  'src/cli.ts -> src/align/extract.ts': '`align` extracts its samples (dynamic import)',
+  'src/cli.ts -> src/align/governor.ts': '`persona train` runs under the machine governor (dynamic import)',
+  'src/cli.ts -> src/align/localLock.ts': '`persona lock` reports the local model lock (dynamic import)',
+  'src/cli.ts -> src/align/manuscript.ts': '`persona ingest` builds training pairs from a manuscript (dynamic import)',
+  'src/cli.ts -> src/align/personaAdopt.ts': '`persona adopt` gates a persona (dynamic import)',
+  'src/cli.ts -> src/align/personaData.ts': '`persona ingest` and `persona build` write its datasets (dynamic import)',
+  'src/cli.ts -> src/align/personaServe.ts': '`persona serve` starts and stops a persona server (dynamic import)',
+  'src/cli.ts -> src/align/personas.ts': '`persona` commands read the persona registry (dynamic import)',
+  'src/cli.ts -> src/align/train.ts': '`align train` and `align status` train and check adapters (dynamic import)',
+  'src/cli.ts -> src/prose/audit.ts': '`prose audit` audits a manuscript directory',
+  'src/cli.ts -> src/prose/ingest.ts': '`prose import` splits a manuscript into chapters',
+  'src/cli.ts -> src/prose/tics.ts': '`persona ingest` leaves out passages with tics (dynamic import)',
+  'src/drill.ts -> src/align/personaHealth.ts': 'the drill reports adopted personas that do not answer',
+  'src/models.ts -> src/align/personas.ts': 'a persona model resolves to its server URL',
+  'src/roles.ts -> src/align/personas.ts': 'a role picks the persona for a task',
+  'src/runners/api.ts -> src/align/personaHealth.ts': 'the api runner refuses an unreachable persona',
+  'src/runners/api.ts -> src/prose/contextPack.ts': 'the api runner briefs a prose ticket with its context pack',
+  'src/scheduler.ts -> src/prose/auditWorker.ts': 'the scheduler audits prose off the main thread',
+  'src/scheduler.ts -> src/prose/linecheck.ts': 'the scheduler checks a prose change for fact drift',
+  'src/server.ts -> src/align/personaHealth.ts': 'the API reports persona health',
+  'src/server.ts -> src/align/personas.ts': 'the API reports persona server URLs',
+  'src/server.ts -> src/prose/audit.ts': 'the API formats a prose audit report',
+  'src/server.ts -> src/prose/auditWorker.ts': 'the API runs a prose audit off the main thread',
+};
 
 // (e) FOREMAN_* names read outside config.ts, per file: each module's own tuning, read where it is used.
 const ENV_READS: Record<string, string[]> = {
-  'src/agents.ts': ['FOREMAN_AGENTS_DIR'],
   'src/agreement.ts': ['FOREMAN_SHADOW_LOCAL'],
+  'src/align/extension.ts': ['FOREMAN_IGNORE_TRAINING_LOCK'],
   'src/align/extract.ts': ['FOREMAN_ALIGN_DIR', 'FOREMAN_CLAUDE_PROJECTS', 'FOREMAN_COWORK_SESSIONS'],
   'src/align/governor.ts': ['FOREMAN_PYTHON', 'FOREMAN_TRAIN_MEMORY_SHARE', 'FOREMAN_TRAIN_NICE'],
   'src/align/localLock.ts': ['FOREMAN_LOCAL_LOCK'],
@@ -156,16 +215,13 @@ const ENV_READS: Record<string, string[]> = {
   'src/align/personas.ts': ['FOREMAN_PERSONAS_DIR', 'FOREMAN_PERSONA_BASE', 'FOREMAN_PERSONA_PORT_BASE', 'FOREMAN_PERSONA_URL_'],
   'src/align/redact.ts': ['FOREMAN_ENTROPY_THRESHOLD'],
   'src/align/train.ts': ['FOREMAN_PYTHON'],
-  'src/assign.ts': ['FOREMAN_ASSIGNEE'],
   'src/assistant/crewPlan.ts': ['FOREMAN_MAX_PLAN_TICKETS', 'FOREMAN_MODEL_ROUTER', 'FOREMAN_PLAN_TIMEOUT_MS'],
   'src/assistant/ownerCall.ts': ['FOREMAN_CLAUDE_BIN'],
   'src/backup.ts': ['FOREMAN_BACKUP', 'FOREMAN_BACKUP_COPY_DIR', 'FOREMAN_BACKUP_DIR'],
   'src/budget.ts': ['FOREMAN_DOWNSHIFT', 'FOREMAN_DOWNSHIFT_HOLD_MS', 'FOREMAN_OLLAMA_KEEP_ALIVE', 'FOREMAN_OLLAMA_KEEP_ALIVE_COLD', 'FOREMAN_OLLAMA_URL', 'FOREMAN_VRAM_GUARD'],
   'src/cli.ts': ['FOREMAN_MODEL_TIMEOUT_MS', 'FOREMAN_REVERIFY_WAIT_MS', 'FOREMAN_RUN_ID'],
   'src/deps.ts': ['FOREMAN_DEPS_MODE', 'FOREMAN_SANDBOX'],
-  'src/diskSpace.ts': ['FOREMAN_MIN_FREE_MB'],
   'src/gate.ts': ['FOREMAN_GATE', 'FOREMAN_GATE_BATCH'],
-  'src/gitTimeout.ts': ['FOREMAN_GIT_TIMEOUT_MS'],
   'src/improve.ts': ['FOREMAN_IMPROVE_BUDGET_USD', 'FOREMAN_IMPROVE_PRIORITY'],
   'src/localOnly.ts': ['FOREMAN_LOCAL_MAX_OUTPUT_TOKENS', 'FOREMAN_LOCAL_NUM_CTX', 'FOREMAN_LOCAL_ONLY'],
   'src/memory.ts': ['FOREMAN_OLLAMA_URL', 'FOREMAN_PAGING_ALLOWANCE_GB'],
@@ -173,19 +229,13 @@ const ENV_READS: Record<string, string[]> = {
     'FOREMAN_CLAUDE_BIN', 'FOREMAN_GATEWAY_ALIASES', 'FOREMAN_GATEWAY_IN_RATE', 'FOREMAN_GATEWAY_KEY', 'FOREMAN_GATEWAY_OUT_RATE',
     'FOREMAN_GATEWAY_URL', 'FOREMAN_MODEL_', 'FOREMAN_MODEL_TIMEOUT_MS', 'FOREMAN_OLLAMA_URL',
   ],
-  'src/playbooks.ts': ['FOREMAN_PLAYBOOKS_DIR'],
-  'src/postMerge.ts': ['FOREMAN_POSTMERGE_CHECK'],
-  'src/providerLimit.ts': ['FOREMAN_LIMIT_BACKOFF_MS'],
   'src/roles.ts': ['FOREMAN_MAX_TURNS_SENIOR'],
-  'src/runClock.ts': ['FOREMAN_SLOT_WAIT_CREDIT_MS'],
   'src/runners/api.ts': ['FOREMAN_API_ALLOW_SHELL', 'FOREMAN_API_MAX_TURNS', 'FOREMAN_TOOL_SURFACE'],
   'src/runners/claudeIsolation.ts': ['FOREMAN_CLAUDE_CONFIG_DIR', 'FOREMAN_CLAUDE_ENV_ALLOW'],
   'src/runners/cliRunners.ts': ['FOREMAN_CLAUDE_ALLOWED_TOOLS', 'FOREMAN_CLAUDE_DISALLOWED_TOOLS', 'FOREMAN_CLAUDE_PERMISSION_MODE'],
-  'src/runners/echo.ts': ['FOREMAN_ECHO_STEP_MS'],
   'src/runners/freezeSweep.ts': ['FOREMAN_FREEZE_SWEEP_CAP_MS', 'FOREMAN_FREEZE_SWEEP_FAULT', 'FOREMAN_FREEZE_SWEEP_GRACE_MS'],
-  'src/runners/proctree.ts': ['FOREMAN_LEFTOVER_SAMPLE_MS'],
   'src/scheduler.ts': [
-    'FOREMAN_ARCHIVE_AFTER_DAYS', 'FOREMAN_CLAUDE_RESUME', 'FOREMAN_COUNCIL_DEADLINE_SHARE', 'FOREMAN_IGNORE_TRAINING_LOCK',
+    'FOREMAN_ARCHIVE_AFTER_DAYS', 'FOREMAN_CLAUDE_RESUME', 'FOREMAN_COUNCIL_DEADLINE_SHARE',
     'FOREMAN_RECHECK_MS', 'FOREMAN_REDCHECK_MS', 'FOREMAN_VERIFY',
   ],
   'src/security/sandbox.ts': ['FOREMAN_SANDBOX', 'FOREMAN_SANDBOX_ALLOW', 'FOREMAN_SANDBOX_DENY_PORTS', 'FOREMAN_SANDBOX_RO'],
@@ -201,6 +251,30 @@ const ENV_READS: Record<string, string[]> = {
   'src/verify/triage.ts': ['FOREMAN_FAST_VERIFY', 'FOREMAN_FAST_VERIFY_MAX_LINES'],
   'src/warm.ts': ['FOREMAN_OLLAMA_KEEP_ALIVE', 'FOREMAN_OLLAMA_URL', 'FOREMAN_PREWARM', 'FOREMAN_PREWARM_TIMEOUT_MS'],
 };
+
+// (f) Every src file that references process.env outside a comment, config.ts and whole-env passes to a child
+// included: a new file reading any variable, or handing the daemon's environment on, is a reviewed change.
+const PROCESS_ENV_FILES: string[] = [
+  'src/agreement.ts', 'src/align/extension.ts', 'src/align/extract.ts', 'src/align/governor.ts', 'src/align/localLock.ts',
+  'src/align/personaAdopt.ts', 'src/align/personaServe.ts', 'src/align/personas.ts', 'src/align/redact.ts',
+  'src/align/train.ts', 'src/assistant/crewPlan.ts', 'src/assistant/ownerCall.ts', 'src/backup.ts', 'src/budget.ts',
+  'src/cli.ts', 'src/config.ts', 'src/deps.ts', 'src/gate.ts', 'src/gitExec.ts', 'src/improve.ts', 'src/localOnly.ts',
+  'src/memory.ts', 'src/models.ts', 'src/roles.ts', 'src/runners/api.ts', 'src/runners/claudeIsolation.ts',
+  'src/runners/cliRunners.ts', 'src/runners/freezeSweep.ts', 'src/runners/proc.ts', 'src/runners/shell.ts',
+  'src/scheduler.ts', 'src/security/coreGuard.ts', 'src/security/nodeRoot.ts', 'src/security/sandbox.ts',
+  'src/server.ts', 'src/tools/catalog.ts', 'src/tools/run.ts', 'src/trace.ts', 'src/verify/citedSource.ts',
+  'src/verify/council.ts', 'src/verify/crewReview.ts', 'src/verify/gateOutcome.ts', 'src/verify/slots.ts',
+  'src/verify/testSlot.ts', 'src/verify/tests.ts', 'src/verify/triage.ts', 'src/warm.ts',
+];
+
+// (g) Unprotected modules that only protected src files value-import: a run could change what the guarded code does
+// without touching a protected file. The list may only shrink; protecting one is a change to PROTECTED_PATHS.
+const PROTECTED_ONLY_HELPERS: string[] = [
+  'src/assign.ts', 'src/assistant/playbookForge.ts', 'src/diskSpace.ts', 'src/doctorPlan.ts', 'src/gitTripwire.ts',
+  'src/metrics.ts', 'src/postMerge.ts', 'src/prose/auditWorker.ts', 'src/prose/linecheck.ts', 'src/runClock.ts',
+  'src/runFacts.ts', 'src/runners/index.ts', 'src/schedule.ts', 'src/scope.ts', 'src/verify/assertionCheck.ts',
+  'src/verify/backgroundRun.ts', 'src/verify/workerSuite.ts',
+];
 
 test('the value-import cycles are exactly the allowlisted components', () => {
   const actual = cycles(value).map((c) => c.join(' + '));
@@ -219,6 +293,23 @@ test('src/security value imports stay inside config, types, localOnly, security 
     }
   }
   assert.deepEqual(stray.sort(), Object.keys(SECURITY_EDGES).sort(), 'update SECURITY_EDGES (stale or new edge)');
+});
+
+test('value imports into src/align and src/prose from the rest of src are exactly the allowlisted edges', () => {
+  const feature = (f: string) => f.startsWith('src/align/') || f.startsWith('src/prose/');
+  const edges: string[] = [];
+  for (const [from, tos] of value) {
+    if (!feature(from)) for (const to of tos) if (feature(to)) edges.push(`${from} -> ${to}`);
+  }
+  assert.deepEqual(edges.sort(), Object.keys(ALIGN_PROSE_EDGES).sort(), 'update ALIGN_PROSE_EDGES (stale or new edge)');
+  for (const reason of Object.values(ALIGN_PROSE_EDGES)) assert.ok(reason.length > 0);
+});
+
+test('the scheduler imports nothing from src/align and ARCHITECTURE.md says exactly that', () => {
+  const reach = [...(value.get('src/scheduler.ts') ?? []), ...(typeOnly.get('src/scheduler.ts') ?? [])];
+  assert.deepEqual(reach.filter((to) => to.startsWith('src/align/')), []);
+  const doc = fs.readFileSync(path.join(SRC, '..', 'docs', 'ARCHITECTURE.md'), 'utf8');
+  assert.match(doc, /The scheduler imports nothing from `src\/align\/`/);
 });
 
 test('admit.ts does not reach improve.ts, models.ts, personas.ts, bench.ts or the tool catalog through value imports', () => {
@@ -242,6 +333,49 @@ test('FOREMAN_* reads outside config.ts match the per-file allowlist', () => {
   const actual = Object.fromEntries([...envReads].sort().map(([f, s]) => [f, [...s].sort()]));
   const allowed = Object.fromEntries(Object.entries(ENV_READS).sort().map(([f, a]) => [f, [...a].sort()]));
   assert.deepEqual(actual, allowed, 'update ENV_READS (new read, or a stale entry)');
+});
+
+test('the src files that touch process.env match the allowlist', () => {
+  assert.deepEqual(processEnvFiles, [...PROCESS_ENV_FILES].sort(), 'update PROCESS_ENV_FILES (new file, or a stale entry)');
+});
+
+test('the process.env scan counts code and strings, and not a comment', () => {
+  assert.equal(touchesProcessEnv("const x = process.env['X'];"), true);
+  assert.equal(touchesProcessEnv('spawn(cmd, args, { env: process.env });'), true);
+  assert.equal(touchesProcessEnv('const e = process\n  .env;'), true);
+  assert.equal(touchesProcessEnv("// process.env['X']\n/* process.env.Y */\nconst a = 1;"), false);
+  assert.equal(touchesProcessEnv('const a = process.envelope;'), false);
+});
+
+test('every PROTECTED_PATHS entry exists, and the helpers only protected files import match the allowlist', () => {
+  for (const p of PROTECTED_PATHS) assert.ok(fs.existsSync(path.join(SRC, '..', p)), `${p} does not exist`);
+  assert.deepEqual(protectedOnlyHelpers(value, isProtectedPath), [...PROTECTED_ONLY_HELPERS].sort(), 'update PROTECTED_ONLY_HELPERS (new helper, or a stale entry)');
+});
+
+test('the protected-closure scan flags a helper only protected files import, and not one an unprotected file shares', () => {
+  const graph = new Map<string, Set<string>>([
+    ['src/gate.ts', new Set(['src/newHelper.ts', 'src/shared.ts'])],
+    ['src/cli.ts', new Set(['src/shared.ts'])],
+    ['src/security/admit.ts', new Set(['src/security/coreGuard.ts'])],
+  ]);
+  const isProtected = (f: string) => f === 'src/gate.ts' || f.startsWith('src/security/');
+  assert.deepEqual(protectedOnlyHelpers(graph, isProtected), ['src/newHelper.ts']);
+});
+
+test('the runtime has no dependencies: package.json lists none and src value-imports only node:* built-ins', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(SRC, '..', 'package.json'), 'utf8')) as Record<string, unknown>;
+  assert.deepEqual(runtimeDependencies(pkg), [], 'Foreman is dependency-free at runtime; use a devDependency');
+  assert.deepEqual(bareImports, [], 'src may import only node:* built-ins and relative files');
+});
+
+test('the dependency checks name a bare import with its file and a runtime dependency with its field', () => {
+  const specs = scanSource("import x from 'lodash';\nimport fs from 'node:fs';\nimport type { Y } from 'typescript';\nexport { z } from 'left-pad';\nconst w = await import('chalk');\nimport { a } from './a.ts';");
+  assert.deepEqual(bareValueImports('src/x.ts', specs), ["src/x.ts: 'lodash'", "src/x.ts: 'left-pad'", "src/x.ts: 'chalk'"]);
+  assert.deepEqual(runtimeDependencies({ dependencies: { lodash: '^4' }, optionalDependencies: { a: '1' }, peerDependencies: { b: '2' }, devDependencies: { c: '3' } }), [
+    'package.json dependencies: lodash',
+    'package.json optionalDependencies: a',
+    'package.json peerDependencies: b',
+  ]);
 });
 
 /**

@@ -1,15 +1,12 @@
 import fs from 'node:fs';
+import { config } from './config.ts';
 
 /** The statfs fields the free-space check reads; injectable so tests need no real full disk. */
 export type StatfsFn = (dir: string) => { bavail: number | bigint; bsize: number | bigint };
 
-export const DEFAULT_MIN_FREE_MB = 2048;
-
-/** FOREMAN_MIN_FREE_MB: a non-negative number of MB; empty, non-numeric or negative falls back to the default. */
-export function minFreeMb(raw: string | undefined = process.env['FOREMAN_MIN_FREE_MB']): number {
-  if (raw === undefined || raw.trim() === '') return DEFAULT_MIN_FREE_MB;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MIN_FREE_MB;
+/** FOREMAN_MIN_FREE_MB: a non-negative number of MB; empty, non-numeric or negative falls back to 2048. */
+export function minFreeMb(): number {
+  return config.minFreeMb;
 }
 
 /**

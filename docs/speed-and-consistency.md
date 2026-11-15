@@ -1,7 +1,7 @@
 ## Speed and consistency
 
 ```bash
-foreman doctor --latency          # per-stage medians and p90 over recent runs
+foreman doctor --latency          # per-stage medians and p90, suite time and slot waits, over recent runs
 foreman receipts                  # spend and stage medians together
 foreman prune --days 90           # worktrees, branches, old ledger rows, dep caches
 ```
@@ -44,9 +44,10 @@ overlaps another's review at the same `maxWorkers`. `foreman ls` and the board
 show both numbers.
 
 **Deterministic verdicts.** Every council and chair call pins `temperature 0`
-and a prompt-derived seed, and the opinion cache key covers both — so a decoding
-change is a cache miss rather than a silent reuse of a verdict produced under
-different settings.
+and a prompt-derived seed, and the opinion cache key covers both, plus the
+context window and the output ceiling (`FOREMAN_COUNCIL_NUM_CTX`,
+`FOREMAN_COUNCIL_MAX_TOKENS`) — so a decoding change is a cache miss rather than
+a silent reuse of a verdict produced under different settings.
 
 **Roster pre-warm.** At boot, rung-0's models are warmed sequentially and the
 loop stops as soon as a load evicts a model it just warmed (measured: warming

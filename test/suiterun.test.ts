@@ -12,7 +12,7 @@ import { Store } from '../src/queue.ts';
 import { Scheduler, shellBrief } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { testSlotCommand, workerEnv } from '../src/runners/cliRunners.ts';
-import { acquireVerifySlot, claimRunLease, verifySlotStats } from '../src/verify/slots.ts';
+import { acquireVerifySlot, claimRunLease, runToken, verifySlotStats } from '../src/verify/slots.ts';
 import { FailingBlocks, FAILING_LINES_MAX, OUTPUT_DIR_NAME, resultFileFor, savedOutputs } from '../src/verify/suiteOutput.ts';
 import { readWorkerSuite } from '../src/verify/workerSuite.ts';
 
@@ -80,6 +80,7 @@ const [root, optsJson] = process.argv.slice(2);
 const o = JSON.parse(Buffer.from(optsJson, 'base64').toString());
 fs.appendFileSync(path.join(root, 'starts'), process.pid + '\\n');
 fs.writeFileSync(path.join(root, 'saw-run-id'), String(process.env.FOREMAN_RUN_ID || ''));
+fs.writeFileSync(path.join(root, 'saw-run-token'), String(process.env.FOREMAN_RUN_TOKEN || ''));
 let bytes = 0;
 const put = (s) => { bytes += Buffer.byteLength(s); return process.stdout.write(s); };
 (async () => {
@@ -131,7 +132,11 @@ function wrapper(
     TMPDIR: s.tmp,
   };
   delete env['FOREMAN_RUN_ID'];
-  if (opts.runId) env['FOREMAN_RUN_ID'] = opts.runId;
+  delete env['FOREMAN_RUN_TOKEN'];
+  if (opts.runId) {
+    env['FOREMAN_RUN_ID'] = opts.runId;
+    env['FOREMAN_RUN_TOKEN'] = runToken(opts.runId);
+  }
   const child = spawn(process.execPath, [...(opts.nodeArgs ?? []), WRAPPER, ...(opts.args ?? [])], { cwd: s.work, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
@@ -219,27 +224,32 @@ test('the worker session is told which run it is, and only when there is one', (
 
 test('claimRunLease: one open request per run; another run, and a request that names none, are never refused', () => {
   let now = 50_000;
-  const a = claimRunLease({ 'x-foreman-run': 'r_lease_a', 'x-foreman-wrapper-pid': '4242', 'x-foreman-output': '/tmp/x/foreman-suite-output/r_lease_a-1791-4242.log' }, () => now);
+  const a = claimRunLease({ 'x-foreman-run': 'r_lease_a', 'x-foreman-run-token': runToken('r_lease_a'), 'x-foreman-wrapper-pid': '4242', 'x-foreman-output': '/tmp/x/foreman-suite-output/r_lease_a-1791-4242.log' }, () => now);
   assert.equal(a.busy, null);
   assert.equal(a.runId, 'r_lease_a');
   now += 7_400;
-  const again = claimRunLease({ 'x-foreman-run': 'r_lease_a', 'x-foreman-wrapper-pid': '5555' }, () => now);
+  const again = claimRunLease({ 'x-foreman-run': 'r_lease_a', 'x-foreman-run-token': runToken('r_lease_a'), 'x-foreman-wrapper-pid': '5555' }, () => now);
   assert.equal(again.busy, 'busy 7 4242 /tmp/x/foreman-suite-output/r_lease_a-1791-4242.log', 'who holds it, since when, and where its output goes');
   // The refused one gives nothing back: its release must not free the holder's claim.
   again.release();
-  assert.notEqual(claimRunLease({ 'x-foreman-run': 'r_lease_a' }, () => now).busy, null);
-  const b = claimRunLease({ 'x-foreman-run': 'r_lease_b', 'x-foreman-wrapper-pid': 'not a pid', 'x-foreman-output': 'relative/or\nodd' }, () => now);
+  assert.notEqual(claimRunLease({ 'x-foreman-run': 'r_lease_a', 'x-foreman-run-token': runToken('r_lease_a') }, () => now).busy, null);
+  const b = claimRunLease({ 'x-foreman-run': 'r_lease_b', 'x-foreman-run-token': runToken('r_lease_b'), 'x-foreman-wrapper-pid': 'not a pid', 'x-foreman-output': 'relative/or\nodd' }, () => now);
   assert.equal(b.busy, null, 'a different run is not held up');
-  assert.equal(claimRunLease({ 'x-foreman-run': 'r_lease_b' }, () => now).busy, 'busy 0 -', 'a pid or path that is not one is not repeated');
+  assert.equal(claimRunLease({ 'x-foreman-run': 'r_lease_b', 'x-foreman-run-token': runToken('r_lease_b') }, () => now).busy, 'busy 0 -', 'a pid or path that is not one is not repeated');
   for (const headers of [{}, { 'x-foreman-run': '' }, { 'x-foreman-run': 'has spaces; and more' }, { 'x-foreman-run': 'x'.repeat(200) }]) {
     const first = claimRunLease(headers, () => now);
     const second = claimRunLease(headers, () => now);
     assert.deepEqual([first.runId, first.busy, second.busy], [null, null, null], 'no usable run id: as before, nothing is enforced');
   }
+  // A run named without its own token is a run not named: the holder's claim, and another run's token, prove nothing.
+  for (const headers of [{ 'x-foreman-run': 'r_lease_a' }, { 'x-foreman-run': 'r_lease_a', 'x-foreman-run-token': runToken('r_lease_b') }, { 'x-foreman-run': 'r_lease_a', 'x-foreman-run-token': runToken('r_lease_a').toUpperCase() }]) {
+    const spoof = claimRunLease(headers, () => now);
+    assert.deepEqual([spoof.runId, spoof.busy], [null, null], 'no valid token: anonymous, and never told busy');
+  }
   a.release();
   a.release();
   b.release();
-  const after = claimRunLease({ 'x-foreman-run': 'r_lease_a' }, () => now);
+  const after = claimRunLease({ 'x-foreman-run': 'r_lease_a', 'x-foreman-run-token': runToken('r_lease_a') }, () => now);
   assert.equal(after.busy, null, 'released: the run may ask again');
   after.release();
 });
@@ -356,6 +366,7 @@ test('the whole output is saved outside the working tree, owner-only, and the la
       assert.match(w.stderr(), /testSlot: .* PASSED/);
       // The run id is the wrapper's to send: a suite that starts wrappers of its own must not pass for this run.
       assert.equal(fs.readFileSync(path.join(s.root, 'saw-run-id'), 'utf8'), '');
+      assert.equal(fs.readFileSync(path.join(s.root, 'saw-run-token'), 'utf8'), '', 'nor its token');
     } finally {
       await cleanup(d, s);
     }
@@ -534,13 +545,13 @@ test('the path a refused invocation is told is only ever one the wrapper could h
   ];
   forged.forEach((output, i) => {
     const run = `r_forged_${i}`;
-    const held = claimRunLease({ 'x-foreman-run': run, 'x-foreman-output': output });
-    assert.equal(claimRunLease({ 'x-foreman-run': run }).busy, 'busy 0 -', `not repeated: ${output}`);
+    const held = claimRunLease({ 'x-foreman-run': run, 'x-foreman-run-token': runToken(run), 'x-foreman-output': output });
+    assert.equal(claimRunLease({ 'x-foreman-run': run, 'x-foreman-run-token': runToken(run) }).busy, 'busy 0 -', `not repeated: ${output}`);
     held.release();
   });
   const real = '/private/var/folders/1x/abc/T/foreman-suite-output/r_0000000000-1791763453222-92249.log';
-  const held = claimRunLease({ 'x-foreman-run': 'r_real', 'x-foreman-wrapper-pid': '7', 'x-foreman-output': real });
-  assert.equal(claimRunLease({ 'x-foreman-run': 'r_real' }).busy, `busy 0 7 ${real}`);
+  const held = claimRunLease({ 'x-foreman-run': 'r_real', 'x-foreman-run-token': runToken('r_real'), 'x-foreman-wrapper-pid': '7', 'x-foreman-output': real });
+  assert.equal(claimRunLease({ 'x-foreman-run': 'r_real', 'x-foreman-run-token': runToken('r_real') }).busy, `busy 0 7 ${real}`);
   held.release();
 });
 

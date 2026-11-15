@@ -8,8 +8,9 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
 ```
 
 1. **admit** — the task (and any agent definition) is scanned. A blocking finding refuses the
-   task outright and is **not configurable**. Uses `frisk-scan` when installed; the built-in
-   ruleset always runs.
+   task outright and is **not configurable**. Uses `frisk-scan` when installed (20 s timeout; a
+   missing or failing scanner falls back to the rules alone); the built-in ruleset always runs.
+   The scan runs off the event loop, so the API and the board keep answering while it does.
 2. **isolate** — a code task with `--repo` gets a **git worktree on its own branch**, outside your
    checkout, one branch *per run*. Everything else gets a scratch directory. A repo with
    uncommitted changes is refused and never retried.
@@ -31,7 +32,164 @@ queue → admit → isolate → plan/work/test → verify → gate → merge
    and only you can waive one. A review is advice to the gate: `foreman reopen <id>` puts a
    review-failed task back at `awaiting-approval`, work intact, when you have verified it yourself.
 7. **merge** — approving a code task merges its branch `--no-ff`. It refuses on a dirty repo and
-   aborts cleanly on conflict; your checkout is never left mid-merge.
+   aborts cleanly on conflict; your checkout is never left mid-merge. Everything checked before
+   the merge (approval, the branch, the reviewed tree before and after the worktree is committed,
+   the commit count and the core guard against the commit it lands on) is one step,
+   `prepareLandingCommit`, so any other way of landing runs the same checks; the local merge adds
+   the clean-checkout check, asked before the worktree is committed. Every landing answers a typed
+   `code` beside its `reason` (`MergeResult` in `src/merge.ts`: `merged`, `conflict`,
+   `not-reviewed`, `core-refused` and the rest). The gate, the owner gate, the CLI and the board
+   decide on the code; the reason is the words you are shown and is never matched.
+   Merges in one repo run one at a time (`src/landing/queue.ts`): a second approval in the
+   same repo waits until the first one's checks, decision and merge have settled, whether they
+   passed, failed or threw. The post-merge check (`src/landing/verify.ts`) runs after that, so
+   the next approval in the repo merges while it is tested. A dependent stays `blocked` until a
+   passing check covers its parent's merge; it is released at once when no check runs for that
+   landing (`FOREMAN_POSTMERGE_CHECK=off`, no repo, nothing merged), and a red or interrupted
+   check holds it with the repo. Its epic waits the same way: it closes on the tick after the
+   check ends the hold, not at the decision. By default (`FOREMAN_POSTMERGE_MODE=coalesced`) one check runs
+   per repo at a time: the next one is for the test command of the oldest landing not yet
+   covered (the ticket's `testCmd`, or none, which detects the command at the checked HEAD),
+   at the newest HEAD merged with that command, and it covers every landing with that command
+   whose merge HEAD is an ancestor of it. So merges that land while a check runs share one
+   more check; merges with different commands never cover each other. A red check covering
+   several merges marks the repo red at that HEAD with one `MAIN IS RED` event, on the newest
+   one's timeline, naming them all, and ends all their holds: the red marker holds the repo's
+   work until the scheduler's red re-check passes. The re-check leaves a repo alone while its
+   landing checks still run, so a HEAD merged after the red one is not checked twice at once. An interrupted check names every landing it
+   covered the same way. `FOREMAN_POSTMERGE_MODE=per-merge` runs one check per landing at the
+   HEAD its own merge made, at once, and a red names that merge alone.
+   The hold is in memory; its durable twin is a `landings` row, written before the decision and
+   deleted once the merge (and its ref update) has settled. A daemon that dies in between leaves
+   the row: at the next start the repo shows as `landInterrupted` in `/api/state` with a
+   `land-interrupted(<repo>)` warning on the ticket, and every dependent in that repo stays
+   `blocked` until you check the checkout and run `foreman land-clear <repo>`.
+   An approve answers once its merge has settled, with the merge result and `postMerge: 'pending'`
+   (`'none'` when no check runs); the check runs on in the background, and a shutdown still aborts
+   it and holds the repo as untested. Its `decisions` row is written once, at the merge, and no
+   longer carries the main-check outcome: a red shows as the `MAIN IS RED` event on the ticket's
+   timeline and as the red-repo marker in `/api/state`, an interrupted check as its warning event.
+   While it waits its ticket stays at `awaiting-approval` and nothing is
+   decided: its checks, the decision and the merge all run when its turn comes, so approving the
+   same ticket twice lands it once, and an approval whose turn comes after a daemon shutdown began
+   is refused (approve again after restart). A queued approval is for the run that was parked when
+   it was given: if the ticket has been rejected, retried and parked on another run by its turn,
+   the approval is refused with nothing decided. An owner-gate approval is also refused, as a hold
+   that leaves no durable marker, if by its turn the review changed, the ticket was handed to a
+   person, or it became a hard-human case. Once a principal exists, an approval or a `landed` is
+   also refused, with nothing decided, when four-eyes (`docs/security.md`) does not allow its
+   approver: asked first, and again when its turn comes. Four-eyes never allows the owner model, so
+   with auth on the owner gate (single or batched) only advises: an owner approval is not tried but
+   parked for a person, as a human-only path is, with the model's verdict in its `owner-gate: hold`
+   line and no decision row. The hold leaves the durable marker: the owner model is asked once per
+   park, not again on every sweep. With auth off the owner gate is unchanged. Approvals in different repos land side by side. The queue is keyed by
+   the ticket's repo path, so two tickets naming different directories of one checkout are not
+   queued together.
+   **By merge request.** With `FOREMAN_LANDING=mr`, an approval in a repo whose checkout's top
+   level is mapped in `landing.json` ([configuration](configuration.md#merge-request-landing-landingjson))
+   does not merge into the checkout (`src/landing/mr.ts`). Inside the repo's merge section it
+   fetches the target branch through the forge mirror, runs every `prepareLandingCommit` check
+   against that commit (a refusal is the same code and reason as for a local merge, and work changed
+   after review is refused before anything is pushed), pushes the checked commit to
+   `foreman/<task id>`, finds the open merge request from that branch or opens one, and confirms
+   the MR's head is that commit (GitLab takes a push into an MR that was already open in a
+   background job, so a reused MR's head is read again every 0.5 s for up to 30 s before the
+   approval is refused). The answer is `mr-opened` (`opened !<iid> <url>`). The ticket is
+   `done`, but its landing hold and its `landings` row stay: its dependents stay `blocked` and its
+   epic stays open until the MR merges. A forge or mirror failure, an unreachable forge, an MR
+   head that is not the reviewed commit, or a project whose settings MR landing does not support
+   (read on every approval: a merge method other than `merge`, squash required, merged results
+   pipelines or merge trains) is `mr-refused`: the ticket goes back to
+   `awaiting-approval` with the reason, the hold ends and the row is deleted; approving again
+   writes a second decision and reuses the MR still open. Only an open MR from the project's own
+   `foreman/<task id>` branch into the mapped target branch is reused, and one set
+   to squash is `mr-refused`. Each approval that opens or reuses an MR
+   then posts one note on it naming the reviewed tree, the approver of record, the ticket's author
+   and the decision id, and the decision keeps the MR's iid ([security](security.md)). The MR's
+   description names the task and points to the latest such note, since a reused MR keeps the
+   description it was opened with. Its title is `Foreman <task id>: <ticket title>`, on one line and
+   cut to GitLab's 255 characters; led by the task id, a ticket title such as `Draft: ...` does not
+   make GitLab open a draft MR, which would never merge. Only those steps run in the section, so
+   the next approval in the repo opens its own MR without waiting for CI; a slow forge holds the
+   section for at most about five forge calls of 15 s each, plus the mirror's git (and those
+   30 s when a reused MR's head lags). A change to
+   Foreman itself always lands by the local merge. A daemon that stops with an MR open leaves its
+   `landings` row, so the next start holds the repo until `foreman land-clear <repo>`, and sends the
+   `done` ticket back to `awaiting-approval` (nothing follows the MR after a restart): approving
+   again reuses the MR. A row kept because GitLab merged the MR but the checkout could not take it
+   (`land-held`) leaves the ticket `done`. A mapped
+   ticket is not hand-landed with `foreman landed` (409), except to record its own MR merged on the
+   forge at the reviewed tree ([commands](commands.md)); with auth on, no ticket is hand-landed otherwise.
+
+   **Merging the MR.** A tick stage, before the dispatch gate so a full machine still polls, reads
+   each open MR at most every `FOREMAN_MR_POLL_MS`, one call at a time per MR; the tick never waits
+   for the forge. Each change of state is one event on the ticket.
+   - The ticket left `done` (in practice it was deleted with `foreman rm`: a `done` ticket cannot
+     be rejected, canceled or reopened, and archiving does not change its status; to withdraw an
+     approval, close the MR on GitLab, which sends the ticket back to the gate): the MR is no longer
+     followed, the hold ends and the row is deleted. No merge call is made for it (`no merge made
+     by Foreman`). The MR gets one note, `No longer approved in Foreman: the ticket is <status>`,
+     and stays open; a note the forge refuses is a `warning`. After a merge call that got no answer (a timeout), the MR is read first: it is
+     dropped only if it still reads open; merged, it is settled as below.
+   - The MR's head is not the reviewed commit, its target branch is not the mapped one or it is
+     set to squash (someone edited it on GitLab), its pipeline for that commit `failed` or was
+     `canceled`, a person closed it, or GitLab refuses the merge call itself (401 or 403, or a
+     refusal while the status reads something other than a transient word such as `checking`; a
+     merge GitLab answers 200 with the MR still open, as
+     when a hook refuses the merge commit, is such a refusal, with GitLab's `merge_error` as the message):
+     the ticket goes back to `awaiting-approval` with the reason (the pipeline's URL, or GitLab's
+     message), the hold ends and the row is deleted. The MR gets one note, `Not merged by Foreman:
+     <reason>`, saying it is no longer approved in Foreman (a note the forge refuses is a
+     `warning`), and stays open, so approving again reuses it. After a failed or canceled
+     pipeline, retry the pipeline in GitLab (or rework the ticket) first: approving again pushes
+     the same reviewed commit, which starts no pipeline, so it reads the same failed one and
+     returns at once. Foreman makes no call to retry a pipeline.
+   - A merge status of `conflict` or `need_rebase` (another merge into the target came first): the
+     ticket goes back to the gate at once, as above, with `rework it, then approve again`. Only a new
+     commit on the MR clears either, and a head that is not the reviewed commit is never merged.
+   - No pipeline yet, one for another commit, one still running (with `requirePipeline`; without
+     it no pipeline is needed), or another merge status other than `mergeable`: it waits, and no
+     merge call is made. That includes the lasting words as well as the transient ones:
+     `not_approved` (required GitLab approvals), `draft_status` and `discussions_not_resolved` wait
+     like `checking` or `ci_still_running`, so a person can still fix them on GitLab. Only `FOREMAN_MR_TIMEOUT_MIN` after the MR was opened does waiting give up and send
+     the ticket back to the gate, with the last status as the reason. A forge or mirror failure while
+     polling is waited out the same way, except that a merge call that got no answer, or a server
+     error (5xx), is first read back: the timeout applies only once a read shows the MR still open.
+     Each such call the next read shows open counts: the third sends the ticket back to the gate
+     with the last error, and so does the first once the timeout has passed.
+     A merge call GitLab answers with another 4xx is a definite answer that nothing merged, and the
+     timeout applies to it as to any wait. GitLab answers 401 or 403 when the token may not merge
+     into the target branch: that is a refusal, and the ticket goes back to the gate at once.
+   - Pipeline `success` for the reviewed commit and `mergeable`: four-eyes (`docs/security.md`) is
+     asked again for the approve decision's actor, then one merge call at the reviewed sha, which
+     GitLab refuses if the head has moved. Merge calls into one target branch are sent one at a
+     time (GitLab may refuse two that overlap); the MR (as in the cases above), the ticket, the repo hold (below) and four-eyes are read again in its turn, right before the call, so an MR a person merged, closed or edited while the merge waited is handled as read. A merge call GitLab refuses is read back too: an MR a person merged just before the call is confirmed (below), one closed goes back to the gate. A turn that makes a merge call lasts until that merge is
+     confirmed and the checkout synced, or the repo held for it (not until its post-merge check),
+     so a merge that cannot be confirmed holds the repo before the next merge call. If four-eyes now refuses (the approver was disabled while
+     the pipeline ran, the creator changed, or the rule no longer allows it), no merge call is made,
+     and the ticket goes back to `awaiting-approval` with the reason and that note, as above.
+   - The repo is held (below, or a crash mid-merge): it waits, with no merge call, until
+     `foreman land-clear <repo>`.
+   - Merged (by Foreman, or by a person in GitLab): the mirror fetches the target branch and
+     confirms the merge commit is on it with the reviewed commit as its second parent. Confirmed
+     (`merged !<iid> at <sha>`), the checkout is synced inside the repo's merge section, so two MRs
+     of a repo confirmed in one tick sync one after the other: the merge commit is copied in from
+     the mirror (no URL is resolved in the task repo) and the checkout is fast-forwarded to it
+     (`merge --ff-only` by sha, pinned git, hooks off), but only when it is on the target branch and
+     clean. Then the row is deleted (`checkout synced to <sha>`) and the merge commit gets the
+     post-merge check, as a local merge's HEAD does: per merge or coalesced
+     (`FOREMAN_POSTMERGE_MODE`), red attributed to the ticket the same way. The landing hold ends
+     with the check, so a dependent is released on green; with `FOREMAN_POSTMERGE_CHECK=off` it
+     ends at the sync.
+   - Not confirmed, or a checkout that cannot be synced (`checkout dirty`, `checkout not on
+     <branch>`, a fast-forward git refuses): the repo is held as a crash mid-merge holds it. The
+     ticket gets a `land-held(<repo>): <reason>` warning, the repo is listed in `GET /api/state`
+     (`landInterrupted`), its dependents stay `blocked`, its other MRs are not merged, and the
+     ticket's hold and row stay until you sync the checkout by hand and run
+     `foreman land-clear <repo>`, which ends the hold and deletes the row.
+     A merge made on the forge is settled this way even when the ticket left `done` meanwhile
+     (a person reopened it during the merge call), with a warning naming its status; a confirm
+     that fails (a mirror failure) is retried at the next poll, with the hold and the row kept.
 
 ### A dependent waiting on a canceled ticket
 
@@ -57,7 +215,7 @@ What the gate recorded before: only its own test stage, plus timeline lines whil
 At collection (before the gate's own tests touch the jail) the daemon reads `savedOutputs(outputDir, runId)` — the run key matched exactly, so output under `r_1-2` does not count for `r_1` — and writes one `worker-suite` event, a `worker-suite` artifact (its summary is the line, so it shows in `foreman show` and `/api/state`) and a line (on the run's timeline and as that artifact's summary; it is not put in the reviewers' input):
 
 - `worker suite: PASSED|FAILED at <time> (advisory, written by worker-side code)`, read from the `.result` file the wrapper writes beside the output once the suite has ended (a run cut short has none and says `no result line`), with `; changed after the worker's suite` when a file or folder in the jail (not `.git`, not `node_modules`) has a newer mtime than the last saved output (a folder's changes when a file in it is deleted or renamed);
-- `the worker never ran the suite` when there is no saved output;
+- `the worker never ran the suite` when there is no saved output, or `worker suite: not run (FOREMAN_WORKER_SUITE=targeted)` under that setting, where no run is the policy, not an omission (a run the worker made anyway is reported as above);
 - `worker suite: could not read its saved output (<reason>)` when the output folder cannot be read. Collection goes on.
 
 The line is **advisory** and holds nothing: the output is written by worker-side code in a folder the worker can write, and "changed after" is a file-mtime comparison, so an unsandboxed worker can forge either. The gate's own test stage is the result that counts. The daemon looks in its own temp dir (`os.tmpdir()`), which is the worker's only when they share it.
@@ -174,12 +332,22 @@ A `claude-code` worker runs the full suite through the slot wrapper,
 `node <foreman>/src/verify/testSlot.ts [-- <cmd>]`, which takes one of the `FOREMAN_MAX_VERIFIES`
 slots from the daemon and runs the command while it holds it.
 
-- **One suite run per ticket at a time.** The worker session carries `FOREMAN_RUN_ID`; the wrapper
-  sends it, and the daemon refuses a second request for the same run while the first is open. The
-  second invocation runs nothing, takes no slot and exits **4** with
+Under `FOREMAN_WORKER_SUITE=targeted` (default `full`, see [configuration](configuration.md)) the worker's brief
+instead asks it to run only the tests for what it changed, says the gate runs the full suite and its result is the
+one that counts, says this replaces any full-suite step in the role's prompt above it (the software playbook's dev
+and qa roles say to run the suite once), and names the wrapper as the only route for a full run if it must make one.
+A `codex-cli` worker, which has no wrapper, gets all of that but the wrapper route. The policy is advisory, not enforced: the worker's
+`--allowedTools` and `--disallowedTools` are unchanged (`Bash(node --test:*)` and `Bash(npm run:*)` could start a full
+run anyway), so the wrapper stays allowed and a full run the worker still makes takes a verify slot. The gate's own
+test stage is unchanged.
+
+- **One suite run per ticket at a time.** The worker session carries `FOREMAN_RUN_ID` and its proof
+  `FOREMAN_RUN_TOKEN` (see [security](security.md)); the wrapper sends both, and the daemon refuses
+  a second request for the same run while the first is open. The second invocation runs nothing, takes no slot and exits **4** with
   `testSlot: a suite run for this ticket is already in progress (started <N> s ago, pid <p>); wait for it — its full output will be at <path>`.
   The claim lasts as long as the first wrapper's connection, so a wrapper that died holds nothing.
-  Other tickets, and a wrapper started with no run id (by hand), are not held to each other. With
+  Other tickets, and a wrapper started with no run id or without that run's token (by hand), are
+  not held to each other. With
   no daemon to ask, or one started before this version, the wrapper runs as it did before and
   nothing enforces the rule. Exit codes: 0 passed, 1 failed, 2 nothing was run (refused command,
   no command, `--saved` with nothing saved), 3 no slot within `FOREMAN_SLOT_WAIT_MS`, 4 already running.

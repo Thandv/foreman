@@ -2395,7 +2395,7 @@ export interface DebriefOptions extends CollectOptions, DiagnoseOptions {
  */
 export async function runDebrief(
   store: Store, broker: Broker | (() => Broker) | null, subjectId: string, opts: DebriefOptions = {},
-): Promise<{ report: DebriefReport; paths: { json: string; md: string } }> {
+): Promise<{ report: DebriefReport; paths: { json: string; md: string }; warnings: string[] }> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(subjectId)) throw new Error(`not a task id: ${subjectId.slice(0, 80)}`);
   const collect = collectDebrief(store, subjectId, opts);
   const { notes, problems } = readNotes(opts.notes ?? []);
@@ -2405,10 +2405,16 @@ export async function runDebrief(
   };
   // Before the model call, not after it: a report that cannot be written must not cost a call first.
   const dir = opts.outDir ?? path.join(opts.home ?? config.home, 'debriefs');
-  fs.mkdirSync(dir, { recursive: true });
+  // The reports quote the ledger: a directory made here is the owner's alone, whatever the umask.
+  const created = fs.mkdirSync(dir, { recursive: true, mode: 0o700 }) !== undefined;
   // A `debriefs` that is a link would send the report wherever it points.
   const st = fs.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${dir} is not a directory of its own (a link, or a file): the debrief was not written`);
+  if (created) fs.chmodSync(dir, 0o700);
+  // An existing directory is the person's to change; one open to others is said, not silently narrowed.
+  const warnings = !created && (st.mode & 0o077) !== 0
+    ? [`${dir} is open to group or others (mode ${(st.mode & 0o777).toString(8)}); the reports in it are 0600, but chmod 700 it to keep their names private too`]
+    : [];
   if (!opts.noModel && broker) {
     try {
       // A broker given as a function is made only here: with --no-model nothing that can write the ledger exists.
@@ -2425,16 +2431,16 @@ export async function runDebrief(
   const paths = { json: path.join(dir, `${subjectId}.json`), md: path.join(dir, `${subjectId}.md`) };
   writeWhole(paths.json, `${JSON.stringify(report, null, 2)}\n`);
   writeWhole(paths.md, renderMarkdown(report));
-  return { report, paths };
+  return { report, paths, warnings };
 }
 
 /**
- * Write `file` through a new file beside it and a rename: a link already standing at `file` is replaced, never
+ * Write `file` (0600: it quotes the ledger) through a new file beside it and a rename: a link already standing at `file` is replaced, never
  * written through, and two debriefs of one epic at once leave one whole report, not a mix of two.
  */
 function writeWhole(file: string, text: string): void {
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
-  const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
+  const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
   try {
     try {
       fs.writeFileSync(fd, text);

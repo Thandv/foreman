@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.ts';
+import { processAlive } from '../lock.ts';
 import { admit, AdmissionBlocked, type Finding } from '../security/admit.ts';
 import { validate, type Schema } from './schema.ts';
 import { probeTask } from '../types.ts';
@@ -51,36 +53,132 @@ function statePath(): string {
   return path.join(config.home, 'tool-state.json');
 }
 
+/** A lock older than this is abandoned whoever holds it: a state write takes milliseconds. */
+const LOCK_STALE_MS = 30_000;
+const LOCK_POLL_MS = 10;
+const lockSleeper = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * The whole state file. A missing file is no state; a file that exists but
+ * cannot be read as a JSON object is an error, never "no state": reading it as
+ * empty let the next write drop every tool's entry, quarantines included.
+ */
 function readAllState(): Record<string, ToolState> {
+  const file = statePath();
+  const unreadable = (detail: string): ToolError =>
+    new ToolError(`${file} is unreadable (${detail}); move it aside to start tool state afresh: mv ${file} ${file}.corrupt`);
+  let text: string;
   try {
-    return JSON.parse(fs.readFileSync(statePath(), 'utf8')) as Record<string, ToolState>;
-  } catch {
-    return {};
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw unreadable((err as Error).message);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw unreadable((err as Error).message);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw unreadable('not a JSON object');
+  return parsed as Record<string, ToolState>;
 }
 
 export function defaultState(): ToolState {
   return { stats: { calls: 0, failures: 0, consecutiveFailures: 0, lastUsed: null }, quarantined: false, quarantineReason: null };
 }
 
-function readState(name: string): ToolState | null {
-  const all = readAllState();
-  return all[name] ?? null;
+/** A lock is stale when it is older than LOCK_STALE_MS or its recorded pid is dead. */
+function lockIsStale(file: string): boolean {
+  let mtimeMs: number;
+  let holder: string;
+  try {
+    mtimeMs = fs.statSync(file).mtimeMs;
+    holder = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false; // released meanwhile: just retry
+    throw err;
+  }
+  if (Date.now() - mtimeMs > LOCK_STALE_MS) return true;
+  // An empty file is a holder between its O_EXCL create and its write, not a dead one.
+  const pid = Number(holder.split(' ')[0]);
+  return Number.isInteger(pid) && pid > 0 && !processAlive(pid);
+}
+
+/**
+ * Take `tool-state.json.lock` (O_CREAT|O_EXCL), waiting for a live holder and
+ * reclaiming a stale one. The CLI and the daemon both write tool state, so an
+ * unlocked read-modify-write lost one side's update. Returns the release.
+ */
+function lockState(): () => void {
+  const file = `${statePath()}.lock`;
+  const token = `${process.pid} ${crypto.randomBytes(8).toString('hex')}\n`;
+  for (;;) {
+    try {
+      fs.writeFileSync(file, token, { flag: 'wx' });
+      return () => {
+        let held: string;
+        try {
+          held = fs.readFileSync(file, 'utf8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+          throw err;
+        }
+        // Never remove a lock that was reclaimed from us and taken by another writer.
+        if (held === token) fs.rmSync(file);
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+    if (lockIsStale(file)) fs.rmSync(file, { force: true });
+    else Atomics.wait(lockSleeper, 0, 0, LOCK_POLL_MS);
+  }
+}
+
+/** Replace the state file whole: write an O_EXCL temp file, then rename it over. */
+function replaceState(all: Record<string, ToolState>): void {
+  const file = statePath();
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    const fd = fs.openSync(tmp, 'wx');
+    try {
+      fs.writeSync(fd, `${JSON.stringify(all, null, 2)}\n`);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+/** Read-modify-write the state file under its lock; `change` returns false when nothing changed. */
+function updateState(change: (all: Record<string, ToolState>) => boolean): void {
+  fs.mkdirSync(config.home, { recursive: true });
+  const release = lockState();
+  try {
+    const all = readAllState();
+    if (change(all)) replaceState(all);
+  } finally {
+    release();
+  }
 }
 
 function writeState(name: string, state: ToolState): void {
-  fs.mkdirSync(config.home, { recursive: true });
-  const all = readAllState();
-  all[name] = state;
-  fs.writeFileSync(statePath(), `${JSON.stringify(all, null, 2)}\n`);
+  updateState((all) => {
+    all[name] = state;
+    return true;
+  });
 }
 
 function clearState(name: string): void {
-  const all = readAllState();
-  if (!(name in all)) return;
-  delete all[name];
-  fs.mkdirSync(config.home, { recursive: true });
-  fs.writeFileSync(statePath(), `${JSON.stringify(all, null, 2)}\n`);
+  updateState((all) => {
+    if (!(name in all)) return false;
+    delete all[name];
+    return true;
+  });
 }
 
 export function assertName(name: string): string {
@@ -138,7 +236,16 @@ export function getTool(name: string): ToolManifest | null {
   // Overlay mutable state from home. A tool predating the split keeps whatever
   // stats its manifest still carries (the legacy read path), until its next use
   // moves them out to the state file.
-  const state = readState(name);
+  let state: ToolState | undefined;
+  try {
+    state = readAllState()[name];
+  } catch (err) {
+    if (!(err instanceof ToolError)) throw err;
+    // Unreadable state cannot vouch that a tool is not quarantined: fail closed.
+    base.quarantined = true;
+    base.quarantineReason = err.message;
+    return base;
+  }
   if (state) {
     base.stats = { ...base.stats, ...state.stats };
     base.quarantined = state.quarantined;
@@ -383,31 +490,37 @@ export function removeTool(name: string): void {
 export function recordUse(name: string, ok: boolean, reason?: string): ToolManifest | null {
   const tool = getTool(name);
   if (!tool) return null;
-  const state: ToolState = readState(name) ?? { stats: { ...tool.stats }, quarantined: tool.quarantined, quarantineReason: tool.quarantineReason };
-  state.stats.calls++;
-  state.stats.lastUsed = new Date().toISOString();
-  if (ok) {
-    state.stats.consecutiveFailures = 0;
-  } else {
-    state.stats.failures++;
-    state.stats.consecutiveFailures++;
-    if (state.stats.consecutiveFailures >= QUARANTINE_AFTER) {
-      state.quarantined = true;
-      state.quarantineReason = `${state.stats.consecutiveFailures} consecutive failures; last: ${reason ?? 'unknown'}`;
+  updateState((all) => {
+    const state: ToolState = all[name] ?? { stats: { ...tool.stats }, quarantined: tool.quarantined, quarantineReason: tool.quarantineReason };
+    state.stats.calls++;
+    state.stats.lastUsed = new Date().toISOString();
+    if (ok) {
+      state.stats.consecutiveFailures = 0;
+    } else {
+      state.stats.failures++;
+      state.stats.consecutiveFailures++;
+      if (state.stats.consecutiveFailures >= QUARANTINE_AFTER) {
+        state.quarantined = true;
+        state.quarantineReason = `${state.stats.consecutiveFailures} consecutive failures; last: ${reason ?? 'unknown'}`;
+      }
     }
-  }
-  writeState(name, state);
+    all[name] = state;
+    return true;
+  });
   return getTool(name);
 }
 
 export function setQuarantine(name: string, quarantined: boolean, reason?: string): ToolManifest {
   const tool = getTool(name);
   if (!tool) throw new ToolError(`unknown tool: ${name}`);
-  const state: ToolState = readState(name) ?? { stats: { ...tool.stats }, quarantined: tool.quarantined, quarantineReason: tool.quarantineReason };
-  state.quarantined = quarantined;
-  state.quarantineReason = quarantined ? (reason ?? 'quarantined by operator') : null;
-  if (!quarantined) state.stats.consecutiveFailures = 0;
-  writeState(name, state);
+  updateState((all) => {
+    const state: ToolState = all[name] ?? { stats: { ...tool.stats }, quarantined: tool.quarantined, quarantineReason: tool.quarantineReason };
+    state.quarantined = quarantined;
+    state.quarantineReason = quarantined ? (reason ?? 'quarantined by operator') : null;
+    if (!quarantined) state.stats.consecutiveFailures = 0;
+    all[name] = state;
+    return true;
+  });
   return getTool(name)!;
 }
 

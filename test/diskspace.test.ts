@@ -3,17 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
-import { freeMb, minFreeMb } from '../src/diskSpace.ts';
+import { freeMb } from '../src/diskSpace.ts';
 
 const MB = 1024 * 1024;
-
-test('FOREMAN_MIN_FREE_MB parses with a fallback on empty or non-numeric input', () => {
-  assert.equal(minFreeMb(undefined), 2048);
-  assert.equal(minFreeMb(''), 2048);
-  assert.equal(minFreeMb('lots'), 2048);
-  assert.equal(minFreeMb('-5'), 2048);
-  assert.equal(minFreeMb('512'), 512);
-});
 
 test('low free space pauses dispatch with one event, and recovery resumes it', async () => {
   const prev = process.env['FOREMAN_MIN_FREE_MB'];

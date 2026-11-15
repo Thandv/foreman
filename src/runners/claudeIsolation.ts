@@ -138,19 +138,35 @@ const WORKER_ENV_NAMES = new Set([
   'FOREMAN_SANDBOX', 'FOREMAN_SANDBOX_RO', 'FOREMAN_SANDBOX_DENY_PORTS', 'FOREMAN_SANDBOX_ALLOW',
 ]);
 
-/**
- * …and by prefix. `CLAUDE_` and `ANTHROPIC_` are the CLI's own configuration
- * and every way it signs in (CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY,
- * ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_BEDROCK, …): none of
- * them is dropped, or a subscription worker could not authenticate.
- */
-const WORKER_ENV_PREFIXES = ['CLAUDE_', 'ANTHROPIC_', 'LC_'];
+/** Shared by every CLI worker, by prefix: the locale's `LC_*` settings. */
+const WORKER_ENV_PREFIXES = ['LC_'];
 
-/** The cloud credentials the CLI signs in with when it is pointed at Bedrock or Vertex — only then. */
-const CLOUD_AUTH: { flag: string; prefixes: string[]; names: string[] }[] = [
-  { flag: 'CLAUDE_CODE_USE_BEDROCK', prefixes: ['AWS_'], names: [] },
-  { flag: 'CLAUDE_CODE_USE_VERTEX', prefixes: ['GOOGLE_', 'GCLOUD_'], names: ['CLOUD_ML_REGION', 'CLOUDSDK_CONFIG'] },
-];
+/** The cloud credentials a CLI signs in with when one of its flags points it at that cloud — only then. */
+interface CloudAuth { flag: string; prefixes: string[]; names: string[] }
+
+/**
+ * What one CLI may inherit beyond the shared lists: its own configuration and
+ * sign-in variables by prefix, and the cloud credentials its flags switch on.
+ */
+export interface CliEnvScope { prefixes: readonly string[]; cloudAuth: readonly CloudAuth[] }
+
+/**
+ * Claude Code. `CLAUDE_` and `ANTHROPIC_` are the CLI's own configuration and
+ * every way it signs in (CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY,
+ * ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_BEDROCK, …): none of
+ * them is dropped, or a subscription worker could not authenticate. AWS_* and
+ * GOOGLE_* pass only when the CLI is pointed at Bedrock or Vertex.
+ */
+export const CLAUDE_ENV: CliEnvScope = {
+  prefixes: ['CLAUDE_', 'ANTHROPIC_'],
+  cloudAuth: [
+    { flag: 'CLAUDE_CODE_USE_BEDROCK', prefixes: ['AWS_'], names: [] },
+    { flag: 'CLAUDE_CODE_USE_VERTEX', prefixes: ['GOOGLE_', 'GCLOUD_'], names: ['CLOUD_ML_REGION', 'CLOUDSDK_CONFIG'] },
+  ],
+};
+
+/** The Codex CLI: its own configuration (`CODEX_HOME`, …) and its OpenAI sign-in. */
+export const CODEX_ENV: CliEnvScope = { prefixes: ['CODEX_', 'OPENAI_'], cloudAuth: [] };
 
 const truthy = (v: string | undefined): boolean => !!v && !/^(0|false|no|off)$/i.test(v.trim());
 
@@ -159,10 +175,10 @@ function operatorAllowed(): Set<string> {
   return new Set((process.env['FOREMAN_CLAUDE_ENV_ALLOW'] ?? '').split(/[\s,]+/).filter(Boolean));
 }
 
-/** Whether a worker may inherit this variable from the daemon. */
-export function workerEnvAllowed(name: string): boolean {
-  if (WORKER_ENV_NAMES.has(name) || WORKER_ENV_PREFIXES.some((p) => name.startsWith(p))) return true;
-  for (const cloud of CLOUD_AUTH) {
+/** Whether a worker of this CLI may inherit this variable from the daemon. */
+export function workerEnvAllowed(name: string, cli: CliEnvScope): boolean {
+  if (WORKER_ENV_NAMES.has(name) || [...WORKER_ENV_PREFIXES, ...cli.prefixes].some((p) => name.startsWith(p))) return true;
+  for (const cloud of cli.cloudAuth) {
     if (!truthy(process.env[cloud.flag])) continue;
     if (cloud.names.includes(name) || cloud.prefixes.some((p) => name.startsWith(p))) return true;
   }
@@ -170,18 +186,26 @@ export function workerEnvAllowed(name: string): boolean {
 }
 
 /**
- * A worker's whole environment — it replaces the daemon's, it is not laid over
- * it: the allowlisted part of the daemon's, then the isolation variables, which
- * win (an inherited CLAUDE_CONFIG_DIR is the operator's own, the very thing
- * being kept out).
+ * A CLI worker's base environment — it replaces the daemon's, it is not laid
+ * over it: the allowlisted part of the daemon's, with the daemon's resolved
+ * home (never the inherited text: a relative one would resolve against the
+ * worker's cwd).
  */
-export function claudeWorkerEnv(task: { id: string }): NodeJS.ProcessEnv {
+export function cliWorkerEnv(cli: CliEnvScope): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && workerEnvAllowed(name)) out[name] = value;
+    if (value !== undefined && workerEnvAllowed(name, cli)) out[name] = value;
   }
-  // The daemon's resolved home, never the inherited text: a relative one would resolve against the worker's cwd.
-  return { ...out, FOREMAN_HOME: config.home, ...claudeIsolationEnv(task.id) };
+  return { ...out, FOREMAN_HOME: config.home };
+}
+
+/**
+ * A claude worker's whole environment: its allowlisted base, then the
+ * isolation variables, which win (an inherited CLAUDE_CONFIG_DIR is the
+ * operator's own, the very thing being kept out).
+ */
+export function claudeWorkerEnv(task: { id: string }): NodeJS.ProcessEnv {
+  return { ...cliWorkerEnv(CLAUDE_ENV), ...claudeIsolationEnv(task.id) };
 }
 
 /** An MCP config that names no server; with --strict-mcp-config it is the whole set. */

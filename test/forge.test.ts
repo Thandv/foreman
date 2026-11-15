@@ -1,4 +1,4 @@
-import { scratchDir } from './env.ts';
+import { scratchDir, testHome } from './env.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,6 +12,8 @@ import { crewPlan } from '../src/assistant/crewPlan.ts';
 import {
   approvePending, forgePlaybook, listPending, pendingDir, rejectPending,
 } from '../src/assistant/playbookForge.ts';
+import { ensureHostSecret, HOST_SECRET_HEADER } from '../src/security/hostSecret.ts';
+import { mintToken } from '../src/security/mint.ts';
 
 // --------------------------------------------------------------- fixtures
 
@@ -491,4 +493,89 @@ test('forgePlaybook: a draft that asks for web access has it stripped and named;
     store.close();
     cleanup([pbDir, stub.dir]);
   }
+});
+
+// ---------------------------------------------- catalog approval with auth on
+
+/**
+ * Playbook approve/reject write the operator's catalog, and four-eyes does not cover them. With auth off they are
+ * open as before; with auth on (until roles, E1.3-5) only a human principal carrying the host-admin secret from a
+ * loopback peer may use them. A refusal is 403 and leaves the draft where it was.
+ */
+async function catalogDaemon(t: test.TestContext, peer?: string) {
+  const pbDir = withPlaybooks();
+  fs.mkdirSync(pendingDir(), { recursive: true });
+  fs.writeFileSync(path.join(pendingDir(), 'kitchen.md'), KITCHEN);
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { maxWorkers: 1, tickMs: 60_000, verifyEnabled: false });
+  sched.pauseDispatch();
+  const server = createServer(store, sched);
+  if (peer) server.prependListener('connection', (s) => Object.defineProperty(s, 'remoteAddress', { value: peer }));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await sched.stop();
+    store.close();
+    cleanup([pbDir]);
+  });
+  const post = (p: string, headers: Record<string, string> = {}): Promise<Response> =>
+    fetch(`${base}${p}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  const tokenFor = (kind: 'human' | 'service'): Record<string, string> => ({
+    authorization: `Bearer ${mintToken(store, { name: `a-${kind}`, kind, expiresInMs: null }).token}`,
+  });
+  const state = () => ({
+    installed: fs.existsSync(path.join(pbDir, 'kitchen.md')),
+    pending: fs.existsSync(path.join(pendingDir(), 'kitchen.md')),
+  });
+  return { post, tokenFor, state };
+}
+
+const hostSecret = (): Record<string, string> => ({ [HOST_SECRET_HEADER]: ensureHostSecret(testHome) });
+
+test('catalog approval, auth off: playbook approve installs and reject removes, with no token or secret', async (t) => {
+  const { post, state } = await catalogDaemon(t);
+  assert.equal((await post('/api/playbooks/kitchen/approve')).status, 200);
+  assert.deepEqual(state(), { installed: true, pending: false });
+  fs.writeFileSync(path.join(pendingDir(), 'kitchen.md'), KITCHEN);
+  assert.equal((await post('/api/playbooks/kitchen/reject')).status, 200);
+  assert.equal(state().pending, false);
+});
+
+test('catalog approval, auth on: a service principal is refused even with the host-admin secret', async (t) => {
+  const { post, tokenFor, state } = await catalogDaemon(t);
+  const service = { ...tokenFor('service'), ...hostSecret() };
+  for (const verb of ['approve', 'reject']) {
+    const res = await post(`/api/playbooks/kitchen/${verb}`, service);
+    assert.equal(res.status, 403, verb);
+    assert.match(((await res.json()) as { error: string }).error, /human principal/);
+  }
+  assert.deepEqual(state(), { installed: false, pending: true }, 'nothing was installed or removed');
+});
+
+test('catalog approval, auth on: a human bearer without the host-admin secret is refused', async (t) => {
+  const { post, tokenFor, state } = await catalogDaemon(t);
+  const human = tokenFor('human');
+  for (const verb of ['approve', 'reject']) {
+    const res = await post(`/api/playbooks/kitchen/${verb}`, human);
+    assert.equal(res.status, 403, verb);
+    assert.match(((await res.json()) as { error: string }).error, /host-admin secret/);
+  }
+  assert.deepEqual(state(), { installed: false, pending: true }, 'nothing was installed or removed');
+});
+
+test('catalog approval, auth on: a human bearer with the secret from a non-loopback peer is refused', async (t) => {
+  const { post, tokenFor, state } = await catalogDaemon(t, '203.0.113.7');
+  assert.equal((await post('/api/playbooks/kitchen/approve', { ...tokenFor('human'), ...hostSecret() })).status, 403);
+  assert.deepEqual(state(), { installed: false, pending: true });
+});
+
+test('catalog approval, auth on: a human bearer with the host-admin secret over loopback installs', async (t) => {
+  const { post, tokenFor, state } = await catalogDaemon(t);
+  const admin = { ...tokenFor('human'), ...hostSecret() };
+  const res = await post('/api/playbooks/kitchen/approve', admin);
+  assert.equal(res.status, 200);
+  assert.equal(((await res.json()) as { installed: { id: string } }).installed.id, 'kitchen');
+  assert.deepEqual(state(), { installed: true, pending: false });
 });

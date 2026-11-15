@@ -258,7 +258,7 @@ export function resolveSpec(alias: string): ModelSpec {
  * exactly one place in this codebase that decides whether a call may leave the
  * machine, and it stays that way.
  */
-export function assertAllowed(sensitivity: Sensitivity, spec: ModelSpec): void {
+export function assertAllowed(sensitivity: Sensitivity, spec: Pick<ModelSpec, 'alias' | 'provider' | 'local'>): void {
   if (spec.local) return;
   if (sensitivity === 'S2') {
     throw new SensitivityViolation(

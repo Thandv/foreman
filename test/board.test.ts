@@ -332,6 +332,107 @@ test('the daemon serves board subpaths with the right content type', async () =>
   store.close();
 });
 
+/**
+ * GET /api/events?since=<cursor> after `behind` events, read up to and
+ * including a live event recorded once the stream is open, so the read ends on
+ * a known frame rather than on a timer.
+ */
+async function replayAfter(behind: number): Promise<{ text: string; cursor: number; newest: number; store: Store }> {
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { maxWorkers: 1, tickMs: 5, verifyEnabled: false });
+  const server = createServer(store, sched);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const cursor = store.record({ type: 'log', message: 'cursor' }).id;
+    let newest = cursor;
+    for (let i = 0; i < behind; i++) newest = store.record({ type: 'log', message: `missed ${i}` }).id;
+    const res = await fetch(`http://127.0.0.1:${port}/api/events?since=${cursor}`);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    store.record({ type: 'log', message: 'live after reconnect' });
+    let text = '';
+    while (!text.includes('live after reconnect')) {
+      const { value, done } = await reader.read();
+      assert.equal(done, false, 'the stream ended before the live event arrived');
+      text += decoder.decode(value, { stream: true });
+    }
+    await reader.cancel();
+    return { text, cursor, newest, store };
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await sched.stop();
+  }
+}
+
+const frame = (ev: { id: number }): string => `id: ${ev.id}\ndata: ${JSON.stringify(ev)}\n\n`;
+
+test('a reconnect more than 500 events behind gets one gap frame with the newest id, not a partial replay', async () => {
+  const { text, cursor, newest, store } = await replayAfter(600);
+  const live = store.eventsSince(newest);
+  assert.equal(live.length, 1);
+  assert.equal(text, `event: gap\ndata: ${JSON.stringify({ lastEventId: newest })}\n\n${frame(live[0]!)}`);
+  assert.ok(newest - cursor > 500);
+  store.close();
+});
+
+test('a reconnect 500 events behind replays every one of them, frame for frame', async () => {
+  const { text, cursor, store } = await replayAfter(500);
+  const rows = store.eventsSince(cursor, 1000);
+  assert.equal(rows.length, 501, '500 missed rows plus the live one');
+  assert.equal(text, rows.map(frame).join(''));
+  store.close();
+});
+
+/*
+ * The board's half: a `gap` frame means the stream skipped rows, so the store
+ * reloads the /api/state snapshot and resumes from its lastEventId.
+ */
+test('the board reloads its snapshot on a gap frame and resumes from its lastEventId', async () => {
+  type Listener = (msg: { data: string }) => void;
+  class FakeEventSource {
+    static last: FakeEventSource | null = null;
+    readonly listeners = new Map<string, Listener>();
+    readonly url: string;
+    constructor(url: string) {
+      this.url = url;
+      FakeEventSource.last = this;
+    }
+    addEventListener(type: string, fn: Listener): void { this.listeners.set(type, fn); }
+    close(): void {}
+  }
+  type BoardStore = { lastEventId: number; _connect(): void; refresh(): Promise<unknown> };
+  const { store } = (await import(new URL('../board/lib/store.js', import.meta.url).href)) as { store: BoardStore };
+  const fetched: string[] = [];
+  const g = globalThis as Record<string, unknown>;
+  const saved = { EventSource: g['EventSource'], fetch: g['fetch'] };
+  g['EventSource'] = FakeEventSource;
+  g['fetch'] = async (url: string): Promise<Response> => {
+    fetched.push(url);
+    return new Response(JSON.stringify({ tasks: [], lastEventId: 900 }), { status: 200 });
+  };
+  const refresh = store.refresh.bind(store);
+  let refreshed: Promise<unknown> | null = null;
+  store.refresh = () => (refreshed = refresh());
+  try {
+    store.lastEventId = 7;
+    store._connect();
+    assert.equal(FakeEventSource.last?.url, '/api/events?since=7');
+    const gap = FakeEventSource.last.listeners.get('gap');
+    assert.ok(gap, 'no gap listener on the stream');
+    gap({ data: JSON.stringify({ lastEventId: 900 }) });
+    assert.ok(refreshed, 'a gap frame did not call refresh()');
+    await refreshed;
+    assert.deepEqual(fetched, ['/api/state']);
+    assert.equal(store.lastEventId, 900);
+  } finally {
+    delete (store as Partial<BoardStore>).refresh;
+    g['EventSource'] = saved.EventSource;
+    g['fetch'] = saved.fetch;
+  }
+});
+
 /*
  * ------------------------------------------------------------------ the gate
  *
@@ -594,7 +695,7 @@ test('an approval whose merge was aborted reports the abort, not "Approved"', as
     store.setRunMeta(run.id, { branch: 'foreman/x', worktreePath: null });
     store.setStatus(task.id, 'awaiting-approval');
 
-    const { merge, registration } = await applyApproval(store, task.id, {});
+    const { merge, registration } = await applyApproval(store, task.id, { principal: 'operator' });
     assert.equal(merge.merged, false, 'a conflicting merge must not land');
     assert.match(merge.reason, /aborted/);
 
@@ -610,28 +711,32 @@ test('an approval whose merge was aborted reports the abort, not "Approved"', as
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  // The other shapes the same 200 can carry.
+  // The other shapes the same 200 can carry. The board decides on the typed code
+  // (MergeResult in src/merge.ts); the reason is only the words shown.
   assert.deepEqual(
-    approvalOutcome({ merge: { merged: true, reason: 'merged 1 commit(s)', branch: 'foreman/y' } }),
+    approvalOutcome({ merge: { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'foreman/y' } }),
     { ok: true, message: 'Approved — merged foreman/y' },
   );
-  // A deliberate skip is not a failure and must not shout like one.
-  assert.equal(
-    approvalOutcome({ merge: { merged: false, reason: 'merge-on-approve disabled for this task', branch: 'b' } }).ok,
-    true,
+  // The approve route answers before the post-merge check has run; the toast says it is still running.
+  assert.deepEqual(
+    approvalOutcome({ merge: { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'foreman/y' }, postMerge: 'pending' }),
+    { ok: true, message: 'Approved — merged foreman/y; main check running' },
   );
-  assert.equal(approvalOutcome({ merge: { merged: false, reason: 'nothing to merge', branch: null } }).ok, true);
+  // A deliberate skip is not a failure and must not shout like one.
+  for (const code of ['not-approved', 'nothing-to-merge', 'merge-disabled', 'nothing-ahead', 'nothing-to-change-closed']) {
+    assert.equal(approvalOutcome({ merge: { merged: false, code, reason: 'whatever words', branch: 'b' } }).ok, true, code);
+  }
   // An approval that closes a run which changed nothing (gate.ts): the reason is the outcome, not a branch that went missing.
   assert.deepEqual(
-    approvalOutcome({ merge: { merged: false, reason: NOTHING_TO_CHANGE_CLOSED, branch: 'foreman/z' } }),
+    approvalOutcome({ merge: { merged: false, code: 'nothing-to-change-closed', reason: NOTHING_TO_CHANGE_CLOSED, branch: 'foreman/z' } }),
     { ok: true, message: 'Approved — closed: nothing to change' },
   );
-  // Only as the whole reason's start: a real failure that merely quotes the words still shouts.
-  assert.equal(
-    approvalOutcome({ merge: { merged: false, reason: 'merge conflict, aborted — resolve foreman/z by hand (was closed: nothing to change)', branch: 'foreman/z' } }).ok,
-    false,
-  );
-  assert.equal(approvalOutcome({ merge: { merged: false, reason: 'not closed: nothing to change', branch: 'foreman/z' } }).ok, false);
+  // A real failure shouts whatever its words say — even words that read like a skip.
+  for (const code of ['conflict', 'not-reviewed', 'core-refused', 'branch-gone', 'uncommitted']) {
+    assert.equal(approvalOutcome({ merge: { merged: false, code, reason: 'nothing to merge', branch: 'foreman/z' } }).ok, false, code);
+  }
+  // No code at all is not a skip either: an un-landed branch must never read as fine.
+  assert.equal(approvalOutcome({ merge: { merged: false, reason: 'nothing to merge', branch: 'foreman/z' } }).ok, false);
   // A tool task lands by registration; a refused registration is a failure too.
   assert.equal(
     approvalOutcome({ registration: { registered: false, reason: 'registration refused: bad manifest' } }).ok,

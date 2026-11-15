@@ -87,7 +87,7 @@ async function cliAgainstRoutes(argv: string[], routes: Record<string, unknown>)
 
 const lastLine = (stdout: string): string => stdout.trimEnd().split('\n').pop() ?? '';
 // What merge.ts answers for an approved ticket whose merge-on-approve is off, as the approve route returns it.
-const UNMERGED = { merged: false, reason: 'merge-on-approve disabled for this task', branch: 'foreman/t_x-r_new' };
+const UNMERGED = { merged: false, code: 'merge-disabled', reason: 'merge-on-approve disabled for this task', branch: 'foreman/t_x-r_new' };
 const RUNS = {
   task: { id: 't_x' },
   runs: [
@@ -118,9 +118,11 @@ test('CLI approve: a code ticket with merging switched off is NOT MERGED too, wi
 
 test('CLI approve says NOT MERGED only for a ticket that does not merge: not for a merge, a merge that failed for another reason, or an approval with no branch', async () => {
   for (const merge of [
-    { merged: true, reason: 'merged 1 commit(s)', branch: 'b' },
-    { merged: false, reason: 'merge failed: conflict in README.md', branch: 'b' },
-    { merged: false, reason: 'nothing to merge', branch: null },
+    { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'b' },
+    { merged: false, code: 'failed', reason: 'merge failed: conflict in README.md', branch: 'b' },
+    { merged: false, code: 'nothing-to-merge', reason: 'nothing to merge', branch: null },
+    // The words alone are not the decision: only the code is.
+    { merged: false, code: 'core-refused', reason: 'merge-on-approve disabled for this task', branch: 'b' },
   ]) {
     const r = await cliAgainstRoutes(['approve', 't_x'], {
       'POST /api/tasks/t_x/approve': { id: 't_x', status: 'done', kind: 'writing', merge },
@@ -130,6 +132,20 @@ test('CLI approve says NOT MERGED only for a ticket that does not merge: not for
     assert.doesNotMatch(r.stdout, /NOT MERGED/, merge.reason);
     assert.deepEqual(r.asked, ['POST /api/tasks/t_x/approve'], 'and no second request is made for it');
   }
+});
+
+test('CLI approve prints a main check still pending, and nothing about it when no check runs', async () => {
+  const merge = { merged: true, code: 'merged', reason: 'merged 1 commit(s)', branch: 'b' };
+  const pending = await cliAgainstRoutes(['approve', 't_x'], {
+    'POST /api/tasks/t_x/approve': { id: 't_x', status: 'done', merge, postMerge: 'pending' },
+  });
+  assert.equal(pending.code, 0, pending.stdout);
+  assert.match(pending.stdout, /merge: merged 1 commit\(s\)\nmain check: pending — runs in the background; a red main shows as MAIN IS RED on the timeline\n/);
+  const none = await cliAgainstRoutes(['approve', 't_x'], {
+    'POST /api/tasks/t_x/approve': { id: 't_x', status: 'done', merge, postMerge: 'none' },
+  });
+  assert.equal(none.code, 0, none.stdout);
+  assert.doesNotMatch(none.stdout, /main check/);
 });
 
 test('CLI build shows a corrected kind on the ticket it changed, and not again in the plan check', async () => {
@@ -198,7 +214,7 @@ test('CLI approve: the NOT MERGED line fires on what mergeApproved itself answer
   execFileSync('git', ['init', '-q', repo]);
   try {
     const task = { id: 't_x', status: 'done', kind: 'writing', repo, mergeOnApprove: false, allowCore: false };
-    const merge = await mergeApproved(task as never, { id: 'r_new', branch: 'foreman/t_x-r_new' } as never);
+    const merge = await mergeApproved(task as never, { id: 'r_new', branch: 'foreman/t_x-r_new' } as never, { source: 'human' });
     assert.equal(merge.merged, false);
     assert.deepEqual(merge, UNMERGED, 'the literal the tests above use is what merge.ts answers');
     const r = await cliAgainstRoutes(['approve', 't_x'], {

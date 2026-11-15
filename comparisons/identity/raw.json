@@ -1,0 +1,95 @@
+{
+  "comparable": {
+    "requests": 200,
+    "rows": [
+      {
+        "daemon": "base",
+        "auth": "off",
+        "op": "GET /api/state",
+        "samples": 200,
+        "p50Ms": 0.51,
+        "p95Ms": 0.68
+      },
+      {
+        "daemon": "base",
+        "auth": "off",
+        "op": "POST /api/tasks",
+        "samples": 200,
+        "p50Ms": 0.68,
+        "p95Ms": 0.85
+      },
+      {
+        "daemon": "branch",
+        "auth": "off",
+        "op": "GET /api/state",
+        "samples": 200,
+        "p50Ms": 0.49,
+        "p95Ms": 0.65
+      },
+      {
+        "daemon": "branch",
+        "auth": "off",
+        "op": "POST /api/tasks",
+        "samples": 200,
+        "p50Ms": 0.66,
+        "p95Ms": 0.82
+      },
+      {
+        "daemon": "branch",
+        "auth": "bearer",
+        "op": "GET /api/state",
+        "samples": 200,
+        "p50Ms": 0.52,
+        "p95Ms": 0.64
+      },
+      {
+        "daemon": "branch",
+        "auth": "bearer",
+        "op": "POST /api/tasks",
+        "samples": 200,
+        "p50Ms": 0.7,
+        "p95Ms": 0.85
+      }
+    ]
+  },
+  "newCapability": {
+    "landings": [
+      {
+        "mode": "single-principal",
+        "approveToMergedMs": 700.37
+      },
+      {
+        "mode": "four-eyes",
+        "approveToMergedMs": 678.89
+      }
+    ],
+    "refusal": {
+      "status": 403,
+      "error": "four-eyes: alice created this ticket, so another person must approve or land it; nothing was decided"
+    }
+  },
+  "isolation": {
+    "daemons": [
+      {
+        "name": "base-off",
+        "home": "/private/var/folders/1x/5m7mlh6n1nq8n5tnwz7yqlmw0000gn/T/foreman-bench-base-off-home-hv27uu",
+        "port": 63029
+      },
+      {
+        "name": "branch-off",
+        "home": "/private/var/folders/1x/5m7mlh6n1nq8n5tnwz7yqlmw0000gn/T/foreman-bench-branch-off-home-Y58V09",
+        "port": 63041
+      },
+      {
+        "name": "branch-bearer",
+        "home": "/private/var/folders/1x/5m7mlh6n1nq8n5tnwz7yqlmw0000gn/T/foreman-bench-branch-bearer-home-Yw2375",
+        "port": 63053
+      },
+      {
+        "name": "landing",
+        "home": "/private/var/folders/1x/5m7mlh6n1nq8n5tnwz7yqlmw0000gn/T/foreman-bench-landing-home-oz6oP4",
+        "port": 63066
+      }
+    ]
+  }
+}

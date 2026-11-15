@@ -9,34 +9,36 @@ import path from 'node:path';
 import { Broker, BudgetExceeded } from './budget.ts';
 import { config } from './config.ts';
 import { DEFAULT_ARCHIVE_AFTER_DAYS } from './archive.ts';
-import { startAdoptedPersonas } from './align/personaHealth.ts';
 import { shadowEnabled } from './agreement.ts';
-import { localModelLockHolder } from './align/localLock.ts';
+import { registeredExtensions } from './extensions.ts';
 import { provisionDeps } from './deps.ts';
 import {
-  effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
+  approvals, effectiveGate, GATE_BATCH_MAX, gateBatchEnabled, gateOptIn, hardHumanReason, overDailyCap, ownerGate, reviewHolds,
   ownerGateBatch, quotedPathsInDiff, type GateBatchItem,
 } from './gate.ts';
-import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, pinnedGit, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { changedFiles, createJail, diffJail, DirtyRepoError, jailBase, jailChanges, jailTree, leftoverMarkers, removeJail, restoreAgentSettings, reuseJail, showBaseFile, type Jail, carryDiff } from './isolate.ts';
+import { pinnedGit } from './gitExec.ts';
 import { checkRepo, recordBaseline } from './gitTripwire.ts';
+import { pollMergeRequests } from './landing/mr.ts';
+import { landingChecksRunning } from './landing/verify.ts';
 import { auditDirAsync } from './prose/auditWorker.ts';
 import type { ProseAuditResult } from './prose/audit.ts';
 import { factDrift } from './prose/linecheck.ts';
 import { assertSelfDiffAllowed, CoreChangeRefused, gatherEvidence, pathsInDiff, proposeImprovement, queueImprovement } from './improve.ts';
 import { checkAcceptanceMap, formatMapGaps } from './acceptanceMap.ts';
 import { checkScope, effectiveScopeRules } from './scope.ts';
-import { admit, AdmissionBlocked } from './security/admit.ts';
+import { admitAsync, AdmissionBlocked } from './security/admit.ts';
 import { coreRefusal, isSelfTask, PROTECTED_PATHS } from './security/coreGuard.ts';
 import { boundBrief, collectBriefCuts, tailLog } from './context.ts';
 import { endedReason, newRunFacts, noteBrief, noteResult, noteResumed } from './runFacts.ts';
 import { getRunner, type RunnerContext } from './runners/index.ts';
 import { ProviderLimited, isProviderLimit, limitBackoffMs } from './providerLimit.ts';
-import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, conflictRepairNotes, redBackoffMs, safeRecord, type Store } from './queue.ts';
+import { CONFLICT_REPAIR_PREFIX, CORE_GUARD_PREFIX, CRASH_LOOP_WINDOW_MS, conflictRepairNotes, redBackoffMs, safeRecord, type Store } from './queue.ts';
 import { recordEpisode, relevantFacts, scopeOf } from './assistant/memory.ts';
 import { planAsk, queuePlan } from './assistant/plan.ts';
 import { deterministicFindings } from './verify/determinism.ts';
 import { getPlaybook } from './playbooks.ts';
-import { resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
+import { modelForTask, resumedSkillsBrief, roleAgent, skillsRunEvent } from './roles.ts';
 import { checkBuiltTool, toolEvidence, toolTestCommand } from './tools/forge.ts';
 import { migrateLegacyToolbox } from './tools/catalog.ts';
 import { buildPrompt, councilAliases, councilNumCtx, MAX_RUNG, rungFor, reviewLabel, runCouncil, wasReviewed, type Evidence } from './verify/council.ts';
@@ -160,6 +162,14 @@ export function dirtyBackoffMs(probes: number): number {
 /** How long a repeated tick failure stays quiet in the timeline after it is recorded once. */
 const TICK_ERROR_QUIET_MS = 5 * 60_000;
 
+/** The stages of one tick, each contained on its own, in the order a tick runs them. */
+export const TICK_STAGES = [
+  'runDueSchedules', 'runDueArchiveSweep', 'runDueAsks', 'runDueImprovements', 'runDueGates',
+  'reconcileBlocked', 'reconcileLostRuns', 'pollMergeRequests', 'dispatchGate', 'dispatch',
+  'runDueRechecks', 'recheckRedRepos', 'probeDirtyRepos',
+] as const;
+export type TickStage = (typeof TICK_STAGES)[number];
+
 export interface VerifyArgs {
   task: Task;
   runId: string;
@@ -179,7 +189,20 @@ export interface VerifyArgs {
  */
 type Lane = 'work' | 'verify';
 
+/** Why a queued ticket is held: its kind and the message it is recorded with. */
+interface TicketHold {
+  kind: string;
+  message: string;
+}
+
+const HOME_DISK_HOLD: TicketHold = {
+  kind: 'disk-home',
+  message: 'held: low disk under the Foreman home (below FOREMAN_MIN_FREE_MB); new work waits until space is freed',
+};
+
 const RECONCILE_MS = 60_000;
+/** Unclean starts within CRASH_LOOP_WINDOW_MS that make a crash loop: the daemon starts under a dispatch hold. */
+const CRASH_LOOP_STARTS = 2;
 
 /** Signal 0 only: ESRCH is dead; success and EPERM (and anything unexpected) count as alive, the safe side. */
 function groupAlive(pgid: number): boolean {
@@ -336,6 +359,12 @@ export const SUITE_ONCE_BRIEF =
   'iterating use `node --test <one file>`. The wrapper saves the full output to a file and prints its path on its ' +
   'last line: to see more of a run, read that file (or run the wrapper with `--saved`), do not run the suite again. ';
 
+/** FOREMAN_WORKER_SUITE=targeted (docs/configuration.md): the worker leaves the full suite to the gate. */
+export const TARGETED_BRIEF =
+  'Run only the tests for what you changed — the test files you added or touched — and do not run the whole suite: ' +
+  "Foreman's gate runs the full suite on this ticket, and its result is the one that counts. " +
+  'This replaces any instruction above to run the full suite yourself. ';
+
 /**
  * What the headless worker may run, said up front. A worker that is not told
  * spends its turns discovering the allowlist one refusal at a time: on an
@@ -343,6 +372,9 @@ export const SUITE_ONCE_BRIEF =
  * turn, was refused each time, and delivered nothing.
  */
 export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
+  const targeted = config.workerSuite === 'targeted';
+  // codex has no slot wrapper and no shell brief: under `targeted` it is told the policy, and nothing else.
+  if (task.runner === 'codex-cli') return targeted ? `\n---\nTESTS: ${TARGETED_BRIEF}` : '';
   if (task.runner !== 'claude-code') return '';
   const allowed = workerShellAllowlist(task).slice(1);
   if (!allowed.length) return '';
@@ -353,15 +385,26 @@ export function shellBrief(task: Pick<Task, 'runner' | 'testCmd'>): string {
   const wrapper = testSlotCommand();
   // The full suite goes through the slot wrapper, in the foreground: 48 runs ended their turn with
   // `npm run verify` "still running in the background", and 26 of those failed review unconfirmed.
-  const suite = allowed.some((t) => asCmd(t) === wrapper)
-    ? `Run the FULL test suite only as \`${wrapper}\` (it waits for a shared test slot, runs this ticket's ` +
-      'test command and exits with its result; append `-- npm run <script>` for another suite script). Run it in the ' +
-      'FOREGROUND with the longest Bash timeout: never with run_in_background, and never end your turn while a test ' +
-      'run is still going. A single targeted test file may be run directly with `node --test <file>`. ' +
-      (denied.length ? `These are refused when run directly — use the wrapper: ${denied.join(', ')}. ` : '') +
-      SUITE_ONCE_BRIEF +
-      'Run the suite yourself before you finish and report its result. '
-    : 'Run the test command yourself, in the foreground, before you finish. ';
+  const refused = denied.length ? `These are refused when run directly — use the wrapper: ${denied.join(', ')}. ` : '';
+  const hasWrapper = allowed.some((t) => asCmd(t) === wrapper);
+  // FOREMAN_WORKER_SUITE=targeted is advisory: the tools are the same, and a full run the worker still makes goes
+  // through the wrapper, so it counts against the verify-slot cap.
+  const suite = targeted
+    ? hasWrapper
+      ? TARGETED_BRIEF + 'A single test file may be run directly with `node --test <file>`. Only if you must run the ' +
+        `whole suite, use \`${wrapper}\` (it waits for a shared test slot, runs this ticket's test command and exits ` +
+        'with its result), once, in the FOREGROUND with the longest Bash timeout, never with run_in_background. ' +
+        refused + 'Report which tests you ran and their result. '
+      : `${TARGETED_BRIEF}Run them in the foreground before you finish. `
+    : hasWrapper
+      ? `Run the FULL test suite only as \`${wrapper}\` (it waits for a shared test slot, runs this ticket's ` +
+        'test command and exits with its result; append `-- npm run <script>` for another suite script). Run it in the ' +
+        'FOREGROUND with the longest Bash timeout: never with run_in_background, and never end your turn while a test ' +
+        'run is still going. A single targeted test file may be run directly with `node --test <file>`. ' +
+        refused +
+        SUITE_ONCE_BRIEF +
+        'Run the suite yourself before you finish and report its result. '
+      : 'Run the test command yourself, in the foreground, before you finish. ';
   return (
     '\n---\nSHELL: this session is headless and nobody can approve a command. These run without ' +
     `approval: ${cmds} (plus read-only inspection). Anything else — a bare interpreter, compiler or ` +
@@ -660,8 +703,16 @@ export class Scheduler {
    * purpose: a restarted daemon simply rediscovers a still-dirty checkout.
    */
   private readonly dirtyHolds = new Map<string, { files: string; probes: number; nextProbeAt: number; probing: boolean }>();
-  /** Rate limit for recording tick failures: the last recorded message, when, and how many were suppressed since. */
-  private tickError: { message: string; at: number; suppressed: number } | null = null;
+  /**
+   * Rate limit for recording tick failures, per stage ('tick' for a failure outside every stage): the last
+   * recorded message, when, and how many were suppressed since. Per stage, so two failing stages do not
+   * take turns resetting one another's quiet window.
+   */
+  private readonly tickErrors = new Map<TickStage | 'tick', { message: string; at: number; suppressed: number }>();
+  /** Every failure of each tick stage since start, recorded or suppressed. */
+  private readonly stageErrorCounts = new Map<TickStage, number>();
+  /** The synchronous wall-clock ms each tick stage took the last time it ran (GET /api/metrics). */
+  private readonly stageMs = new Map<TickStage, number>();
   /** restoreAgentSettings, said in the timeline; a jail whose settings cannot be checked does not start a round. */
   private async restoreAgentSettingsOrThrow(jail: Jail, emit: (line: string) => void): Promise<void> {
     let changed: string[];
@@ -710,8 +761,8 @@ export class Scheduler {
   private readonly recheckAttempts = new Map<string, number>();
   /** Per task: not before this instant — a re-check that came back provisional again waits. */
   private readonly recheckNotBefore = new Map<string, number>();
-  /** Edge-tracking, so "paused" and "resumed" are logged once, not per tick. */
-  private deferredForLock = false;
+  /** Names of the extensions holding dispatch: "paused" and "released" are logged once, on the edge, not per tick. */
+  private readonly extensionsHolding = new Set<string>();
   /** Dirs held for low free space: one event when a dir goes low, one when a later check finds it recovered. */
   private readonly diskHeld = new Set<string>();
   private readonly statfsFn: StatfsFn | undefined;
@@ -774,8 +825,8 @@ export class Scheduler {
 
   /**
    * A worker's own suite run (the slot wrapper, through POST /api/verify-slot) started or stopped waiting for a test
-   * slot: that wait is not the run's own time, so its deadline stops meanwhile (RunClock caps the total). A run id
-   * that is not running here is ignored.
+   * slot: that wait is not the run's own time, so its deadline stops meanwhile (RunClock caps the total), and it is
+   * added to the run's worker_slot_wait_ms. A run id that is not running here is ignored.
    */
   slotQueued(runId: string, queued: boolean): void {
     for (const entry of this.active.values()) {
@@ -786,14 +837,16 @@ export class Scheduler {
         entry.clock.pause(`worker-slot:${open + 1}`);
         // In the run's timeline, so an hour that went on a queue reads as one.
         if (open === 0) {
-          entry.slotWaitAt = Date.now();
+          entry.slotWaitAt = this.now();
           this.store.record({ taskId: entry.taskId, runId, type: 'log', message: "the worker's suite run is waiting for a test slot; the run deadline is stopped meanwhile" });
         }
       } else if (open > 0) {
         entry.clock.resume(`worker-slot:${open}`);
         entry.slotWaits = open - 1;
         if (open === 1) {
-          const secs = Math.round((Date.now() - (entry.slotWaitAt ?? Date.now())) / 1000);
+          const waitedMs = this.now() - (entry.slotWaitAt ?? this.now());
+          this.store.addWorkerSlotWait(runId, waitedMs);
+          const secs = Math.round(waitedMs / 1000);
           this.store.record({ taskId: entry.taskId, runId, type: 'log', message: `the worker's suite run stopped waiting for a test slot after ${secs} s` });
         }
       }
@@ -854,23 +907,30 @@ export class Scheduler {
     if (migrated.length) {
       this.store.record({ type: 'status', message: `migrated ${migrated.length} tool(s) into the toolbox: ${migrated.join(', ')}` });
     }
-    this.store.recoverOrphans();
+    const boot = this.store.recordDaemonStart();
+    this.daemonStartId = boot.id;
+    const inFlight = this.store.recoverOrphans(boot.crashes);
+    // Only a start after a crash can be in a crash loop: a clean stop ends one. A loop one task in flight accounts
+    // for is bounded by that task's attempts; any other is held for the operator.
+    if (boot.crashes > 0 && boot.recentUncleanStarts >= CRASH_LOOP_STARTS && inFlight !== 1) {
+      const reason = `crash loop: ${boot.recentUncleanStarts} unclean daemon starts within ${CRASH_LOOP_WINDOW_MS / 60_000} minutes ` +
+        `with ${inFlight} tasks in flight; find the cause, then foreman resume`;
+      this.dispatchHold(reason);
+      this.store.record({ type: 'warning', message: `dispatch held: ${reason}` });
+    }
+    this.store.adoptInterruptedLandings();
     // Fills only blanks: decisions an older daemon made after this ledger was
     // migrated (the open-time pass ran before them) get their label here.
     backfillRunDecisions(this.store.db);
-    // An adopted persona is already routed live work by modelForTask, so the
-    // daemon owning its server is not a convenience — it is what keeps routing
-    // and reality in step. Fire-and-forget: a
-    // model server that will not start is a reason to refuse the tickets that
-    // want it, never a reason to refuse to boot the queue.
-    void startAdoptedPersonas()
-      .then((reports) => {
-        for (const r of reports) {
-          if (r.reason === 'already serving') continue;
-          this.store.record({ type: 'status', message: `persona ${r.id}: ${r.ok ? 'serving' : `not serving — ${r.reason}`}` });
-        }
-      })
-      .catch(() => {});
+    // Fire-and-forget: an extension that fails to start is a warning, never a reason to refuse to boot the queue.
+    for (const ext of registeredExtensions()) {
+      if (!ext.onStart) continue;
+      void Promise.resolve()
+        .then(() => ext.onStart!(this.store))
+        .catch((err: unknown) => {
+          safeRecord(this.store, { type: 'warning', message: `extension ${ext.name}: start failed — ${err instanceof Error ? err.message : String(err)}` });
+        });
+    }
     this.timer = setInterval(() => void this.pulse(), this.tickMs);
     this.timer.unref?.();
     void this.pulse();
@@ -886,7 +946,33 @@ export class Scheduler {
     this.dispatchPaused = true;
   }
 
-  async stop(): Promise<void> {
+  private hold: { reason: string; since: number } | null = null;
+
+  /** This start's daemon_starts row (Store.recordDaemonStart); an orderly stop() that exits 0 marks it clean. */
+  private daemonStartId: number | null = null;
+
+  /**
+   * An operator's hold on new work: the tick skips only its dispatch stage, so schedules, the owner gate, reconcile and
+   * the re-checks keep running. In memory, like pauseDispatch: a restart clears it.
+   */
+  dispatchHold(reason: string): void {
+    this.hold = { reason, since: this.now() };
+  }
+
+  releaseDispatchHold(): void {
+    this.hold = null;
+  }
+
+  /** The dispatch hold and its reason, or null when new work is not held. */
+  get dispatchHoldState(): { reason: string; since: number } | null {
+    return this.hold && { ...this.hold };
+  }
+
+  /**
+   * `exitsClean` is read once the drain is done: a stop on the way to a non-zero exit (an uncaught exception) leaves
+   * this start unclean, so a loop of them is a crash loop.
+   */
+  async stop(exitsClean: () => boolean = () => true): Promise<void> {
     this.stopped = true;
     clearInterval(this.timer);
     this.lifetime.abort();
@@ -898,11 +984,14 @@ export class Scheduler {
     // A provisional re-check is a review in flight; it was aborted above and
     // must settle before the store it writes to is closed.
     if (this.recheckInFlight) await this.recheckInFlight.catch(() => {});
-    await Promise.allSettled([...this.probes]);
+    await Promise.allSettled([...this.probes, ...this.mrPolls]);
     // Aborting SIGTERMs each child's group (and proc.ts escalates to SIGKILL);
     // anything still recorded belongs to a run that never settled its row.
     // Kill it now rather than leave an orphan behind a clean shutdown.
     this.store.killLiveRunGroups();
+    // Last: a stop that throws or is cut off before here leaves its start unclean (recordDaemonStart).
+    if (this.daemonStartId !== null && exitsClean()) this.store.markCleanExit(this.daemonStartId);
+    this.daemonStartId = null;
   }
 
   /** Runs the queue to completion. Test helper; the daemon uses start(). */
@@ -940,22 +1029,55 @@ export class Scheduler {
     }
   }
 
-  private noteTickError(err: unknown): void {
+  /** How many times each tick stage has failed since start (a copy; stages that never failed are absent). */
+  tickStageErrors(): ReadonlyMap<TickStage, number> {
+    return new Map(this.stageErrorCounts);
+  }
+
+  /** How long each tick stage took, in ms, the last time it ran (a copy; stages that never ran are absent). */
+  tickStageMs(): ReadonlyMap<TickStage, number> {
+    return new Map(this.stageMs);
+  }
+
+  private noteTickError(err: unknown, stage: TickStage | 'tick' = 'tick'): void {
     const message = (err instanceof Error ? err.message : String(err)).slice(0, 1000);
     const now = this.now();
-    const last = this.tickError;
+    const last = this.tickErrors.get(stage);
     if (last && last.message === message && now - last.at < TICK_ERROR_QUIET_MS) {
       last.suppressed++;
       return;
     }
     const tail = last?.suppressed ? ` (${last.suppressed} earlier failure(s) not recorded)` : '';
-    this.tickError = { message, at: now, suppressed: 0 };
+    this.tickErrors.set(stage, { message, at: now, suppressed: 0 });
+    const line = `scheduler tick failed${stage === 'tick' ? '' : ` in ${stage}`}: ${message}${tail}`;
     try {
-      this.store.record({ type: 'error', message: `scheduler tick failed: ${message}${tail}` });
+      this.store.record({ type: 'error', message: line });
     } catch {
       // The store itself may be what is failing; the trace line still lands.
     }
-    process.stderr.write(`scheduler tick failed: ${message}${tail}\n`);
+    process.stderr.write(`${line}\n`);
+  }
+
+  /** A stage's failure, recorded and counted; also an off-tick failure of work a stage started (MR polls). */
+  private stageFailed(name: TickStage, err: unknown): void {
+    this.stageErrorCounts.set(name, (this.stageErrorCounts.get(name) ?? 0) + 1);
+    this.noteTickError(err, name);
+  }
+
+  /**
+   * One tick stage, contained and timed: its throw is recorded (naming the stage) and counted, and the tick goes on
+   * to the next stage. Returns the stage's result, or undefined when it threw.
+   */
+  private stage<T>(name: TickStage, run: () => T): T | undefined {
+    const start = performance.now();
+    try {
+      return run();
+    } catch (err) {
+      this.stageFailed(name, err);
+      return undefined;
+    } finally {
+      this.stageMs.set(name, performance.now() - start);
+    }
   }
 
   async tick(): Promise<void> {
@@ -967,68 +1089,79 @@ export class Scheduler {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      this.store.runDueSchedules();
-      this.runDueArchiveSweep();
-      this.runDueAsks();
-      this.runDueImprovements();
-      this.runDueGates();
-      this.store.reconcileBlocked();
-      this.reconcileLostRuns();
-      // A trainer or an adoption gate holds the machine-wide local-model lock
-      // for hours, and starting new work under it is how a 17 GB machine ends
-      // up 33 GB into swap — the exact collision the lock was created for after
-      // it happened once for real. Work already running is left alone; only
-      // dispatch pauses, so the queue drains the moment the lock frees.
-      if (this.deferForLocalModelLock()) { this.refreshHolds('local-lock'); return; }
-      // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
-      this.diskVolumeCache.clear();
-      if (this.diskLow(config.home)) { this.refreshHolds('home-disk'); return; }
-      // Only the work lane consumes worker slots.
-      const free = this.maxWorkers - this.laneCount('work');
-      if (free <= 0) { this.refreshHolds(null); return; }
-      // While auto mode has fallen back, claude-code tickets are HELD — left
-      // queued, attempts untouched — rather than claimed and failed: a lapsed
-      // sign-in is not a defect in the ticket, and a retry budget burnt in
-      // seconds would turn a five-minute lapse into a failed epic. Ask for
-      // seconds would turn a five-minute lapse into a failed epic.
-      const limited = this.limitHoldUntil > Date.now();
-      const holding = cloudFallback() || limited;
-      const held = holding ? this.store.queuedOnRunner('claude-code') : 0;
-      // Held tickets are skipped while the queue is paged, not after the
-      // window is cut: enough of them at the front would starve every repo.
-      const usable = (t: { id: string; repo: string | null }): boolean =>
-        // A repair round re-queues a task that is still finishing its run;
-        // never let the same task hold two workers.
-        !this.active.has(t.id)
-        // Never cut a jail from a main that just failed its own tests.
-        && !this.store.repoRed(t.repo)
-        // Nor from an operator checkout with uncommitted changes: held, not claimed.
-        && !(t.repo && this.dirtyHolds.has(path.resolve(t.repo)))
-        // Nor onto a repo volume that is below the free-space floor.
-        && !(t.repo && this.diskLow(path.resolve(t.repo)));
-      for (const task of this.store.claimable(free, holding ? { excludeRunner: 'claude-code', usable } : { usable })) {
-        if (this.laneCount('work') >= this.maxWorkers) break;
-        if (!usable(task)) continue; // changed since the page was read
-        if (!this.store.claim(task.id)) continue; // lost the race
-        this.launch({ ...task, attempts: task.attempts + 1 });
-      }
-      this.refreshHolds(null);
+      this.stage('runDueSchedules', () => this.store.runDueSchedules());
+      this.stage('runDueArchiveSweep', () => this.runDueArchiveSweep());
+      this.stage('runDueAsks', () => this.runDueAsks());
+      this.stage('runDueImprovements', () => this.runDueImprovements());
+      this.stage('runDueGates', () => this.runDueGates());
+      this.stage('reconcileBlocked', () => this.store.reconcileBlocked());
+      this.stage('reconcileLostRuns', () => this.reconcileLostRuns());
+      // Before the dispatch gate: an open MR is polled even while every worker slot is taken.
+      this.stage('pollMergeRequests', () => this.pollMergeRequests());
+      // A gate that throws defers dispatch and the idle-time stages after it, as a gate that says no does.
+      const free = this.stage('dispatchGate', () => this.dispatchSlots());
+      if (free === undefined || free === null) return;
+      if (!this.hold) this.stage('dispatch', () => this.dispatch(free));
       // After dispatch, so work claimed this tick already counts as busy:
       // queued work gets the machine first, a re-check only the idle time.
-      // (It is also never reached while the training lock defers dispatch, or
+      // (It is also never reached while an extension holds dispatch, or
       // while every worker slot is taken — both return above.)
-      this.runDueRechecks();
-      this.recheckRedRepos();
-      this.probeDirtyRepos();
-      if (held !== this.lastHeld) {
-        this.lastHeld = held;
-        if (held) {
-          const why = limited ? `the provider usage limit passes (${new Date(this.limitHoldUntil).toISOString()})` : 'the Claude CLI is back';
-          process.stdout.write(`holding ${held} claude-code ticket(s) until ${why}\n`);
-        }
-      }
+      this.stage('runDueRechecks', () => this.runDueRechecks());
+      this.stage('recheckRedRepos', () => this.recheckRedRepos());
+      this.stage('probeDirtyRepos', () => this.probeDirtyRepos());
     } finally {
       this.ticking = false;
+    }
+  }
+
+  /** The worker slots dispatch may fill this tick, or null when a gate defers dispatch (and the stages after it). */
+  private dispatchSlots(): number | null {
+    // Work already running is left alone; only dispatch pauses, so the queue drains the moment the hold lifts.
+    const extensionHold = this.extensionHold();
+    if (extensionHold) { this.refreshHolds(extensionHold); return null; }
+    // A full disk mid-run corrupts worktrees and the ledger: below the floor nothing new starts.
+    this.diskVolumeCache.clear();
+    if (this.diskLow(config.home)) { this.refreshHolds(HOME_DISK_HOLD); return null; }
+    // Only the work lane consumes worker slots.
+    const free = this.maxWorkers - this.laneCount('work');
+    if (free <= 0) { this.refreshHolds(null); return null; }
+    return free;
+  }
+
+  /** Claims and launches up to `free` queued tickets, skipping held ones. */
+  private dispatch(free: number): void {
+    // While auto mode has fallen back, claude-code tickets are HELD — left
+    // queued, attempts untouched — rather than claimed and failed: a lapsed
+    // sign-in is not a defect in the ticket, and a retry budget burnt in
+    // seconds would turn a five-minute lapse into a failed epic.
+    const limited = this.limitHoldUntil > Date.now();
+    const holding = cloudFallback() || limited;
+    const held = holding ? this.store.queuedOnRunner('claude-code') : 0;
+    // Held tickets are skipped while the queue is paged, not after the
+    // window is cut: enough of them at the front would starve every repo.
+    const usable = (t: { id: string; repo: string | null }): boolean =>
+      // A repair round re-queues a task that is still finishing its run;
+      // never let the same task hold two workers.
+      !this.active.has(t.id)
+      // Never cut a jail from a main that just failed its own tests.
+      && !this.store.repoRed(t.repo)
+      // Nor from an operator checkout with uncommitted changes: held, not claimed.
+      && !(t.repo && this.dirtyHolds.has(path.resolve(t.repo)))
+      // Nor onto a repo volume that is below the free-space floor.
+      && !(t.repo && this.diskLow(path.resolve(t.repo)));
+    for (const task of this.store.claimable(free, holding ? { excludeRunner: 'claude-code', usable } : { usable })) {
+      if (this.laneCount('work') >= this.maxWorkers) break;
+      if (!usable(task)) continue; // changed since the page was read
+      if (!this.store.claim(task.id)) continue; // lost the race
+      this.launch({ ...task, attempts: task.attempts + 1 });
+    }
+    this.refreshHolds(null);
+    if (held !== this.lastHeld) {
+      this.lastHeld = held;
+      if (held) {
+        const why = limited ? `the provider usage limit passes (${new Date(this.limitHoldUntil).toISOString()})` : 'the Claude CLI is back';
+        process.stdout.write(`holding ${held} claude-code ticket(s) until ${why}\n`);
+      }
     }
   }
 
@@ -1218,6 +1351,8 @@ export class Scheduler {
     let expiredIn: string | null = null;
     // What this run records about itself on its own row (runFacts.ts): filled in as it goes, written in the finally.
     const facts = newRunFacts();
+    // Set once the claude-code CLI has been started: its spend is then settled into one receipt in the finally.
+    let workerStarted = false;
     const clock = this.runClockFn(runTimeoutMs, () => {
       // Read from a timer: a ledger that cannot answer must not stop the abort.
       try {
@@ -1303,6 +1438,25 @@ export class Scheduler {
       this.store.addVerifyWait(runId, ms);
       emit(`waited ${ms}ms for a verify slot`);
     };
+    // Every suite command this run starts goes through here: its wall time, less what it queued for a slot, is
+    // summed onto the run as suite_ms (doctor --latency), stopped or not. The queued time is read off the onQueue
+    // bracket, which closes even when the wait is aborted (onWaited is not called then).
+    const suiteSlotted = async (...args: Parameters<typeof runTestsSlotted>): ReturnType<typeof runTestsSlotted> => {
+      const [dir, cmd, signal, onLine, onSpawn, onWaited, onQueue, sandbox] = args;
+      const startedAt = Date.now();
+      let queuedAt = 0;
+      let queuedMs = 0;
+      const onQueueTimed = (queued: boolean): void => {
+        if (queued) queuedAt = Date.now();
+        else queuedMs += Date.now() - queuedAt;
+        onQueue?.(queued);
+      };
+      try {
+        return await runTestsSlotted(dir, cmd, signal, onLine, onSpawn, onWaited, onQueueTimed, sandbox);
+      } finally {
+        this.store.addSuiteMs(runId, Math.max(0, Date.now() - startedAt - queuedMs));
+      }
+    };
 
     try {
       fs.mkdirSync(config.artifactRoot, { recursive: true });
@@ -1313,7 +1467,7 @@ export class Scheduler {
       // Asked once for the whole run (admission, brief, run check, diff
       // options): each ask is a git process the event loop waits on.
       const selfTask = isSelfTask(task, this.selfRoot);
-      const findings = admit(task, { selfRoot: this.selfRoot, isSelf: selfTask });
+      const findings = await admitAsync(task, { selfRoot: this.selfRoot, isSelf: selfTask });
       for (const f of findings) emit(`admission ${f.severity}: ${f.message}`);
       // The run log is read by nobody at the gate: a core-guard finding also
       // goes in the timeline, and on the park note below.
@@ -1457,6 +1611,7 @@ export class Scheduler {
       };
       // Before the CLI starts: what the worker wrote into its own permission files last round is undone (isolate.ts).
       if (task.runner === 'claude-code' && jail.repo) await this.restoreAgentSettingsOrThrow(jail, emit);
+      workerStarted = task.runner === 'claude-code';
       let result = await runner.run(ctx);
       noteResult(facts, result);
       // A provider quota refusal is not a verdict on the work: hold, don't fail.
@@ -1660,7 +1815,7 @@ export class Scheduler {
             });
             if (behind) emit(behindLine(behind));
           }
-          const runGate = (): ReturnType<typeof runTestsSlotted> => runTestsSlotted(
+          const runGate = (): ReturnType<typeof runTestsSlotted> => suiteSlotted(
             jail!.dir, cmd, controller.signal,
             (line) => emit(`test: ${line}`),
             (pid) => this.store.setRunPid(runId, pid),
@@ -1728,7 +1883,7 @@ export class Scheduler {
           for (const check of pb.checks) {
             if (controller.signal.aborted) { checksPassed = false; break; }
             this.store.setRunStage(runId, task.id, 'test', check);
-            const r = await runTestsSlotted(
+            const r = await suiteSlotted(
               jail.dir, check, controller.signal,
               (line) => emit(`check: ${line}`),
               (pid) => this.store.setRunPid(runId, pid),
@@ -1874,7 +2029,7 @@ export class Scheduler {
             // Every line: the TAP report is read off the whole output, not the tail runTests keeps.
             const lines: string[] = [];
             let waitedMs = 0;
-            const r = await runTestsSlotted(
+            const r = await suiteSlotted(
               dir, cmd, controller.signal,
               (line) => { if (lines.length < 100_000) lines.push(line); },
               (pid) => this.store.setRunPid(runId, pid),
@@ -2310,6 +2465,14 @@ export class Scheduler {
       } catch (err) {
         writeLog(`run facts not recorded: ${causeOf(err, 1000)}`);
       }
+      // The worker's own spend reaches only the run row through ctx.usage; the receipt makes it part of the ledger.
+      if (workerStarted) {
+        try {
+          this.recordWorkerReceipt(task, runId);
+        } catch (err) {
+          writeLog(`worker receipt not recorded: ${causeOf(err, 1000)}`);
+        }
+      }
       try {
         this.pruneEvents(task.id);
       } catch (err) {
@@ -2318,6 +2481,27 @@ export class Scheduler {
       // Last: writeLog is a no-op once the fd is cleared, so no later line lands in a file that reuses its number.
       closeLog();
     }
+  }
+
+  /**
+   * One receipt for a claude-code run, at its end: what the CLI reported over the whole run (a resume included), at
+   * list price. Kind 'worker', which spentTodaySubscription() and spentOnTask() leave out, so no cap moves.
+   */
+  private recordWorkerReceipt(task: Task, runId: string): void {
+    const run = this.store.getRun(runId);
+    if (!run) throw new Error(`run ${runId} is not in the ledger`);
+    this.store.addReceipt({
+      taskId: task.id,
+      runId,
+      kind: 'worker',
+      provider: 'claude-cli',
+      model: modelForTask(task) ?? 'cli-default',
+      local: false,
+      tokensIn: run.tokensIn,
+      tokensOut: run.tokensOut,
+      costUsd: run.costUsd,
+      latencyMs: Date.now() - run.startedAt,
+    });
   }
 
   /**
@@ -2406,6 +2590,23 @@ export class Scheduler {
     }
   }
 
+  /** MR polls in flight; stop() settles them before the store closes. */
+  private readonly mrPolls = new Set<Promise<void>>();
+
+  /**
+   * Polls the open merge requests (landing/mr.ts); the tick does not wait for the forge. A merge synced into the
+   * checkout is checked with this scheduler's checkMain, tracked by the daemon's approvals, so a shutdown aborts it.
+   */
+  private pollMergeRequests(): void {
+    const check = {
+      tracker: approvals,
+      mainCheck: (repo: string, cmd: string | null, signal: AbortSignal, head: string) => this.checkMainFn(repo, cmd, signal, undefined, head),
+    };
+    const poll = pollMergeRequests(this.store, this.now(), (err) => this.stageFailed('pollMergeRequests', err), check);
+    this.mrPolls.add(poll);
+    void poll.finally(() => this.mrPolls.delete(poll));
+  }
+
   private redCheckAt = 0;
   private readonly redChecking = new Set<string>();
 
@@ -2423,6 +2624,8 @@ export class Scheduler {
     this.redCheckAt = now;
     for (const [repo, red] of this.store.redRepoList()) {
       if (this.redChecking.has(repo)) continue;
+      // The landing queue is checking the HEADs merged since: one check of a HEAD at a time.
+      if (landingChecksRunning(repo)) continue;
       this.redChecking.add(repo);
       void (async () => {
         let head = red.head;
@@ -2492,20 +2695,17 @@ export class Scheduler {
    * Make every hold on a queued ticket visible (Store.syncHolds records one event per episode). Mirrors the
    * conditions dispatch applies; it changes none of them.
    */
-  private refreshHolds(global: 'local-lock' | 'home-disk' | null): void {
-    const now = new Map<string, { kind: string; message: string }>();
+  private refreshHolds(global: TicketHold | null): void {
+    const now = new Map<string, TicketHold>();
     const limited = this.limitHoldUntil > Date.now();
     const fallback = cloudFallback();
     for (const t of this.store.queuedForHolds()) {
       if (this.active.has(t.id)) continue;
-      let h: { kind: string; message: string } | null = null;
+      let h: TicketHold | null = null;
       const red = this.store.repoRed(t.repo);
       const dirty = t.repo ? this.dirtyHolds.get(path.resolve(t.repo)) : undefined;
-      if (global === 'local-lock') {
-        const holder = localModelLockHolder();
-        h = { kind: 'local-lock', message: `held: ${holder ? `${holder.label} (pid ${holder.pid})` : 'a trainer or adoption gate'} holds the local-model lock; new work waits until it releases the lock` };
-      } else if (global === 'home-disk') {
-        h = { kind: 'disk-home', message: 'held: low disk under the Foreman home (below FOREMAN_MIN_FREE_MB); new work waits until space is freed' };
+      if (global) {
+        h = global;
       } else if (red) {
         // A failed check's reason is the last lines of its test output (control codes included): named, not printed.
         const why = /[\u0000-\u001f\u007f]/.test(red.reason) || red.reason.length > 120 ? `its tests failed; output in foreman show ${red.taskId}` : red.reason;
@@ -2554,7 +2754,7 @@ export class Scheduler {
         try {
           let dirty: string;
           try {
-            // Pinned, drivers off (isolate.ts pinnedGit): the repo's config is the one every jail can write, and
+            // Pinned, drivers off (gitExec.ts pinnedGit): the repo's config is the one every jail can write, and
             // `status` hashes changed files through any clean filter it names.
             dirty = (await pinnedGit(repo, ['status', '--porcelain'])).stdout.trim();
           } catch (err) {
@@ -3038,39 +3238,26 @@ export class Scheduler {
   }
 
   /**
-   * True when new work must not start because something else owns the
-   * machine's inference.
-   *
-   * Deliberately blunt: it pauses ALL dispatch, not just tasks that would touch
-   * a local model. A cloud-runner ticket looks harmless until its verify stage
-   * asks the local council for two opinions, and by then a worktree has been
-   * cut and a model is loading. Distinguishing the two cases correctly means
-   * predicting what a task will do before it does it, which is not knowable;
-   * pausing for a few hours while an adapter trains is cheap and is correct.
-   *
-   * `FOREMAN_IGNORE_TRAINING_LOCK=1` opts out for an operator with the memory
-   * headroom to run both — this machine does not, but another might.
+   * The first registered extension's dispatch hold that is in force, as each queued ticket is held, or null. Every
+   * hold is read each tick so each one's start and release is recorded once, on the edge.
    */
-  private deferForLocalModelLock(): boolean {
-    if (process.env['FOREMAN_IGNORE_TRAINING_LOCK'] === '1') return false;
-    const holder = localModelLockHolder();
-    if (!holder) {
-      // Say so once, on the edge, so the log explains why the queue moved
-      // again rather than leaving the operator to infer it.
-      if (this.deferredForLock) {
-        this.deferredForLock = false;
-        this.store.record({ type: 'status', message: 'local-model lock released; dispatch resumed' });
+  private extensionHold(): TicketHold | null {
+    let first: TicketHold | null = null;
+    for (const ext of registeredExtensions()) {
+      const hold = ext.dispatchHold;
+      if (!hold) continue;
+      const now = hold.current();
+      if (!now) {
+        if (this.extensionsHolding.delete(ext.name)) this.store.record({ type: 'status', message: hold.released });
+        continue;
       }
-      return false;
+      if (!this.extensionsHolding.has(ext.name)) {
+        this.extensionsHolding.add(ext.name);
+        this.store.record({ type: 'status', message: now.paused });
+      }
+      first ??= { kind: hold.kind, message: now.held };
     }
-    if (!this.deferredForLock) {
-      this.deferredForLock = true;
-      this.store.record({
-        type: 'status',
-        message: `dispatch paused: ${holder.label} (pid ${holder.pid}) holds the local-model lock. Running work continues.`,
-      });
-    }
-    return true;
+    return first;
   }
 
   /**
@@ -3245,18 +3432,6 @@ export class Scheduler {
   }
 
   private pruneEvents(taskId: string): void {
-    // The admission core-guard warning is written first in a run and read back
-    // for every later park note (Store.withCoreGuard), so it is never pruned.
-    // Nor is a `decision` (what was decided at the gate, by whom, with what
-    // note) or a run's `skills` line (which skills its brief carried): one of
-    // each per decision or run, and a long ticket's log pushed both out.
-    this.store.db
-      .prepare(
-        `DELETE FROM events WHERE task_id = ? AND id NOT IN
-           (SELECT id FROM events WHERE task_id = ? ORDER BY id DESC LIMIT ?)
-           AND type NOT IN ('decision', 'skills')
-           AND NOT (type = 'warning' AND substr(message, 1, ?) = ?)`,
-      )
-      .run(taskId, taskId, config.logLinesPerRun, CORE_GUARD_PREFIX.length, CORE_GUARD_PREFIX);
+    this.store.pruneTaskEvents(taskId, config.logLinesPerRun);
   }
 }

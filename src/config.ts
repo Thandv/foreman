@@ -24,6 +24,25 @@ export function onOff(name: string, raw: string | undefined = process.env[name])
   throw new Error(`${name} must be on or off, got ${JSON.stringify(raw)}`);
 }
 
+/** How post-merge checks are run (src/landing/verify.ts); see config.postMergeMode. */
+export type PostMergeMode = 'coalesced' | 'per-merge';
+
+/** FOREMAN_POSTMERGE_MODE: unset or empty is `coalesced`; either value in any case, spaces trimmed; anything else throws. */
+export function postMergeMode(raw: string | undefined = process.env['FOREMAN_POSTMERGE_MODE']): PostMergeMode {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '' || v === 'coalesced') return 'coalesced';
+  if (v === 'per-merge') return 'per-merge';
+  throw new Error(`FOREMAN_POSTMERGE_MODE must be coalesced or per-merge, got ${JSON.stringify(raw)}`);
+}
+
+/** FOREMAN_LANDING: unset or empty is `merge`; either value in any case, spaces trimmed; anything else throws. */
+export function landingMode(raw: string | undefined = process.env['FOREMAN_LANDING']): 'merge' | 'mr' {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '' || v === 'merge') return 'merge';
+  if (v === 'mr') return 'mr';
+  throw new Error(`FOREMAN_LANDING must be merge or mr, got ${JSON.stringify(raw)}`);
+}
+
 const home = process.env.FOREMAN_HOME
   ? path.resolve(process.env.FOREMAN_HOME)
   : path.join(os.homedir(), '.foreman');
@@ -108,6 +127,15 @@ export const config = {
    * passed a 14 KB security module having read only an excerpt of its tests.
    */
   crewCodeDiffCapBytes: int('FOREMAN_CREW_CODE_DIFF_CAP_BYTES', 96_000),
+  /** Where the CLI reaches a daemon (src/cli.ts): FOREMAN_URL, else the local daemon at FOREMAN_HOST:FOREMAN_PORT. */
+  get cliUrl(): string {
+    const raw = process.env['FOREMAN_URL']?.trim().replace(/\/+$/, '');
+    return raw || daemonUrl(config.host, config.port);
+  },
+  /** The bearer token the CLI sends (FOREMAN_TOKEN), or null. A secret: it is in no KNOB_ENV row and never printed. */
+  get cliToken(): string | null {
+    return process.env['FOREMAN_TOKEN']?.trim() || null;
+  },
   /** FOREMAN_DEBUG=1: one `[foreman debug]` line per event on stderr (src/debug.ts). Read on each call, like taskTimeoutMs. */
   get debug(): boolean {
     return process.env['FOREMAN_DEBUG'] === '1';
@@ -129,6 +157,22 @@ export const config = {
    * and the owner gate. A reviewer aid: it repairs, holds and fails nothing. Off by default; read once, at start.
    */
   revertTests: onOff('FOREMAN_REVERT_TESTS'),
+  /**
+   * FOREMAN_POSTMERGE_MODE: `coalesced` (the default) runs one post-merge check per repo at a time, and a check at the
+   * newest merged HEAD covers every landing with the same test command that merged before it; `per-merge` runs one
+   * check per landing at its own merge HEAD. Read once, at start: a typo fails the start.
+   */
+  postMergeMode: postMergeMode(),
+  /**
+   * FOREMAN_LANDING: `merge` (the default) merges an approved ticket in the local checkout; `mr` lands a repo mapped
+   * in <home>/landing.json through a GitLab merge request (src/landing/config.ts). Read once, at start: a typo fails
+   * the start.
+   */
+  landing: landingMode(),
+  /** How often an open merge request is polled, in ms (FOREMAN_LANDING=mr). */
+  mrPollMs: int('FOREMAN_MR_POLL_MS', 10_000),
+  /** Minutes after it was opened that an MR still not merged sends its ticket back to the gate (FOREMAN_LANDING=mr). */
+  mrTimeoutMin: int('FOREMAN_MR_TIMEOUT_MIN', 120),
   /** Automatic repair rounds for a gap found before review (map, scope); apart from maxRepairs. */
   preReviewRepairs: int('FOREMAN_PRE_REVIEW_REPAIRS', 2),
   /**
@@ -176,9 +220,156 @@ export const config = {
   },
   /** Output-token ceiling on a council advisor/chair call (num_predict / max_tokens). */
   councilMaxOutputTokens: int('FOREMAN_COUNCIL_MAX_TOKENS', 350),
+  // The getters below are modules' own tuning, read on each call (tests set them per case). Each keeps the parsing
+  // its module had; none throws, so a typo never stops a running daemon.
+  /** Where agent definitions are read (src/agents.ts). */
+  get agentsDir(): string {
+    return process.env['FOREMAN_AGENTS_DIR'] ?? path.join(home, 'agents');
+  },
+  /** Where playbooks are read (src/playbooks.ts). */
+  get playbooksDir(): string {
+    return process.env['FOREMAN_PLAYBOOKS_DIR'] ?? path.join(home, 'playbooks');
+  },
+  /** Who a ticket goes to when neither it nor its playbook says (src/assign.ts); anything but ai or human is null. */
+  get assignee(): 'human' | 'ai' | null {
+    const raw = (process.env['FOREMAN_ASSIGNEE'] ?? '').trim().toLowerCase();
+    return raw === 'human' || raw === 'ai' ? raw : null;
+  },
+  /** Free MB a volume needs before dispatch (src/diskSpace.ts); empty, non-numeric or negative is 2048. */
+  get minFreeMb(): number {
+    const raw = process.env['FOREMAN_MIN_FREE_MB'];
+    if (raw === undefined || raw.trim() === '') return 2048;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 2048;
+  },
+  /** Limit on every daemon-side git process (src/gitTimeout.ts); empty, non-numeric or non-positive is 120000. */
+  get gitTimeoutMs(): number {
+    const raw = process.env['FOREMAN_GIT_TIMEOUT_MS']?.trim();
+    if (!raw) return 120_000;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120_000;
+  },
+  /** The main check after a merge (src/postMerge.ts): on unless `off`. */
+  get postMergeCheck(): boolean {
+    return (process.env['FOREMAN_POSTMERGE_CHECK'] ?? '').trim().toLowerCase() !== 'off';
+  },
+  /** How long a usage-limited runner is left alone (src/providerLimit.ts); default 15 minutes. */
+  get limitBackoffMs(): number {
+    const raw = Number(process.env['FOREMAN_LIMIT_BACKOFF_MS']);
+    return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60_000;
+  },
+  /** Total credit for a worker's own slot waits (src/runClock.ts); default 30 minutes, an empty value reads as 0. */
+  get slotWaitCreditMs(): number {
+    const ms = Number(process.env['FOREMAN_SLOT_WAIT_CREDIT_MS']);
+    return Number.isFinite(ms) && ms >= 0 ? ms : 30 * 60_000;
+  },
+  /**
+   * Who runs the full test suite on a code ticket (src/scheduler.ts shellBrief): `full`, the default, has the worker
+   * run it once through the slot wrapper before it finishes; `targeted` tells the worker to run only the tests for
+   * what it changed and leave the full suite to the gate, whose run is the one that counts. Advisory: the worker's
+   * tools are the same either way. Anything but `targeted` (any case, spaces trimmed) is `full`.
+   */
+  get workerSuite(): 'full' | 'targeted' {
+    return (process.env['FOREMAN_WORKER_SUITE'] ?? '').trim().toLowerCase() === 'targeted' ? 'targeted' : 'full';
+  },
+  /** Step delay of the echo runner (src/runners/echo.ts), the demo/self-test worker. */
+  get echoStepMs(): number {
+    return Number(process.env['FOREMAN_ECHO_STEP_MS'] ?? 900);
+  },
+  /** Leftover-process sampling interval (src/runners/proctree.ts); 0 is off, an empty value reads as 0. */
+  get leftoverSampleMs(): number {
+    const raw = Number(process.env['FOREMAN_LEFTOVER_SAMPLE_MS'] ?? 3_000);
+    return Number.isFinite(raw) && raw >= 0 ? raw : 3_000;
+  },
 } as const;
 
 export type Config = typeof config;
+
+/**
+ * The FOREMAN_* variable behind each config key, or null for a path derived from the others and for the one secret (cliToken). Keyed by every key of
+ * Config, so a knob added above without a row here fails the typecheck. None named here is a secret: `foreman
+ * config --effective` prints these values as they are.
+ */
+const KNOB_ENV: Record<keyof Config, string | null> = {
+  home: 'FOREMAN_HOME',
+  sourceRoot: null,
+  toolbox: 'FOREMAN_TOOLBOX',
+  dbPath: 'FOREMAN_DB',
+  workRoot: null,
+  artifactRoot: null,
+  port: 'FOREMAN_PORT',
+  host: 'FOREMAN_HOST',
+  cliUrl: 'FOREMAN_URL',
+  cliToken: null,
+  maxWorkers: 'FOREMAN_MAX_WORKERS',
+  maxVerifying: 'FOREMAN_MAX_VERIFYING',
+  taskTimeoutMs: 'FOREMAN_TASK_TIMEOUT_MS',
+  logLinesPerRun: 'FOREMAN_LOG_LINES',
+  traceRetainDays: 'FOREMAN_TRACE_RETAIN_DAYS',
+  jailRetainDays: 'FOREMAN_JAIL_RETAIN_DAYS',
+  failedJailRetainDays: 'FOREMAN_FAILED_JAIL_RETAIN_DAYS',
+  schedulerTickMs: 'FOREMAN_TICK_MS',
+  diffCapBytes: 'FOREMAN_DIFF_CAP_BYTES',
+  proseDiffCapBytes: 'FOREMAN_PROSE_DIFF_CAP_BYTES',
+  crewCodeDiffCapBytes: 'FOREMAN_CREW_CODE_DIFF_CAP_BYTES',
+  debug: 'FOREMAN_DEBUG',
+  logTailLines: 'FOREMAN_LOG_TAIL_LINES',
+  logTailBytes: 'FOREMAN_LOG_TAIL_BYTES',
+  memoryBriefBytes: 'FOREMAN_MEMORY_BRIEF_BYTES',
+  repairBriefBytes: 'FOREMAN_REPAIR_BRIEF_BYTES',
+  revertTests: 'FOREMAN_REVERT_TESTS',
+  preReviewRepairs: 'FOREMAN_PRE_REVIEW_REPAIRS',
+  acceptanceBytes: 'FOREMAN_ACCEPTANCE_BYTES',
+  reviewReportBytes: 'FOREMAN_REVIEW_REPORT_BYTES',
+  citedSourceBytes: 'FOREMAN_CITED_SOURCE_BYTES',
+  skillsDir: 'FOREMAN_SKILLS_DIR',
+  skillBriefBytes: 'FOREMAN_SKILL_BRIEF_BYTES',
+  councilMaxOutputTokens: 'FOREMAN_COUNCIL_MAX_TOKENS',
+  agentsDir: 'FOREMAN_AGENTS_DIR',
+  playbooksDir: 'FOREMAN_PLAYBOOKS_DIR',
+  assignee: 'FOREMAN_ASSIGNEE',
+  minFreeMb: 'FOREMAN_MIN_FREE_MB',
+  gitTimeoutMs: 'FOREMAN_GIT_TIMEOUT_MS',
+  postMergeCheck: 'FOREMAN_POSTMERGE_CHECK',
+  postMergeMode: 'FOREMAN_POSTMERGE_MODE',
+  landing: 'FOREMAN_LANDING',
+  mrPollMs: 'FOREMAN_MR_POLL_MS',
+  mrTimeoutMin: 'FOREMAN_MR_TIMEOUT_MIN',
+  limitBackoffMs: 'FOREMAN_LIMIT_BACKOFF_MS',
+  slotWaitCreditMs: 'FOREMAN_SLOT_WAIT_CREDIT_MS',
+  workerSuite: 'FOREMAN_WORKER_SUITE',
+  echoStepMs: 'FOREMAN_ECHO_STEP_MS',
+  leftoverSampleMs: 'FOREMAN_LEFTOVER_SAMPLE_MS',
+};
+
+/** Knobs whose reader uses an empty value as it is (0 or ''), so an empty value is set, not the default. */
+const EMPTY_IS_SET = new Set(['FOREMAN_AGENTS_DIR', 'FOREMAN_PLAYBOOKS_DIR', 'FOREMAN_SLOT_WAIT_CREDIT_MS',
+  'FOREMAN_ECHO_STEP_MS', 'FOREMAN_LEFTOVER_SAMPLE_MS']);
+
+export interface Knob {
+  name: string;
+  value: string;
+  /** env: set and not empty (present, for EMPTY_IS_SET); default: config.ts fell back to its own value. */
+  source: 'env' | 'default';
+}
+
+/**
+ * What `foreman config --effective` prints: each knob config.ts resolves, with its value and source, and the names
+ * (never the values) of every other FOREMAN_* variable in the environment — those are read where they are used.
+ */
+export function effectiveConfig(): { knobs: Knob[]; others: string[] } {
+  const knobs: Knob[] = [];
+  for (const key of Object.keys(KNOB_ENV) as Array<keyof Config>) {
+    const name = KNOB_ENV[key];
+    if (name === null) continue;
+    const raw = process.env[name];
+    const set = EMPTY_IS_SET.has(name) ? raw !== undefined : Boolean(raw?.trim());
+    knobs.push({ name, value: String(config[key]), source: set ? 'env' : 'default' });
+  }
+  const resolved = new Set(knobs.map((k) => k.name));
+  const others = Object.keys(process.env).filter((n) => n.startsWith('FOREMAN_') && !resolved.has(n)).sort();
+  return { knobs, others };
+}
 
 /**
  * The URL a client reaches the daemon on. A wildcard bind is reached on

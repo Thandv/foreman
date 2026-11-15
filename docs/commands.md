@@ -11,6 +11,7 @@ prune       drop worktrees and branches of finished tasks (approved work only on
 trace       full JSON reconstruction of a task
 debrief     what one finished epic shows: collected facts, findings, at most 3 suggestions (see Self-improvement)
 service     print a launchd plist for this install
+config      `config --effective`: each src/config.ts setting, its value and env|default, then the names of other FOREMAN_* variables set
 help        the full usage text (also `foreman --help`)
 assign      who does a task: `assign <taskId> ai|human`
 gate        who decides at the gate: `gate <taskId>|--waiting|--house owner|human`
@@ -31,14 +32,32 @@ align       LoRA alignment on your own history (see Alignment)
 prose       `prose audit <dir>` and `prose import <file> --out <dir>` for manuscripts
 agreement   how often the local reviewer would have decided what the cloud reviewer did
 drill       local-only readiness probes (see Local-only mode)
+hold        `hold --reason <text>`: claim no new work while the rest of the daemon runs (see Operating)
+resume      lift the hold; the next tick claims new work again
+land-clear  `land-clear <repo>`: release a repo a crash left mid-merge, or a merge request left unsynced, once you have checked it (see Operating)
+token       `token create --host-admin --name <name> [--service] [--expires 30d]`: mint a principal's API token (see Security)
 ```
+
+Every command that talks to the daemon over HTTP uses `FOREMAN_URL` (default: the local daemon at `FOREMAN_HOST` and
+`FOREMAN_PORT`) and sends `FOREMAN_TOKEN` as `Authorization: Bearer` when it is set. The CLI refuses a token for
+`http://` to any host but this machine. `--allow-core` (`add`, `improve`) sends this machine's host-admin secret, so
+it is refused unless `FOREMAN_URL` is unset or names the local daemon; so is `token create --host-admin`, which sends
+the same secret and prints the new token alone on stdout (once; what it minted goes to stderr). Commands that open the ledger directly (`backup`, `restore`, `prune`, ...)
+still act on the local `FOREMAN_HOME`.
+
+**HTTP status codes for ledger failures.** A route that rejects its input answers 400 with the reason, and any
+error a route does not map itself is a 400 with its message. The exception is a SQLite failure, matched on the
+error's `code` (`ERR_SQLITE_ERROR`) and numeric `errcode`, never on message text: `5` (BUSY) or `6` (LOCKED) answers
+**503** `ledger busy: <detail>; retry`, and `13` (FULL) answers **507** `ledger disk full: <detail>`. The CLI does
+not retry; run the command again.
 
 ### `foreman landed <taskId> --commit <sha> [--by <ticketId>] [--note <text>]`
 
 Records work a person landed on the base branch by hand, so the ticket closes as `done` instead of being cancelled.
 It posts to `POST /api/tasks/:id/landed`; the route sits behind the same Host check (DNS-rebinding defence) and
 cross-origin (Origin) check as every other write under `/api`, which run before routing. There is no separate token:
-the guard is those two checks. The decision is always recorded with actor `human`.
+the guard is those two checks. The decision is always recorded with actor `human`, and with the request's principal as
+its `actor_id` (`operator` while auth is off).
 
 **Accepts** a ticket that is `awaiting-approval`, `failed` or `blocked`, or `canceled` when the ticket's latest
 `cancel` decision is from a person (not `system`).
@@ -48,6 +67,14 @@ any other state (`queued`, `running`, `verifying`, `done`, `rejected`, ...: a re
 retry the ticket, or cancel it and land the work as a new ticket); a `canceled` ticket whose cancel came from its
 parent epic; a ticket with no repo, or a repo that is not a git repo; a `--commit` that is not a commit in that repo;
 a repo with no branch checked out; and either ancestry check below. A ticket that does not exist answers 404.
+
+**Through the merge request (D6).** A ticket whose repo lands by merge request (`FOREMAN_LANDING=mr` and the repo
+mapped in `landing.json`; a change to Foreman itself excepted), and every ticket once auth is on, is not landed by hand:
+the route answers 409 `this repo lands through its merge request (<why>)` and records nothing. The one exception is
+the merge request the ticket's latest MR-opening approval names (its decision's `mrIid`): when the forge reports it
+merged, `--commit` names its head, and that commit's tree is the tree the approval reviewed, the landing is recorded,
+once (a second call finds the ticket `done`). With auth off and the repo not mapped, nothing changes. Four-eyes is
+checked first (403).
 
 **Inputs** are checked at the route before the Store sees them (400, nothing done): `--commit` is hex, 7 to 40
 characters; `--by` has the ticket-id shape (`t_` then letters or digits); `--note` is at most 2000 characters.
@@ -68,7 +95,7 @@ done. Afterwards the ticket's jail (worktree and branch) is removed, but only wh
 root; its artifacts stay.
 
 `foreman show <taskId>` prints the row among the ticket's decisions:
-`landed by human; commit <sha>; landed_tree <12 chars>; by ticket <id>; → done; note: landed by hand: ...`. The `by`
+`landed by human (<actor id>); commit <sha>; landed_tree <12 chars>; by ticket <id>; → done; note: landed by hand: ...`. The `by`
 part appears only when `--by` was given. `GET /api/state` carries the same facts on each ticket as
 `landed: { commit, landedTree, by, actor, at }` (null when the ticket was not landed by hand), and
 `GET /api/tasks/:id` lists the full row under `decisions`.
@@ -93,7 +120,7 @@ Dependencies that ended `failed` or `rejected` always fail their dependents.
 
 Drops one dependency edge (`--after`) from a ticket. It posts to `POST /api/tasks/:id/deps-drop` with `{ dep }`, behind
 the same Host and Origin checks as `approve` and `landed`. In one transaction it deletes exactly that `task_deps` row and
-writes one `deps-drop` row in `decisions` (actor `human`) whose note names the dependency.
+writes one `deps-drop` row in `decisions` (actor `human`, `actor_id` the request's principal) whose note names the dependency.
 
 **Refuses**, changing nothing (409 with the reason; the CLI prints it and exits non-zero): a ticket that is `running`; an
 edge that does not exist; and a terminal ticket (`done`, `failed`, `rejected`, `canceled`), with one exception. A

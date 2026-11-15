@@ -10,6 +10,10 @@ import { Scheduler } from '../src/scheduler.ts';
 import { createServer } from '../src/server.ts';
 import { setCloudDown } from '../src/localOnly.ts';
 import { acquireLocalModelLock, releaseLocalModelLock } from '../src/align/localLock.ts';
+import { registerExtension } from '../src/extensions.ts';
+import { alignExtension } from '../src/align/extension.ts';
+
+registerExtension(alignExtension);
 
 const MB = 1024 * 1024;
 const heldEvents = (store: Store, id: string) =>

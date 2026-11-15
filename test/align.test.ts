@@ -183,7 +183,7 @@ test("the owner gate's decision is never the operator's, even after a retry clea
     return id;
   };
   const id = park('OWNER-REJECTED: rewrote the parser and the lexer');
-  applyRejection(store, id, 'owner-gate: touches the lexer', 'owner-gate');
+  applyRejection(store, id, 'owner-gate: touches the lexer', 'owner-model');
   store.retry(id); // clears the task-level owner-gate marker
   park('HUMAN-APPROVED: rewrote only the parser', id);
   store.decide(id, true);

@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { pipeline } from 'node:stream/promises';
 import { config } from './config.ts';
+import { NewerSchemaError, requireKnownSchema } from './db.ts';
 
 /** Not enough room in the backup folder for a copy and its archive. */
 export class BackupSpaceError extends Error {
@@ -218,12 +219,12 @@ function requireLedger(file: string, label: string): void {
         (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name),
       );
       missing = LEDGER_TABLES.filter((t) => !have.has(t));
-      // Foreman stamps no schema version today; the header field must still read.
-      db.prepare('PRAGMA user_version').get();
+      if (!missing.length) requireKnownSchema(db, label);
     } finally {
       db.close();
     }
   } catch (err) {
+    if (err instanceof NewerSchemaError) throw err;
     throw new NotALedgerError(`not a Foreman database: the schema of ${label} cannot be read: ${(err as Error).message}`);
   }
   if (missing.length) {
@@ -465,7 +466,7 @@ export async function restoreFrom(
     }
   } catch (err) {
     fs.rmSync(tmp, { force: true });
-    if (err instanceof BackupIntegrityError || err instanceof NotALedgerError) throw err;
+    if (err instanceof BackupIntegrityError || err instanceof NotALedgerError || err instanceof NewerSchemaError) throw err;
     throw new Error(`cannot unpack ${file}: ${(err as Error).message}`);
   }
 

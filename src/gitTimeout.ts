@@ -1,15 +1,12 @@
+import { config } from './config.ts';
+
 // The one time limit on every daemon-side git process. A git that wedges (a credential prompt, an NFS stall, a hook)
 // would otherwise hang its caller forever and be orphaned; past the limit it is killed with SIGKILL and the caller
 // rejects with an error naming the subcommand only.
 
-export const DEFAULT_GIT_TIMEOUT_MS = 120_000;
-
-/** FOREMAN_GIT_TIMEOUT_MS, read on each call; empty, non-numeric or non-positive keeps the default. */
+/** FOREMAN_GIT_TIMEOUT_MS, read on each call; empty, non-numeric or non-positive keeps the default (120000). */
 export function gitTimeoutMs(): number {
-  const raw = process.env['FOREMAN_GIT_TIMEOUT_MS']?.trim();
-  if (!raw) return DEFAULT_GIT_TIMEOUT_MS;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_GIT_TIMEOUT_MS;
+  return config.gitTimeoutMs;
 }
 
 /**

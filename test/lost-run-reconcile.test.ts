@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
-import { claimRunLease } from '../src/verify/slots.ts';
+import { claimRunLease, runToken } from '../src/verify/slots.ts';
 
 // A run is lost when its row says 'running' but nothing in this daemon is executing it. The scheduler finds such
 // runs from tick, at most once a minute by its injected clock, and only acts on one it has seen twice in a row.
@@ -171,7 +171,7 @@ test('a run its daemon still holds is untouched across 100 ticks', async (t) => 
   const landing = lostRun(store);
   store.beginLanding(landing.taskId);
   const lease = lostRun(store);
-  const held = claimRunLease({ 'x-foreman-run': lease.runId });
+  const held = claimRunLease({ 'x-foreman-run': lease.runId, 'x-foreman-run-token': runToken(lease.runId) });
   t.after(held.release);
   const reserved = lostRun(store);
   internals.broker.pending.set(reserved.taskId, 1);

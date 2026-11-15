@@ -135,7 +135,7 @@ test('a forged Foreman line is marked through a hidden character, a look-alike l
 
 // ------------------------------------------------------------------ cited source: the document's lines of a file both cite
 
-test('a report that cites the document\'s own file at earlier lines does not push the document\'s lines out; the block stays inside its budget', (t) => {
+test('a report that cites the document\'s own file at earlier lines does not push the document\'s lines out; the block stays inside its budget', async (t) => {
   const dir = scratchDir('foreman-r2-cited-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a: string[]): void => void execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
@@ -145,15 +145,15 @@ test('a report that cites the document\'s own file at earlier lines does not pus
   git('add', '-A'); git('commit', '-qm', 'base');
   const diff = 'diff --git a/docs/adr.md b/docs/adr.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/adr.md\n@@ -0,0 +1,1 @@\n+The lock is taken in `src/main.ts:1500-1600`.\n';
   const report = Array.from({ length: 30 }, (_, i) => `- claim ${i} | src/main.ts:${1 + i * 40}-${40 + i * 40}`).join('\n');
-  const alone = citedSourceBlock(diff, dir, null, 16_000);
-  const both = citedSourceBlock(diff, dir, report, 16_000);
+  const alone = await citedSourceBlock(diff, dir, null, 16_000);
+  const both = await citedSourceBlock(diff, dir, report, 16_000);
   const shown = (block: string): string => /^--- src\/main\.ts \(lines ([\d, -]+) of 2000/m.exec(block)?.[1] ?? 'not shown';
   assert.equal(shown(alone), '1460-1640');
   assert.equal(shown(both), '1460-1640', 'the document\'s cited lines are what is shown');
   assert.match(both, /^SHOWN BY THE DOCUMENT'S OWN CITATIONS ONLY \(the lines the worker's report cites in them did not fit as well\): src\/main\.ts$/m);
   assert.ok(both.length <= 16_000, `inside the budget (${both.length})`);
   // With room for both, both are shown and nothing is said.
-  const roomy = citedSourceBlock(diff, dir, '- claim | src/main.ts:10-20', 64_000);
+  const roomy = await citedSourceBlock(diff, dir, '- claim | src/main.ts:10-20', 64_000);
   assert.match(roomy, /^--- src\/main\.ts \(lines 1-60, 1460-1640 of 2000\) ---$/m);
   assert.doesNotMatch(roomy, /SHOWN BY THE DOCUMENT'S OWN CITATIONS ONLY/);
   // Long names in two lists at once (not read; read and left out), on a small budget: never over it.
@@ -162,7 +162,7 @@ test('a report that cites the document\'s own file at earlier lines does not pus
   git('add', '-A');
   const cites = Array.from({ length: 30 }, (_, i) => `- \`${long(i)}\``).join('\n');
   for (const budget of [4_000, 8_000, 12_000]) {
-    const crowded = citedSourceBlock(diff, dir, cites, budget);
+    const crowded = await citedSourceBlock(diff, dir, cites, budget);
     assert.ok(crowded.length <= budget, `inside a ${budget} budget (${crowded.length})`);
     assert.match(crowded, /CITED BUT NOT READ/);
     assert.match(crowded, /NOT SHOWN, over this block's/);

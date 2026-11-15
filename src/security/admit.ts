@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { isSelfTask, PROTECTED_PATHS } from './coreGuard.ts';
 import { localOnly, localOnlyLabel } from '../localOnly.ts';
 import type { Task } from '../types.ts';
@@ -70,21 +70,45 @@ function scanText(text: string): Finding[] {
   }));
 }
 
+const FRISK_ARGS = ['--stdin', '--json'];
+const FRISK_TIMEOUT_MS = 20_000;
+
+function parseFrisk(out: string): Finding[] {
+  const parsed = JSON.parse(out) as { findings?: Array<{ severity?: string; rule?: string; message?: string }> };
+  return (parsed.findings ?? []).map((f) => ({
+    severity: (f.severity === 'block' || f.severity === 'warn' ? f.severity : 'note') as Finding['severity'],
+    rule: f.rule ?? 'frisk',
+    message: f.message ?? 'frisk finding',
+  }));
+}
+
 /** Use the real scanner when it is installed; fall back to the built-in rules. */
 function friskFindings(text: string): Finding[] | null {
   try {
-    const out = execFileSync('frisk-scan', ['--stdin', '--json'], {
+    const out = execFileSync('frisk-scan', FRISK_ARGS, {
       input: text,
       encoding: 'utf8',
-      timeout: 20_000,
+      timeout: FRISK_TIMEOUT_MS,
       stdio: ['pipe', 'pipe', 'ignore'],
     });
-    const parsed = JSON.parse(out) as { findings?: Array<{ severity?: string; rule?: string; message?: string }> };
-    return (parsed.findings ?? []).map((f) => ({
-      severity: (f.severity === 'block' || f.severity === 'warn' ? f.severity : 'note') as Finding['severity'],
-      rule: f.rule ?? 'frisk',
-      message: f.message ?? 'frisk finding',
-    }));
+    return parseFrisk(out);
+  } catch {
+    return null; // not installed, or it failed — the built-in rules still run
+  }
+}
+
+/** friskFindings without holding the event loop for the scan. */
+async function friskFindingsAsync(text: string): Promise<Finding[] | null> {
+  try {
+    const out = await new Promise<string>((resolve, reject) => {
+      const child = execFile('frisk-scan', FRISK_ARGS, { encoding: 'utf8', timeout: FRISK_TIMEOUT_MS }, (err, stdout) =>
+        err ? reject(err) : resolve(stdout));
+      // A failed write (no scanner, or one that exits without reading all its input) is not the outcome; as with
+      // execFileSync, the exit and the output are, and the callback above reports them.
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(text);
+    });
+    return parseFrisk(out);
   } catch {
     return null; // not installed, or it failed — the built-in rules still run
   }
@@ -143,14 +167,30 @@ export function namedCorePaths(task: Task, selfRoot?: string, isSelf?: boolean):
   return PROTECTED_PATHS.filter((p) => targeted.includes(p));
 }
 
+interface AdmitOptions {
+  selfRoot?: string;
+  /** The caller's `isSelfTask` answer, when it has one. */
+  isSelf?: boolean;
+}
+
 /**
  * Admission control. Throws AdmissionBlocked on any BLOCK finding — that
  * outcome is not configurable, by design. Returns the survivable findings so
- * the caller can record them.
+ * the caller can record them. Holds the event loop while frisk-scan runs: the
+ * cached loaders use it; a run's launch uses admitAsync.
  */
-export function admit(task: Task, opts: { selfRoot?: string; /** The caller's `isSelfTask` answer, when it has one. */ isSelf?: boolean } = {}): Finding[] {
-  const text = admissionText(task);
-  const findings = [...(friskFindings(text) ?? []), ...scanText(text)];
+export function admit(task: Task, opts: AdmitOptions = {}): Finding[] {
+  return judge(task, opts, friskFindings(admissionText(task)));
+}
+
+/** admit, with the frisk-scan run off the event loop. Same findings, same AdmissionBlocked. */
+export async function admitAsync(task: Task, opts: AdmitOptions = {}): Promise<Finding[]> {
+  return judge(task, opts, await friskFindingsAsync(admissionText(task)));
+}
+
+/** The rules and the BLOCK throw both entry points share; `frisk` is the scanner's findings, null when it did not run. */
+function judge(task: Task, opts: AdmitOptions, frisk: Finding[] | null): Finding[] {
+  const findings = [...(frisk ?? []), ...scanText(admissionText(task))];
 
   // A task that targets Foreman itself and names a protected path is admitted
   // with a warning, not refused (operator decision, 2026-10-10). Naming is not

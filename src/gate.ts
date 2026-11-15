@@ -1,27 +1,31 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { ownerCall } from './assistant/ownerCall.ts';
 import { recordDecision } from './assistant/memory.ts';
 import { dailyCapUsd, subscriptionCapUsd } from './budget.ts';
-import { config } from './config.ts';
-import { gitTimeoutOpts } from './gitTimeout.ts';
+import { config, type PostMergeMode } from './config.ts';
 import { boundBrief, compactDiff, diffStats } from './context.ts';
 import { pathsInDiff } from './improve.ts';
-import { landingRefusal, mergeApproved, NOT_REVIEWED, type MergeResult } from './merge.ts';
+import { landingRefusal, mergeApproved, type MergeCode, type MergeResult } from './merge.ts';
+import { withRepoMergeSection } from './landing/queue.ts';
+import { ForgeError } from './landing/forge.ts';
+import { mrLandingFor, noteApproval, openForApproval, pendingMr } from './landing/mr.ts';
 import { NOTHING_TO_CHANGE_CLOSED, personPark } from './verify/gateOutcome.ts';
 import { extractJson } from './models.ts';
 import { cloudFallback, localOnly } from './localOnly.ts';
 import { getPlaybook } from './playbooks.ts';
-import { isSelfTask } from './security/coreGuard.ts';
-import { leftoverMarkers, pinnedGit, unmergedPaths } from './isolate.ts';
+import { changedPaths as gitChangedPaths, isProtectedPath, isSelfTask, isSelfTaskFresh } from './security/coreGuard.ts';
+import { recheck } from './security/fourEyes.ts';
+import { authIsOn } from './security/tokenAuth.ts';
+import { pinnedGit } from './gitExec.ts';
+import { leftoverMarkers, unmergedPaths } from './isolate.ts';
 // Type-only, like ownerCall.ts: the Store is always the caller's, so gate.ts
 // keeps no runtime edge to queue.ts and cannot form a cycle with it.
 import type { Store } from './queue.ts';
 import { registerApprovedTool, type RegisterResult } from './tools/forge.ts';
-import { checkMain, postMergeCheckEnabled, repoHead, type MainCheck } from './postMerge.ts';
-import type { Decision, GateMode, Run, Task } from './types.ts';
+import { postMergeCheckEnabled, repoHead } from './postMerge.ts';
+import { checkLanding, checkMergedHead, pruneMainWorktrees, type MainChecker } from './landing/verify.ts';
+import { DEFAULT_ACTOR_ID, type Decision, type DecisionActor, type GateMode, type Run, type Sensitivity, type Task } from './types.ts';
 import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
 import { checkRepo } from './gitTripwire.ts';
@@ -123,10 +127,22 @@ export function gateOptIn(task: Pick<Task, 'gate' | 'playbook'>, houseDefault?: 
   return houseDefault === 'owner';
 }
 
-const execGit = promisify(execFile);
-
 /** Thrown by applyApproval once the daemon has begun shutting down. */
 export class ShuttingDownError extends Error {}
+
+/**
+ * Thrown by applyApproval when an approval's turn in its repo's merge section
+ * comes and the work it was given for is no longer what is parked. Nothing
+ * was decided; the ticket stays where it is.
+ */
+export class StaleApprovalError extends Error {}
+
+/**
+ * Four-eyes (security/fourEyes.ts) refused the person approving or landing:
+ * nothing was decided, and the ticket stays where it is. A StaleApprovalError
+ * too, since the merge section asks it again when an approval's turn comes.
+ */
+export class FourEyesRefused extends StaleApprovalError {}
 
 /**
  * The approvals in flight in this process, so a shutdown can wait for them.
@@ -192,47 +208,8 @@ export const APPROVAL_DRAIN_CAP_MS = 60_000;
 /** The daemon's tracker. Tests pass their own via applyApproval's opts. */
 export const approvals = new ApprovalTracker();
 
-const MAIN_WORKTREE_PREFIX = 'foreman-main-';
-
 /**
- * Remove every registered foreman-main-* worktree of `repo` (checkMain's
- * scratch checkouts), then prune registrations whose directory is gone. Used
- * after an interrupted check and at startup, after a crash. A worktree named
- * for another process that is still alive is that process's running check
- * and is left alone. Returns the paths removed.
- */
-export async function pruneMainWorktrees(repo: string): Promise<string[]> {
-  const list = await execGit('git', ['worktree', 'list', '--porcelain'], { cwd: repo, ...gitTimeoutOpts() })
-    .then((r) => r.stdout)
-    .catch(() => '');
-  const removed: string[] = [];
-  for (const line of list.split('\n')) {
-    if (!line.startsWith('worktree ')) continue;
-    const dir = line.slice('worktree '.length).trim();
-    const name = path.basename(dir);
-    if (!name.startsWith(MAIN_WORKTREE_PREFIX)) continue;
-    // foreman-main-<pid>-…: another live daemon's (or CLI's) check in progress.
-    const owner = Number(/^foreman-main-(\d+)-/.exec(name)?.[1]);
-    if (owner && owner !== process.pid && pidAlive(owner)) continue;
-    await execGit('git', ['worktree', 'remove', '--force', dir], { cwd: repo, ...gitTimeoutOpts() }).catch(() => {});
-    fs.rmSync(dir, { recursive: true, force: true });
-    removed.push(dir);
-  }
-  await execGit('git', ['worktree', 'prune'], { cwd: repo, ...gitTimeoutOpts() }).catch(() => {});
-  return removed;
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-/**
- * Startup half of the above: a crash (or a shutdown past its cap) can leave a
+ * Startup half of pruneMainWorktrees (src/landing/verify.ts): a crash (or a shutdown past its cap) can leave a
  * foreman-main-* worktree registered in any repo Foreman has merged into.
  * Called before the scheduler starts, so no check of this process is running.
  */
@@ -247,25 +224,21 @@ export async function pruneStaleMainWorktrees(store: Store): Promise<string[]> {
   return removed;
 }
 
-type MainChecker = (repo: string, testCmd: string | null, signal: AbortSignal) => Promise<MainCheck>;
-
-/** Resolves when `signal` aborts, never otherwise: a check that ignores its signal must not hold a shutdown. */
-function onAbort(signal: AbortSignal): Promise<'interrupted'> {
-  return new Promise((resolve) => {
-    if (signal.aborted) resolve('interrupted');
-    else signal.addEventListener('abort', () => resolve('interrupted'), { once: true });
-  });
-}
-
 export interface ApprovalResult {
   task: Task;
   merge: MergeResult;
   registration: RegisterResult;
   /** The row this approval left in `decisions`; null if the ledger could not take it (the timeline says why). */
   decision?: Decision | null;
+  /**
+   * The landing's post-merge check, still running when the approval returns: it resolves with the merge result
+   * and what the check found appended to its reason (checkLanding), and rejects only when the check could not be
+   * recorded. Absent when no check runs for this landing.
+   */
+  postMerge?: Promise<MergeResult>;
 }
 
-/** What only the person approving can state, for the decision row. Read only when `source` is 'human'. */
+/** What only the person approving can state, for the decision row. Read only when a person approves. */
 export interface ApprovalStatement {
   /** true: the work needed a fix beyond the reviewed diff (`--corrected`); false: it did not (`--clean`); absent: not stated. */
   corrected?: boolean | null;
@@ -274,41 +247,241 @@ export interface ApprovalStatement {
 }
 
 /**
+ * Who stands at the approve and reject path, as the principal it is given:
+ * the owner gate's reserved id is the owner model, and any other id (a
+ * request principal's, or 'operator' while auth is off) is a person.
+ */
+function actorOf(principal: string): DecisionActor {
+  return principal === DEFAULT_ACTOR_ID['owner-model'] ? 'owner-model' : 'human';
+}
+
+/** The approver as decide(), the memory fact and merge.ts name it. */
+function sourceOf(principal: string): 'human' | 'owner-gate' {
+  return actorOf(principal) === 'human' ? 'human' : 'owner-gate';
+}
+
+/**
  * The one approve path. A human approving over HTTP and the owner gate
  * approving off-tick run exactly this: decide → remember → land the branch →
- * register a built tool. `source` only marks the decision; it never branches
+ * register a built tool. `principal` only marks the decision; it never branches
  * the effects, so autonomy cannot quietly do something approval does not.
+ * It returns once the merge has settled; the post-merge check runs on as
+ * the result's `postMerge`.
  */
 export async function applyApproval(
   store: Store,
   taskId: string,
   opts: {
-    note?: string | null; source?: 'human' | 'owner-gate'; tracker?: ApprovalTracker; mainCheck?: MainChecker;
+    /** Who approves: a person's principal id ('operator' while auth is off), or 'owner-model' for the owner gate. */
+    principal: string;
+    note?: string | null; tracker?: ApprovalTracker; mainCheck?: MainChecker;
+    /** Stands in for FOREMAN_POSTMERGE_MODE in tests (src/landing/verify.ts checkLanding). */
+    postMergeMode?: PostMergeMode;
     /** Stands in for Foreman's own checkout in tests (merge.ts). */
     selfRoot?: string;
     /**
      * `foreman approve --as-is <sha>`: land this tree although it is not the
-     * reviewed one (merge.ts). Read only when `source` is 'human'.
+     * reviewed one (merge.ts). Read only when a person approves.
      */
     acceptTree?: string | null;
-  } & ApprovalStatement = {},
+    /** Why the approval no longer applies, or null; asked again when its turn in the merge section comes (approve). */
+    stale?: () => string | null;
+  } & ApprovalStatement,
 ): Promise<ApprovalResult> {
+  // Before anything else, so a refusal writes no decision and changes nothing. Only with auth on: with it off the
+  // approval still enters its repo's merge section in the same tick it was given, as before.
+  if (authIsOn(store)) {
+    const refused = await fourEyesRefusal(store, taskId, opts.principal, approvalChange(store, taskId, opts), opts.selfRoot);
+    if (refused) throw refused;
+  }
   const tracker = opts.tracker ?? approvals;
   tracker.admit(taskId);
   return tracker.track(approve(store, taskId, opts, tracker));
 }
 
-async function approve(
-  store: Store,
-  taskId: string,
-  opts: { note?: string | null; source?: 'human' | 'owner-gate'; mainCheck?: MainChecker; selfRoot?: string; acceptTree?: string | null } & ApprovalStatement,
-  tracker: ApprovalTracker,
-): Promise<ApprovalResult> {
-  const source = opts.source ?? 'human';
+/** Landings an approval sends back to the gate for a person to put right before approving again. */
+const RETRY_AT_GATE: ReadonlySet<MergeCode> = new Set(['conflict', 'failed', 'uncommitted', 'branch-gone', 'core-refused', 'mr-refused']);
+
+type ApproveOpts = {
+  principal: string; note?: string | null; mainCheck?: MainChecker; postMergeMode?: PostMergeMode;
+  selfRoot?: string; acceptTree?: string | null; stale?: () => string | null;
+} & ApprovalStatement;
+
+/** Where an approval's checks, decision and merge run: in its repo's merge section, or at once. */
+type Section = <T>(fn: () => Promise<T>) => Promise<T>;
+
+/**
+ * An approval of work parked at the gate in a repo runs inside that repo's
+ * merge section (src/landing/queue.ts): every check, the decision and the
+ * merge; the post-merge check runs after the section, so the next landing in
+ * the repo merges while it is tested. Queued behind another landing, the ticket stays parked and
+ * nothing is decided, so a crash while it waits leaves no ticket done whose
+ * work never merged; when its turn comes everything is read afresh, so a
+ * second approval of the same ticket finds it decided and is refused, and one
+ * whose turn comes after a shutdown began is refused the way a new approval is.
+ * It is an approval of the run parked when it was given: if another run is
+ * parked by its turn, or the caller's own `stale` check now names a reason,
+ * it is refused (StaleApprovalError) with nothing decided.
+ */
+async function approve(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker): Promise<ApprovalResult> {
+  const parked = store.getTask(taskId);
+  if (!parked?.repo || parked.status !== 'awaiting-approval') return approveNow(store, taskId, opts, tracker, (fn) => fn());
+  const runId = store.latestRun(taskId)?.id ?? null;
+  return approveNow(store, taskId, opts, tracker, (fn) => withRepoMergeSection(parked.repo!, async () => {
+    tracker.admit(taskId);
+    const now = store.getTask(taskId);
+    const why = now?.status !== 'awaiting-approval'
+      ? `task ${taskId} is ${now?.status ?? 'gone'}, not awaiting-approval as when it was approved`
+      : (store.latestRun(taskId)?.id ?? null) !== runId
+        ? `the work changed while the approval waited for its turn to land: run ${runId} was approved, another is parked`
+        : opts.stale?.() ?? null;
+    if (why) throw new StaleApprovalError(`approval of ${taskId} not applied, nothing decided: ${why}`);
+    // Asked again: the approver may have been disabled, or a second person minted, while the approval waited.
+    const refused = await fourEyesRefusal(store, taskId, opts.principal, approvalChange(store, taskId, opts), opts.selfRoot);
+    if (refused) throw refused;
+    return fn();
+  }));
+}
+
+/** The change a landing would make, as git names it: from the commit `from` to the tree or commit `to`. */
+interface LandingChange {
+  from: string;
+  to: string;
+}
+
+/**
+ * What approving the task would land: its latest run's work from the commit its jail was cut from, to the reviewed
+ * tree or the `--as-is` one. Null when either is missing, or the `--as-is` tree (the caller's text) is not a hex id,
+ * so it never reaches git as an option.
+ */
+function approvalChange(store: Store, taskId: string, opts: { acceptTree?: string | null }): LandingChange | null {
+  const run = store.latestRun(taskId);
+  const to = opts.acceptTree || run?.reviewedTree;
+  return run?.baseCommit && to && /^[0-9a-f]{40,64}$/.test(to) ? { from: run.baseCommit, to } : null;
+}
+
+/**
+ * The first protected path `change` touches in the task's repo, or null when it touches none or the task has no
+ * repo: Foreman's PROTECTED_PATHS in Foreman's own repo, and in any repo the human-only paths (humanOnlyPath) and the
+ * repo's `gate.humanPaths`. A change that cannot be listed is described in their place, so it counts as protected.
+ */
+async function protectedHit(store: Store, task: Task, change: LandingChange | null, selfRoot?: string): Promise<string | null> {
+  if (!task.repo) return null;
+  if (!change) return 'work whose changed paths are not recorded';
+  let paths: string[];
+  try {
+    paths = await gitChangedPaths(task.repo, change.from, change.to);
+  } catch (err) {
+    // git's own last line ('fatal: ...'), not the command it ran.
+    const said = (err as Error).message.trim().split('\n').at(-1) ?? '';
+    return `work whose changed paths could not be listed (${said.slice(0, 200)})`;
+  }
+  const core = (await isSelfTaskFresh(task, selfRoot)) ? paths.find(isProtectedPath) : undefined;
+  return core ?? humanOnlyPath(paths, repoHumanPaths(store, task.repo));
+}
+
+/**
+ * Four-eyes (security/fourEyes.ts) for `principal` approving or landing the task, with `change` what would land:
+ * null, or the refusal, with its reason written on the task's timeline. Null for an unknown task, which the path
+ * asking answers in its own words.
+ */
+export async function fourEyesRefusal(
+  store: Store, taskId: string, principal: string, change: LandingChange | null, selfRoot?: string,
+): Promise<FourEyesRefused | null> {
+  const task = store.getTask(taskId);
+  if (!task) return null;
+  const reason = await recheck(store, task, principal, () => protectedHit(store, task, change, selfRoot));
+  if (!reason) return null;
+  const message = `four-eyes: ${reason}; nothing was decided`;
+  store.record({ taskId, type: 'status', message });
+  return new FourEyesRefused(message);
+}
+
+/** A decided approval whose merge has settled, ready for its post-merge check. */
+interface Settled {
+  before: Task | null;
+  run: Run | null;
+  task: Task;
+  merge: MergeResult;
+  landable: boolean;
+  /** The HEAD the merge made, to be tested; null when no post-merge check runs for this landing. */
+  checkAt: string | null;
+}
+
+async function approveNow(store: Store, taskId: string, opts: ApproveOpts, tracker: ApprovalTracker, section: Section): Promise<ApprovalResult> {
+  const settled = await section(() => decideAndMerge(store, taskId, opts));
+  if ('result' in settled) return settled.result;
+  const { before, run, task, merge, landable, checkAt } = settled;
+  // The approval returns once the merge has settled; its post-merge check runs on, tracked so a shutdown aborts and
+  // waits for it. The landing hold ends with the check that covers it: a dependent is released by a passing check at
+  // a HEAD its parent's merge reached, or at once when no check runs. An opened merge request keeps it: the hold is
+  // the pending MR's (landing/mr.ts) until the MR merges.
+  const postMerge = checkAt === null
+    ? undefined
+    : tracker.track(checkLanding(store, settled, checkAt, opts.mainCheck ?? checkMergedHead, tracker, opts.postMergeMode));
+  if (landable && !postMerge && merge.code !== 'mr-opened') store.endLanding(taskId);
+  if (merge.branch) {
+    store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
+  }
+  if (merge.merged && merge.note) {
+    store.record({ taskId, runId: run?.id ?? null, type: 'warning', message: merge.note });
+  }
+  // A tool task lands by being registered, the way a code task lands by merging.
+  const registration: RegisterResult = landable
+    ? registerApprovedTool(task, run)
+    : task.kind === 'tool'
+      ? { registered: false, reason: 'nothing to register: no run was approved', tool: null }
+      : { registered: false, reason: 'not a tool task', tool: null };
+  if (task.kind === 'tool') {
+    store.record({
+      taskId,
+      runId: run?.id ?? null,
+      type: registration.registered ? 'status' : 'error',
+      message: `tool: ${registration.reason}`,
+    });
+  }
+  // The ledger's own record of this decision: written once, when the merge has settled. What the post-merge
+  // check finds is never added to it; the check records it as events and the red-repo marker (checkLanding).
+  const recorded = await recordApproval(store, opts, before, run, { task, merge, registration });
+  if (merge.code === 'mr-opened') await noteApproverOfRecord(store, task, recorded.decision ?? null);
+  return { ...recorded, ...(postMerge ? { postMerge } : {}) };
+}
+
+/**
+ * Names the approver of record on the MR an approval opened (landing/mr.ts noteApproval): the approve decision's
+ * actor, the ticket's author and the decision id. The decision row is the record; a note that cannot be posted is a
+ * warning on the ticket, and the MR stays open.
+ */
+async function noteApproverOfRecord(store: Store, task: Task, decision: Decision | null): Promise<void> {
+  let missing: string | null = 'its approve decision was not recorded';
+  if (decision?.actorId) {
+    const approver = store.livePrincipal(decision.actorId);
+    try {
+      await noteApproval(task.id, {
+        approver: approver ? `${approver.name} (${approver.id})` : decision.actorId,
+        author: task.createdBy === null ? 'unknown' : store.livePrincipal(task.createdBy)?.name ?? task.createdBy,
+        decisionId: decision.id,
+      });
+      missing = null;
+    } catch (err) {
+      if (!(err instanceof ForgeError)) throw err;
+      missing = err.message;
+    }
+  }
+  if (missing) store.record({ taskId: task.id, type: 'warning', message: `merge request note naming the approver not posted: ${missing}` });
+}
+
+/**
+ * Every check, the decision and the merge (the part of an approval that runs
+ * in the repo's merge section). An approval refused or unlandable before
+ * anything is decided comes back as its final `result`.
+ */
+async function decideAndMerge(store: Store, taskId: string, opts: ApproveOpts): Promise<Settled | { result: ApprovalResult }> {
+  const source = sourceOf(opts.principal);
   const before = store.getTask(taskId);
   const run = before ? store.latestRun(taskId) : null;
-  // The ledger's own record of this decision (recordApproval below): written once, when the outcome is known.
-  const recorded = (result: ApprovalResult): Promise<ApprovalResult> => recordApproval(store, opts, before, run, result);
+  const recorded = async (result: ApprovalResult): Promise<{ result: ApprovalResult }> =>
+    ({ result: await recordApproval(store, opts, before, run, result) });
   // A conflict round that is not a clean, finished result is never approved
   // into main, nor is the task marked done on top of it: it goes back to the
   // gate on the approved run, with the hand-merge message.
@@ -317,7 +490,7 @@ async function approve(
     const reason = store.abandonConflictRound(taskId, run!.id, unlandable);
     return recorded({
       task: store.getTask(taskId)!,
-      merge: { merged: false, reason, branch: run!.branch ?? null },
+      merge: { merged: false, code: 'conflict-round-abandoned', reason, branch: run!.branch ?? null },
       registration: { registered: false, reason: 'nothing landed', tool: null },
     });
   }
@@ -343,7 +516,7 @@ async function approve(
     store.record({ taskId, runId: run!.id, type: 'status', message: `merge: ${unreviewed}` });
     return recorded({
       task: store.getTask(taskId)!,
-      merge: { merged: false, reason: unreviewed, branch: run!.branch ?? null },
+      merge: { merged: false, code: 'not-reviewed', reason: unreviewed, branch: run!.branch ?? null },
       registration: { registered: false, reason: 'nothing landed', tool: null },
     });
   }
@@ -355,38 +528,52 @@ async function approve(
   // like it carries an error (and changes what dpoFromGate reads as `reason`).
   // The note's homes are the memory preference, the `decisions` row and its
   // timeline event (recordApproval).
-  // Held from BEFORE decide() until the merge settles: decide() marks the task
+  // Held from BEFORE decide() until the merged HEAD is shown to pass (approveNow): decide() marks the task
   // done, and the scheduler's next tick (250ms) would otherwise release its
   // dependents and cut their worktrees from a main the merge has not reached
   // yet. Observed on an earlier crew run: the executor started in the same
   // second its dependency was approved, one second before that merge landed,
   // and failed its typecheck on the missing module.
   if (landable) store.beginLanding(taskId);
-  let task: Task;
-  let merge: ApprovalResult['merge'];
+  // The durable twin of the hold, from before decide() until the merge has settled: a daemon that dies in between
+  // leaves the row, and the next start holds the repo for the operator (Store.adoptInterruptedLandings).
+  const marker = landable && before!.repo ? store.openLanding(before!.repo, taskId, run!.id) : null;
   try {
-    task = store.decide(taskId, true, undefined, source);
+    let task = store.decide(taskId, true, undefined, source);
     recordDecision(store, task, true, note, source);
-    merge = landable
-      ? await mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who }).catch((err: Error): MergeResult => ({
+    // A mapped repo lands by merge request (landing/mr.ts), every other one by the local merge.
+    const land = async (): Promise<MergeResult> => {
+      const map = marker === null ? null : await mrLandingFor(task, opts.selfRoot);
+      if (!map || marker === null) return mergeApproved(task, run, { selfRoot: opts.selfRoot, ...who });
+      // Asked again right before the forge merge call, which waits for the MR's pipeline: the approver may be disabled by then.
+      const fourEyes = (now: Task): Promise<string | null> =>
+        recheck(store, now, opts.principal, () => protectedHit(store, now, approvalChange(store, now.id, opts), opts.selfRoot));
+      return openForApproval(task, run, map, { marker, selfRoot: opts.selfRoot, fourEyes, ...who });
+    };
+    let merge: MergeResult = landable
+      ? await land().catch((err: Error): MergeResult => ({
         merged: false,
+        code: 'failed',
         reason: `merge failed: ${err.message}`,
         branch: run?.branch ?? null,
       }))
     : left
       ? {
         merged: false,
+        code: 'interrupted-leftover',
         reason: `not landed: an interrupted run's work is still in ${run!.worktreePath} (branch ${run!.branch}) — ` +
           'commit it there and merge it yourself if you want it',
         branch: run!.branch,
       }
-      : { merged: false, reason: 'nothing to land: no run was approved', branch: null };
+      : { merged: false, code: 'nothing-to-land', reason: 'nothing to land: no run was approved', branch: null };
+    // An opened merge request keeps the marker open until it merges (landing/mr.ts).
+    if (marker !== null && merge.code !== 'mr-opened') store.closeLanding(marker);
     // A run that changed nothing (it recorded no diff) and whose branch the landing found empty: the approval
     // closes the ticket, and says so instead of reading like a merge that went missing. Nothing above is skipped —
     // the reviewed-tree check and mergeApproved ran as for any approval, and found nothing to merge.
-    if (landable && !merge.merged && merge.reason === 'branch has no commits ahead of HEAD'
+    if (landable && merge.code === 'nothing-ahead'
       && !store.artifactsForTask(taskId).some((a) => a.type === 'diff' && a.runId === run!.id)) {
-      merge = { ...merge, reason: NOTHING_TO_CHANGE_CLOSED };
+      merge = { ...merge, code: 'nothing-to-change-closed', reason: NOTHING_TO_CHANGE_CLOSED };
     }
     // An approval whose work did not land is not done: its dependents would be
     // released onto a main without it (a desktop-app run: a conflict aborted the
@@ -395,112 +582,47 @@ async function approve(
     // core change is the same, except that approving again is refused again:
     // it is never marked done with the change unlanded, and its note does not
     // promise that another approval will help.
-    // A conflict (and only a conflict: a refused core change starts with other
-    // words) with repair budget left becomes a repair round Foreman prepares.
-    // Nothing lands here; the round parks at the gate like any other.
-    const requeued = landable && !merge.merged && merge.reason.startsWith('merge conflict') && run !== null
+    // A conflict (and only a conflict) with repair budget left becomes a
+    // repair round Foreman prepares. Nothing lands here; the round parks at
+    // the gate like any other.
+    const requeued = landable && merge.code === 'conflict' && run !== null
       ? requeueConflict(store, task, run)
       : null;
     if (requeued) {
       merge = { ...merge, reason: `${merge.reason}; requeued as repair round ${requeued} to resolve the conflict` };
       task = store.getTask(taskId)!;
-    } else if (landable && !merge.merged && NOT_REVIEWED.test(merge.reason)) {
+    } else if (landable && merge.code === 'not-reviewed') {
       // The worktree changed between the check above and the commit. The
       // reason already says what a person can do.
       store.setStatus(taskId, 'awaiting-approval', store.withCoreGuard(taskId, `approved, but not landed: ${merge.reason}`));
       task = store.getTask(taskId)!;
-    } else if (landable && !merge.merged && /^(merge conflict|merge failed|repo has uncommitted|branch .* no longer exists|core change refused)/.test(merge.reason)) {
-      const next = merge.reason.startsWith('core change refused')
+    } else if (landable && RETRY_AT_GATE.has(merge.code)) {
+      const next = merge.code === 'core-refused'
         ? 'reject it, or take the core change out of its branch by hand before approving'
         : 'resolve it, then approve again';
       store.setStatus(taskId, 'awaiting-approval', store.withCoreGuard(taskId, `approved, but not landed: ${merge.reason} — ${next}`));
       task = store.getTask(taskId)!;
     }
-    // Still inside the landing hold, so no dependent is released before the
-    // merged main has been shown to pass its own tests.
-    if (landable && merge.merged && task.repo && postMergeCheckEnabled()) {
-      const { signal, release } = tracker.checkSignal();
-      const repo = task.repo;
-      const ran = await Promise.race([
-        (opts.mainCheck ?? checkMain)(repo, task.testCmd ?? null, signal)
-          .catch((err: Error): MainCheck => ({ ok: false, head: '', cmd: null, tail: err.message, firstTail: '' })),
-        onAbort(signal),
-      ]).finally(release);
-      // A shutdown aborted the check: it did not run, so the repo is not known
-      // green. Held like a red main, due for a re-check at once (the
-      // scheduler's red re-check verifies HEAD and releases it), so no
-      // dependent is cut from an untested HEAD; and the scratch worktree is
-      // taken down rather than left registered in the repo.
-      if (ran === 'interrupted') {
-        await pruneMainWorktrees(repo);
-        store.markRepoRed(repo, {
-          head: await repoHead(repo), taskId, testCmd: task.testCmd ?? null,
-          reason: 'post-merge check interrupted — untested', nextCheckAt: Date.now(),
-        });
-        store.record({
-          taskId, runId: run?.id ?? null, type: 'warning',
-          message: `main check after merging ${taskId} was interrupted by a daemon shutdown and did not run: ` +
-            'the merged HEAD is untested; new work for this repo is held until a re-check passes',
-        });
-        merge = { ...merge, reason: `${merge.reason}; main check interrupted by shutdown — untested, dependents held` };
-      }
-      const check: MainCheck = ran === 'interrupted'
-        ? { ok: true, head: '', cmd: null, tail: '', firstTail: '' } // already held above
-        : ran;
-      const firstRun = check.firstTail ? `\n--- first run (failed) ---\n${check.firstTail.slice(-2_000)}\n--- second run ---\n` : '\n';
-      if (check.ok && check.firstTail) {
-        store.record({
-          taskId, runId: run?.id ?? null, type: 'status',
-          message: `main check after ${taskId} failed once, then passed on an immediate re-run at the same HEAD (flaky; repo not marked red)` +
-            `${firstRun}${check.tail.slice(-2_000)}`,
-        });
-      }
-      if (!check.ok) {
-        store.markRepoRed(task.repo, { head: check.head, taskId, testCmd: task.testCmd ?? null, reason: check.tail.slice(-2_000) });
-        store.record({
-          taskId, runId: run?.id ?? null, type: 'error',
-          message: `MAIN IS RED after merging ${taskId}${check.cmd ? ` (${check.cmd})` : ''}: new work for this repo is held ` +
-            `until HEAD moves and its tests pass.${firstRun}${check.tail.slice(-2_000)}`,
-        });
-        merge = { ...merge, reason: `${merge.reason}; MAIN IS RED after the merge — dependents held` };
-      }
-    }
-  } finally {
+    // Read inside the section: the next landing may move HEAD while this one is tested.
+    const checkAt = landable && merge.merged && task.repo && postMergeCheckEnabled() ? await repoHead(task.repo) : null;
+    return { before, run, task, merge, landable, checkAt };
+  } catch (err) {
     if (landable) store.endLanding(taskId);
+    if (marker !== null) store.closeLanding(marker);
+    throw err;
   }
-  if (merge.branch) {
-    store.record({ taskId, runId: run?.id ?? null, type: 'status', message: `merge: ${merge.reason}` });
-  }
-  if (merge.merged && merge.note) {
-    store.record({ taskId, runId: run?.id ?? null, type: 'warning', message: merge.note });
-  }
-  // A tool task lands by being registered, the way a code task lands by merging.
-  const registration: RegisterResult = landable
-    ? registerApprovedTool(task, run)
-    : task.kind === 'tool'
-      ? { registered: false, reason: 'nothing to register: no run was approved', tool: null }
-      : { registered: false, reason: 'not a tool task', tool: null };
-  if (task.kind === 'tool') {
-    store.record({
-      taskId,
-      runId: run?.id ?? null,
-      type: registration.registered ? 'status' : 'error',
-      message: `tool: ${registration.reason}`,
-    });
-  }
-  return recorded({ task, merge, registration });
 }
 
 /**
  * The tree a merge just landed, read from what the checkout RECEIVED: the
  * second parent of the newest merge commit on HEAD's first-parent line that
  * merge.ts wrote for this task (`foreman: <title> (<task id>)`, always
- * --no-ff). Never from the branch NAME: the row is written after the main
- * check, minutes after the merge, and a process a run left behind can point
- * the branch anywhere by then (merge.ts reads the branch once for the same
+ * --no-ff). Never from the branch NAME: the row is written after the merge,
+ * outside the merge section, and a process a run left behind can point the
+ * branch anywhere by then (merge.ts reads the branch once for the same
  * reason). Null when git cannot say.
  *
- * Through isolate.ts's `pinnedGit`: the repo's config is the one every jail
+ * Through gitExec.ts's `pinnedGit`: the repo's config is the one every jail
  * can write, and with `log.showSignature` set there, `git log` ran the
  * `gpg.program` it also names on a signed merge commit. Exported for its test.
  */
@@ -535,13 +657,14 @@ export async function landedTreeOf(repo: string | null, taskId: string): Promise
  */
 async function recordApproval(
   store: Store,
-  opts: { note?: string | null; source?: 'human' | 'owner-gate'; acceptTree?: string | null } & ApprovalStatement,
+  opts: { principal: string; note?: string | null; acceptTree?: string | null } & ApprovalStatement,
   before: Task | null,
   run: Run | null,
   result: ApprovalResult,
 ): Promise<ApprovalResult> {
   if (!before) return result;
-  const person = (opts.source ?? 'human') === 'human';
+  const actor = actorOf(opts.principal);
+  const person = actor === 'human';
   // The run under review; a ticket finished on the operator's own desk approved none.
   const ruled = before.status === 'awaiting-approval' ? run : null;
   const asIs = person && typeof opts.acceptTree === 'string' && opts.acceptTree !== '';
@@ -551,11 +674,15 @@ async function recordApproval(
     : null;
   const stated = person && typeof opts.corrected === 'boolean' ? opts.corrected : null;
   const byTrees = asIs && landedTree !== null && reviewedTree !== null && landedTree !== reviewedTree;
+  // Said and overruled by the trees: kept, so the statement is not lost. An opened MR: its iid.
+  const mr = result.merge.code === 'mr-opened' ? pendingMr(before.id) : undefined;
+  const extra = byTrees && stated !== null ? { stated: stated ? 'corrected' : 'clean' } : mr ? { mrIid: mr.iid } : null;
   const decision = store.noteDecision({
     taskId: before.id,
     runId: ruled?.id ?? null,
     action: 'approve',
-    actor: person ? 'human' : 'owner-model',
+    actor,
+    actorId: opts.principal,
     note: opts.note ?? null,
     statusAfter: store.getTask(before.id)?.status ?? null,
     reviewedTree,
@@ -566,8 +693,7 @@ async function recordApproval(
     corrected: byTrees ? true : stated,
     correctedSource: byTrees ? 'trees' : stated === null ? null : 'operator',
     reviewSource: person ? opts.reviewSource ?? null : null,
-    // Said and overruled by the trees: kept, so the statement is not lost.
-    extra: byTrees && stated !== null ? { stated: stated ? 'corrected' : 'clean' } : null,
+    extra,
   });
   return { ...result, decision };
 }
@@ -618,19 +744,15 @@ function requeueConflict(store: Store, task: Task, run: Run): number | null {
   return store.scheduleConflictRepair(task.id, run.id, task.testCmd ?? null) ? task.repairs + 1 : null;
 }
 
-/** The one reject path; the note is the reason, whoever wrote it. */
-export function applyRejection(
-  store: Store,
-  taskId: string,
-  note: string,
-  source: 'human' | 'owner-gate' = 'human',
-): Task {
+/** The one reject path; the note is the reason, whoever wrote it. `principal` is who rejects, as for applyApproval. */
+export function applyRejection(store: Store, taskId: string, note: string, principal: string): Task {
+  const source = sourceOf(principal);
   // Read before decide(): the run under review, when the ticket is at the approval gate.
   const ruled = store.getTask(taskId)?.status === 'awaiting-approval' ? store.latestRun(taskId) : null;
   const task = store.decide(taskId, false, note, source);
   recordDecision(store, task, false, note, source);
   store.noteDecision({
-    taskId, runId: ruled?.id ?? null, action: 'reject', actor: source === 'human' ? 'human' : 'owner-model', note,
+    taskId, runId: ruled?.id ?? null, action: 'reject', actor: actorOf(principal), actorId: principal, note,
     statusAfter: task.status, reviewedTree: ruled?.reviewedTree ?? null,
   });
   return task;
@@ -842,16 +964,17 @@ function taskClasses(task: Task): Set<string> {
 
 /**
  * Paths whose change a person approves, whatever else is in the diff: what a
- * repo installs and runs (manifests, shell, build and CI scripts), how git
+ * repo installs and runs (manifests, shell, build and CI scripts, including
+ * GitLab's .gitlab-ci.yml, which defines the pipeline that gates an MR), how git
  * itself treats the tree, and anything named for a security boundary. Matched
  * on the path alone, case-blind, at any depth — a nested package.json or a
  * scripts/ directory inside a package runs just as readily as the root one.
  */
 export const HUMAN_ONLY_PATHS: readonly RegExp[] = [
-  /(^|\/)(package\.json|package-lock\.json|Makefile|\.gitattributes|\.gitmodules)$/i,
+  /(^|\/)(package\.json|package-lock\.json|Makefile|\.gitattributes|\.gitmodules|\.gitlab-ci\.ya?ml)$/i,
   /\.sh$/i,
   // The directory, or an entry of that very name (a symlink standing in for it).
-  /(^|\/)(scripts|\.github)(\/|$)/i,
+  /(^|\/)(scripts|\.github|\.gitlab)(\/|$)/i,
   // Any segment, directory or file, that starts with one of these words.
   /(^|\/)(security|auth|trust|sandbox|crypto)/i,
 ];
@@ -1222,40 +1345,61 @@ async function applyGateReply(
   const rationale = reply.rationale || '(no rationale given)';
   if (reply.decision === 'hold') return log('hold', rationale);
 
-  // The ticket may have been decided by a person, cancelled or re-queued while
-  // the model was thinking; decide() would throw, and it would be right to.
-  // Neither hold is a decision about the work now parked, so neither leaves the
-  // durable marker: a newer run must still get its own owner review.
-  const current = store.getTask(task.id);
-  if (current?.status !== 'awaiting-approval') {
-    return log('hold', `task moved to ${current?.status ?? 'gone'} while the owner was deciding`, false);
-  }
-  // …or rejected, retried and parked AGAIN: the same status, different work.
-  // The ruling is about the run the owner read, never a newer one.
-  if (store.latestRun(task.id)?.id !== run?.id) {
-    return log('hold', 'the work changed while the owner was deciding — the ruling was about an earlier run', false);
-  }
-  // …or re-reviewed, or handed to the human, on the same run: not the review
-  // the owner was shown, or no longer the owner's call.
-  // (The scheduler's eligibility covers the board's house-default switch and a
-  // ticket reset to the default — not just a ticket set to 'human'.)
-  const now = store.getTask(task.id)!;
-  if ((store.verdictsForTask(task.id)[0]?.id ?? null) !== seen || now.gate === 'human'
-      || (stillEligible && !stillEligible())
-      || hardHumanReason(now, store.latestRun(task.id), { ...reviewHolds(store, task.id), selfRoot })) {
-    return log('hold', 'the review or the gate changed while the owner was deciding', false);
-  }
+  // Asked now and again when an approval's turn to land comes (it can wait
+  // behind another landing in the repo). None of these holds is a decision
+  // about the work now parked, so none leaves the durable marker: a newer run
+  // must still get its own owner review.
+  const changed = (): string | null => {
+    // The ticket may have been decided by a person, cancelled or re-queued while
+    // the model was thinking; decide() would throw, and it would be right to.
+    const current = store.getTask(task.id);
+    if (current?.status !== 'awaiting-approval') return `task moved to ${current?.status ?? 'gone'} while the owner was deciding`;
+    // …or rejected, retried and parked AGAIN: the same status, different work.
+    // The ruling is about the run the owner read, never a newer one.
+    if (store.latestRun(task.id)?.id !== run?.id) return 'the work changed while the owner was deciding — the ruling was about an earlier run';
+    // …or re-reviewed, or handed to the human, on the same run: not the review
+    // the owner was shown, or no longer the owner's call.
+    // (The scheduler's eligibility covers the board's house-default switch and a
+    // ticket reset to the default — not just a ticket set to 'human'.)
+    if ((store.verdictsForTask(task.id)[0]?.id ?? null) !== seen || current.gate === 'human'
+        || (stillEligible && !stillEligible())
+        || hardHumanReason(current, store.latestRun(task.id), { ...reviewHolds(store, task.id), selfRoot })) {
+      return 'the review or the gate changed while the owner was deciding';
+    }
+    return null;
+  };
+  const stale = changed();
+  if (stale) return log('hold', stale, false);
 
   const note = `${OWNER_GATE_NOTE} ${rationale}`.slice(0, 1000);
   if (reply.decision === 'approved') {
-    if (approvals.shuttingDown) return log('hold', 'the daemon is shutting down; the ticket stays parked for the next start', false);
-    const result = await applyApproval(store, task.id, { note, source: 'owner-gate', selfRoot });
-    // Not the tree that was reviewed, or no tree on record: nothing landed and
-    // the ticket is a person's now.
-    if (!result.merge.merged && NOT_REVIEWED.test(result.merge.reason)) return log('hold', result.merge.reason);
-    return log('approved', `${rationale}${result.merge.branch ? ` [merge: ${result.merge.reason}]` : ''}`);
+    // With auth on the owner model is never the second pair of eyes (security/fourEyes.ts). Wherever the rule refuses
+    // it, the ticket is parked for a person with the model's verdict, once per park, and no approval is tried.
+    const refused = await recheck(store, task, DEFAULT_ACTOR_ID['owner-model'],
+      () => protectedHit(store, task, approvalChange(store, task.id, {}), selfRoot));
+    if (refused) return log('hold', `four-eyes: ${refused}; parked for a person. The owner model would approve: ${rationale}`);
+    const stopping = 'the daemon is shutting down; the ticket stays parked for the next start';
+    if (approvals.shuttingDown) return log('hold', stopping, false);
+    // While the approval waits for its repo's merge section a shutdown can begin, or the work, review or gate
+    // can change: refused, nothing decided.
+    const result = await applyApproval(store, task.id, { principal: DEFAULT_ACTOR_ID['owner-model'], note, selfRoot, stale: changed })
+      .catch((err: unknown) => {
+        if (err instanceof ShuttingDownError) return stopping;
+        // Auth came on (a first mint) while the approval waited for its turn: decided once per park, as above.
+        if (err instanceof FourEyesRefused) return err;
+        if (err instanceof StaleApprovalError) return err.message;
+        throw err;
+      });
+    if (result instanceof FourEyesRefused) return log('hold', result.message);
+    if (typeof result === 'string') return log('hold', result, false);
+    // Not the tree that was reviewed, no tree on record, or the real .git
+    // changed (the git tripwire): nothing landed and the ticket is a person's now.
+    if (result.merge.code === 'not-reviewed') return log('hold', result.merge.reason);
+    // The owner gate runs off-tick and logs the landing with what its post-merge check found.
+    const merge = (await result.postMerge) ?? result.merge;
+    return log('approved', `${rationale}${merge.branch ? ` [merge: ${merge.reason}]` : ''}`);
   }
-  applyRejection(store, task.id, note, 'owner-gate');
+  applyRejection(store, task.id, note, DEFAULT_ACTOR_ID['owner-model']);
   return log('rejected', rationale);
 }
 
@@ -1298,6 +1442,7 @@ export async function ownerGate(opts: OwnerGateOptions): Promise<GateDecision> {
   let text: string;
   try {
     const res = await ownerCall(prompt, {
+      sensitivity: task.sensitivity,
       tier: 'owner',
       store,
       kind: 'gate',
@@ -1411,6 +1556,9 @@ export async function ownerGateBatch(opts: OwnerGateBatchOptions): Promise<Map<s
   let text: string;
   try {
     const res = await ownerCall(prompt, {
+      // One call carries every ticket, so it is as sensitive as the most
+      // sensitive of them ('S0' < 'S1' < 'S2' compare as strings).
+      sensitivity: eligible.reduce<Sensitivity>((top, { task }) => (task.sensitivity > top ? task.sensitivity : top), 'S0'),
       tier: 'owner',
       store,
       // Its own kind, so the ledger can tell one call that decided five tickets

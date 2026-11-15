@@ -1,3 +1,4 @@
+import { config } from '../config.ts';
 import type { Runner } from './index.ts';
 import type { Stage } from '../types.ts';
 
@@ -31,7 +32,7 @@ export const echoRunner: Runner = {
     return null;
   },
   async run(ctx) {
-    const stepMs = Number(process.env['FOREMAN_ECHO_STEP_MS'] ?? 900);
+    const stepMs = config.echoStepMs;
     for (const [i, stage] of STEPS.entries()) {
       ctx.stage(stage);
       ctx.log(`[${stage}] ${ctx.task.title}`);

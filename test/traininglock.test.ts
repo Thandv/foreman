@@ -7,6 +7,10 @@ import path from 'node:path';
 import { Store } from '../src/queue.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { acquireLocalModelLock, releaseLocalModelLock } from '../src/align/localLock.ts';
+import { registerExtension } from '../src/extensions.ts';
+import { alignExtension } from '../src/align/extension.ts';
+
+registerExtension(alignExtension);
 
 /**
  * `acquireLocalModelLock` returns the EXISTING holder when acquisition fails

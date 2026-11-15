@@ -45,8 +45,8 @@ spelling or a linked worktree of it included — not just ones queued by
 waits for a person. That is a rule about the owner gate, not proof of a person:
 the approve endpoint takes no credential, and a jail is a git worktree, not a
 sandbox. A process a run leaves behind runs as the same user and can call
-`/approve` on its own ticket, queue a ticket carrying `allowCore`, or write the
-store's file. What such a call cannot do is land a protected path without
+`/approve` on its own ticket, read the host-admin secret and queue a ticket
+carrying `allowCore` (docs/security.md), or write the store's file. What such a call cannot do is land a protected path without
 `allowCore`: the landing check runs whoever approves, which is why the gate,
 scheduler, queue, API and schema sources are on the list. A change to any
 other foreman source can still be landed that way. A worker also shares the
@@ -79,7 +79,9 @@ mistyped `FOREMAN_HOME` is an error, not a new empty database. A ledger whose
 `receipts` table this checkout cannot write gets no model call (the report says
 why). With `--no-model` nothing opens the ledger for writing. The two
 files are written through a rename inside a `debriefs` directory that must be a
-real directory. A debrief of an epic that is still running is written, and says
+real directory. They quote the ledger, so each is created 0600, and a
+`debriefs` directory the debrief creates is 0700; an existing one keeps its
+mode, and one open to group or others gets a warning on stderr. A debrief of an epic that is still running is written, and says
 at the top that it is not finished.
 
 **Collect** (no model). Per ticket of the epic, the follow-ups reviewers filed

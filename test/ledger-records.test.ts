@@ -17,7 +17,7 @@ import { applyApproval, applyRejection, ownerGate } from '../src/gate.ts';
 import { setCloudDown } from '../src/localOnly.ts';
 import { reloadSpecs } from '../src/models.ts';
 import { clearPlaybookCache } from '../src/playbooks.ts';
-import { DECISION_NOTE_MAX_BYTES, Store, boundDecisionNote } from '../src/queue.ts';
+import { CORE_GUARD_PREFIX, DECISION_NOTE_MAX_BYTES, Store, boundDecisionNote } from '../src/queue.ts';
 import { RunClock } from '../src/runClock.ts';
 import { endedReason, newRunFacts } from '../src/runFacts.ts';
 import { claudeCodeSpec, handleCliLine, initialCliState, resetPreflightCache, turnLimitOf } from '../src/runners/cliRunners.ts';
@@ -91,7 +91,7 @@ const fact = (store: Store, scope: string, taskId: string) =>
 test('an approval that merges writes one row: the trees, merged, the merge reason, corrected NULL when nothing is stated', async () => {
   const f = await reviewed();
   try {
-    const out = await applyApproval(f.store, f.task.id, { note: 'looks right; landed' });
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator', note: 'looks right; landed' });
     assert.equal(out.merge.merged, true, out.merge.reason);
     const all = rows(f.store, f.task.id);
     assert.equal(all.length, 1, 'exactly one row');
@@ -127,7 +127,7 @@ test('an approval that merges writes one row: the trees, merged, the merge reaso
 test('a note that only SOUNDS like a correction leaves corrected NULL: wording is never read at write time', async () => {
   const f = await reviewed();
   try {
-    await applyApproval(f.store, f.task.id, { note: 'approve + on-top corrections, landed by hand' });
+    await applyApproval(f.store, f.task.id, { principal: 'operator', note: 'approve + on-top corrections, landed by hand' });
     assert.equal(rows(f.store, f.task.id)[0]!.corrected, null);
   } finally {
     await f.done();
@@ -138,7 +138,7 @@ test('--corrected and --clean are recorded as stated, as true and false', async 
   for (const [stated, source] of [[true, 'operator'], [false, 'operator']] as const) {
     const f = await reviewed();
     try {
-      await applyApproval(f.store, f.task.id, { corrected: stated, reviewSource: 'independent reviewer, verify 3040/0/1' });
+      await applyApproval(f.store, f.task.id, { principal: 'operator', corrected: stated, reviewSource: 'independent reviewer, verify 3040/0/1' });
       const d = rows(f.store, f.task.id)[0]!;
       assert.equal(d.corrected, stated);
       assert.equal(d.correctedSource, source);
@@ -156,7 +156,7 @@ test('--as-is landing another tree is corrected by definition, with both trees, 
   const f = await reviewed();
   try {
     fs.writeFileSync(path.join(f.jail, 'late.txt'), 'the operator wrote this by hand\n');
-    const refused = await applyApproval(f.store, f.task.id, {});
+    const refused = await applyApproval(f.store, f.task.id, { principal: 'operator' });
     const now = /--as-is ([0-9a-f]{40})$/.exec(refused.merge.reason)?.[1] ?? '';
     assert.match(now, /^[0-9a-f]{40}$/, refused.merge.reason);
     const first = rows(f.store, f.task.id);
@@ -168,7 +168,7 @@ test('--as-is landing another tree is corrected by definition, with both trees, 
     assert.equal(first[0]!.corrected, null);
 
     // The operator says --clean; the trees say otherwise, and the trees win.
-    const out = await applyApproval(f.store, f.task.id, { acceptTree: now, corrected: false, note: 'my own edit' });
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator', acceptTree: now, corrected: false, note: 'my own edit' });
     assert.equal(out.merge.merged, true, out.merge.reason);
     const all = rows(f.store, f.task.id);
     assert.equal(all.length, 2);
@@ -191,7 +191,7 @@ test('--as-is landing another tree is corrected by definition, with both trees, 
 test('an --as-is approval naming the reviewed tree itself is not a correction: the flag, or NULL, decides', async () => {
   const f = await reviewed();
   try {
-    const out = await applyApproval(f.store, f.task.id, { acceptTree: f.run.reviewedTree!, corrected: true });
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator', acceptTree: f.run.reviewedTree!, corrected: true });
     assert.equal(out.merge.merged, true, out.merge.reason);
     const d = rows(f.store, f.task.id)[0]!;
     assert.equal(d.asIs, true);
@@ -207,7 +207,7 @@ test('an approval that closes a run which changed nothing records the closing re
   const f = await reviewed({ prompt: 'true' });
   try {
     assert.equal(f.task.status, 'awaiting-approval', f.task.error ?? '');
-    const out = await applyApproval(f.store, f.task.id, { corrected: false });
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator', corrected: false });
     assert.equal(out.merge.reason, NOTHING_TO_CHANGE_CLOSED);
     const all = rows(f.store, f.task.id);
     assert.equal(all.length, 1);
@@ -225,7 +225,7 @@ test('an approval of a ticket that does not merge on approval records merged 0 w
   const f = await reviewed({ over: { mergeOnApprove: false } });
   try {
     const head = git(f.dir, 'rev-parse', 'HEAD');
-    const out = await applyApproval(f.store, f.task.id, { note: 'read it' });
+    const out = await applyApproval(f.store, f.task.id, { principal: 'operator', note: 'read it' });
     assert.equal(out.merge.merged, false);
     const all = rows(f.store, f.task.id);
     assert.equal(all.length, 1);
@@ -245,7 +245,7 @@ test('a ticket finished on the operator\'s own desk is an approval of no run', a
   try {
     const t = store.addTask({ title: 'by hand', prompt: 'p', runner: 'echo', assignee: 'human' });
     assert.equal(store.getTask(t.id)!.status, 'awaiting-human');
-    await applyApproval(store, t.id, { note: 'completed by the operator' });
+    await applyApproval(store, t.id, { principal: 'operator', note: 'completed by the operator' });
     const d = rows(store, t.id);
     assert.equal(d.length, 1);
     assert.equal(d[0]!.runId, null);
@@ -260,7 +260,7 @@ test('an approval of a ticket that is not at the gate decides nothing and record
   const store = new Store(':memory:');
   try {
     const t = store.addTask({ title: 'queued', prompt: 'p', runner: 'echo' });
-    await assert.rejects(() => applyApproval(store, t.id, { corrected: true }), /not awaiting-approval/);
+    await assert.rejects(() => applyApproval(store, t.id, { principal: 'operator', corrected: true }), /not awaiting-approval/);
     assert.equal(rows(store, t.id).length, 0);
     assert.deepEqual(decisionEvents(store, t.id), []);
   } finally {
@@ -274,7 +274,7 @@ test('a rejection writes one row with its note, and the memory fact main writes'
   const store = new Store(':memory:');
   try {
     const { task, run } = parked(store);
-    applyRejection(store, task.id, 'too long; split it');
+    applyRejection(store, task.id, 'too long; split it', 'operator');
     const all = rows(store, task.id);
     assert.equal(all.length, 1);
     assert.deepEqual(
@@ -356,7 +356,7 @@ test('a retry writes one row, with its note and with the skills it was given', (
   const store = new Store(':memory:');
   try {
     const { task, run } = parked(store);
-    applyRejection(store, task.id, 'no');
+    applyRejection(store, task.id, 'no', 'operator');
     store.retry(task.id, 'I ran the browser checks myself');
     let d = rows(store, task.id).filter((r) => r.action === 'retry');
     assert.equal(d.length, 1);
@@ -468,7 +468,7 @@ test('an owner-model approval cannot state a correction or a verifier: only a pe
   const store = new Store(':memory:');
   try {
     const { task } = parked(store);
-    await applyApproval(store, task.id, { source: 'owner-gate', corrected: true, reviewSource: 'me', note: 'owner-gate: fine' });
+    await applyApproval(store, task.id, { principal: 'owner-model', corrected: true, reviewSource: 'me', note: 'owner-gate: fine' });
     const d = rows(store, task.id)[0]!;
     assert.equal(d.actor, 'owner-model');
     assert.equal(d.corrected, null);
@@ -516,7 +516,7 @@ test('a decision row is never updated or deleted, and outlives its ticket', asyn
   const store = new Store(':memory:');
   try {
     const { task } = parked(store);
-    applyRejection(store, task.id, 'first');
+    applyRejection(store, task.id, 'first', 'operator');
     const before = rows(store, task.id);
     assert.throws(() => store.db.prepare("UPDATE decisions SET note = 'rewritten' WHERE task_id = ?").run(task.id), /append-only/);
     assert.throws(() => store.db.prepare('DELETE FROM decisions WHERE task_id = ?').run(task.id), /append-only/);
@@ -539,7 +539,7 @@ test('a note over 16 KB is stored cut, with a marker that says how much went; a 
   try {
     const { task } = parked(store);
     const long = `${'é'.repeat(20_000)}\nTAIL`;
-    applyRejection(store, task.id, long);
+    applyRejection(store, task.id, long, 'operator');
     const d = rows(store, task.id)[0]!;
     const size = Buffer.byteLength(long, 'utf8');
     assert.ok(Buffer.byteLength(d.note!, 'utf8') <= DECISION_NOTE_MAX_BYTES, `${Buffer.byteLength(d.note!, 'utf8')} bytes stored`);
@@ -562,8 +562,8 @@ test('an unknown action or actor is refused by the store', () => {
   const store = new Store(':memory:');
   try {
     const t = store.addTask({ title: 't', prompt: 'p', runner: 'echo' });
-    assert.throws(() => store.addDecision({ taskId: t.id, action: 'hold' as never }), /unknown decision action/);
-    assert.throws(() => store.addDecision({ taskId: t.id, action: 'approve', actor: 'owner-gate' as never }), /unknown decision actor/);
+    assert.throws(() => store.addDecision({ taskId: t.id, action: 'hold' as never, actorId: 'operator' }), /unknown decision action/);
+    assert.throws(() => store.addDecision({ taskId: t.id, action: 'approve', actor: 'owner-gate' as never, actorId: 'operator' }), /unknown decision actor/);
     assert.equal(rows(store, t.id).length, 0);
   } finally {
     store.close();
@@ -584,7 +584,7 @@ test('the decision and skills events survive the end-of-run prune that drops ord
     assert.equal(store.getTask(t.id)!.status, 'awaiting-approval');
     store.record({ taskId: t.id, runId: store.latestRun(t.id)!.id, type: 'skills', message: '{"role":"soft.dev","skills":["test-first"]}' });
     store.record({ taskId: t.id, type: 'log', message: 'an ordinary line from before the retry' });
-    applyRejection(store, t.id, 'not like that');
+    applyRejection(store, t.id, 'not like that', 'operator');
     store.retry(t.id, 'do it the other way');
     await sched.drain(60_000);
     const left = store.eventsForTask(t.id, 100_000);
@@ -598,6 +598,47 @@ test('the decision and skills events survive the end-of-run prune that drops ord
   } finally {
     cap.logLinesPerRun = lines;
     await sched.stop();
+    store.close();
+  }
+});
+
+test('the end-of-run prune keeps every decision, skills line and core-guard warning, plus the last N events, and nothing else', () => {
+  const cap = config as { logLinesPerRun: number };
+  const lines = cap.logLinesPerRun;
+  cap.logLinesPerRun = 3;
+  const store = new Store(':memory:');
+  const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
+  try {
+    const t = store.addTask({ title: 'pruned', prompt: 'x', runner: 'echo' });
+    const other = store.addTask({ title: 'not pruned', prompt: 'x', runner: 'echo' });
+    const add = (type: 'log' | 'warning' | 'decision' | 'skills', message: string, taskId = t.id) => store.record({ taskId, type, message });
+    add('warning', `${CORE_GUARD_PREFIX}touches src/gate.ts`);
+    add('warning', 'an ordinary warning');
+    add('decision', 'reject by human — not like that');
+    add('log', 'old line 1');
+    add('skills', '{"role":"soft.dev","skills":["test-first"]}');
+    add('warning', `not a ${CORE_GUARD_PREFIX}lead`);
+    add('log', 'old line 2');
+    add('log', 'other ticket line', other.id);
+    add('log', 'tail 1');
+    add('decision', 'retry by human — do it the other way');
+    add('log', 'tail 3');
+    const otherBefore = store.eventsForTask(other.id, 100_000).length;
+    (sched as unknown as { pruneEvents(id: string): void }).pruneEvents(t.id);
+    assert.deepEqual(
+      store.eventsForTask(t.id, 100_000).map((e) => `${e.type}: ${e.message}`),
+      [
+        `warning: ${CORE_GUARD_PREFIX}touches src/gate.ts`,
+        'decision: reject by human — not like that',
+        'skills: {"role":"soft.dev","skills":["test-first"]}',
+        'log: tail 1',
+        'decision: retry by human — do it the other way',
+        'log: tail 3',
+      ],
+    );
+    assert.equal(store.eventsForTask(other.id, 100_000).length, otherBefore, "another ticket's events are untouched");
+  } finally {
+    cap.logLinesPerRun = lines;
     store.close();
   }
 });
@@ -940,7 +981,7 @@ test('a base-schema ledger gains the table and the columns once, keeps its rows,
     assert.equal(r.summary, 'old');
     assert.deepEqual(second.decisionsForTask(old.id), []);
     second.setStatus(old.id, 'awaiting-approval');
-    applyRejection(second, old.id, 'recorded after the migration');
+    applyRejection(second, old.id, 'recorded after the migration', 'operator');
     second.setRunFacts(oldRun, { turns: 3, turnsReported: 4, turnLimit: 30, endedReason: 'ok', briefBytes: 10, briefCuts: [], reportBytes: 5 });
     second.close();
 
@@ -1068,7 +1109,7 @@ test('a body that cannot be read is a 400 on approve, retry and reopen: nothing 
     assert.equal(h.store.getTask(stopped.id)!.status, 'canceled');
 
     const ended = parked(h.store).task;
-    applyRejection(h.store, ended.id, 'no');
+    applyRejection(h.store, ended.id, 'no', 'operator');
     res = await postRaw(`${h.base}/api/tasks/${ended.id}/retry`, broken);
     assert.equal(res.status, 400);
     assert.equal(h.store.getTask(ended.id)!.status, 'rejected', 'not requeued without its note');
@@ -1100,14 +1141,14 @@ test('a body that cannot be read is a 400 on approve, retry and reopen: nothing 
     assert.deepEqual(rows(h.store, ended.id).at(-1)!.extra, { skills: null }, 'the retry row says the skills were put back on the role default');
     // A skills list the ticket may not carry is refused before the requeue, and no retry is recorded.
     const again = parked(h.store).task;
-    applyRejection(h.store, again.id, 'no');
+    applyRejection(h.store, again.id, 'no', 'operator');
     res = await post(`${h.base}/api/tasks/${again.id}/retry`, { note: 'n', skills: ['not-a-skill'] });
     assert.equal(res.status, 400);
     assert.equal(h.store.getTask(again.id)!.status, 'rejected');
     assert.equal(rows(h.store, again.id).filter((d) => d.action === 'retry').length, 0);
     // A route whose row the ledger could not take answers null, never an older row of the same ticket.
     const lost = parked(h.store).task;
-    applyRejection(h.store, lost.id, 'an earlier decision on the same ticket');
+    applyRejection(h.store, lost.id, 'an earlier decision on the same ticket', 'operator');
     h.store.db.exec("CREATE TRIGGER refuse_rows BEFORE INSERT ON decisions BEGIN SELECT RAISE(ABORT, 'disk full'); END");
     const unrecorded = await (await post(`${h.base}/api/tasks/${lost.id}/retry`, { note: 'n' })).json() as { status: string; decision: Decision | null };
     assert.equal(unrecorded.status, 'queued', 'the retry itself took effect');
@@ -1151,11 +1192,11 @@ function debriefFixture(): { dir: string; withRows: string; without: string; ids
     return p;
   };
   // What applyApproval leaves, without a repo: decide, the memory fact, then the row (as recordApproval writes it).
-  const approve = (p: { task: Task; run: Run }, note: string | null, over: Partial<Decision> = {}): void => {
+  const approve = (p: { task: Task; run: Run }, note: string | null, over: Partial<Omit<Decision, 'actorId'>> = {}): void => {
     const task = store.decide(p.task.id, true);
     if (note) store.rememberFact({ scope: 'global', key: `preference:${task.id}`, value: `approved "${task.title}" — ${note}`.slice(0, 1000), confidence: 0.6, source: task.id });
     store.addDecision({
-      taskId: task.id, runId: p.run.id, action: 'approve', note, statusAfter: 'done', asIs: false, merged: true, mergeReason: 'merged 1 commit(s) from b',
+      taskId: task.id, runId: p.run.id, action: 'approve', note, actorId: 'operator', statusAfter: 'done', asIs: false, merged: true, mergeReason: 'merged 1 commit(s) from b',
       reviewedTree: 'a'.repeat(40), landedTree: 'a'.repeat(40), ...over,
     });
   };
@@ -1228,7 +1269,7 @@ test('debrief on a ledger with the new rows: classes rest on the ledger, a cance
     assert.match(md, /note read from decisions/);
     assert.match(md, /Decisions in the ledger \(`decisions` table\): 6 read for 6 ticket\(s\)/);
     // The read-only contract: nothing was written, and nothing can be.
-    assert.throws(() => store.addDecision({ taskId: fx.epic, action: 'cancel' }), /readonly|read-only|query_only/i);
+    assert.throws(() => store.addDecision({ taskId: fx.epic, action: 'cancel', actorId: 'operator' }), /readonly|read-only|query_only/i);
   } finally {
     store.close();
     fs.rmSync(fx.dir, { recursive: true, force: true });
@@ -1334,7 +1375,7 @@ async function cli(argv: string[], routes: Record<string, unknown>): Promise<{ s
 }
 
 const ROW: Decision = {
-  id: 'd_abc', taskId: 't_x', runId: 'r_1', at: Date.parse('2026-10-12T09:00:00Z'), action: 'approve', actor: 'human',
+  id: 'd_abc', taskId: 't_x', runId: 'r_1', at: Date.parse('2026-10-12T09:00:00Z'), action: 'approve', actor: 'human', actorId: 'operator',
   note: 'landed r2\'s on-top patch by hand', noteCutBytes: 0, statusAfter: 'done', reviewedTree: '1111111111112222222222223333333333334444',
   landedTree: '1111111111112222222222223333333333334444', asIs: false, merged: true, mergeReason: 'merged 1 commit(s) from b',
   corrected: true, correctedSource: 'operator', reviewSource: 'independent reviewer, verify 3040/0/1', extra: null,
@@ -1351,7 +1392,7 @@ test('CLI approve --corrected sends the statement and prints one line confirming
   assert.equal(confirmed.length, 1, r.stdout);
   assert.equal(
     confirmed[0],
-    'recorded d_abc: approve by human; corrected: yes (stated); merged: yes; reviewed 111111111111 → landed 111111111111; ' +
+    'recorded d_abc: approve by human (operator); corrected: yes (stated); merged: yes; reviewed 111111111111 → landed 111111111111; ' +
       'verified by: independent reviewer, verify 3040/0/1; → done; note: landed r2\'s on-top patch by hand',
   );
 });
@@ -1384,7 +1425,8 @@ test('CLI cancel --note sends the note; a daemon that answers without a decision
 });
 
 test('foreman show lists the decisions on a task: action, who, corrected, the trees short, the note\'s head', async () => {
-  const cancelRow: Decision = { ...ROW, id: 'd_c', action: 'cancel', actor: 'system', note: 'parent t_e was canceled', statusAfter: 'canceled', corrected: null, correctedSource: null, asIs: null, merged: null, mergeReason: null, reviewedTree: null, landedTree: null, reviewSource: null };
+  // A row from before actor ids were recorded: no id after the actor.
+  const cancelRow: Decision = { ...ROW, id: 'd_c', action: 'cancel', actor: 'system', actorId: null, note: 'parent t_e was canceled', statusAfter: 'canceled', corrected: null, correctedSource: null, asIs: null, merged: null, mergeReason: null, reviewedTree: null, landedTree: null, reviewSource: null };
   const asIs: Decision = { ...ROW, id: 'd_a', asIs: true, correctedSource: 'trees', landedTree: '9999999999998888888888887777777777776666', reviewSource: null, note: 'n'.repeat(200) };
   const r = await cli(['show', 't_x'], {
     'GET /api/tasks/t_x': {
@@ -1396,7 +1438,7 @@ test('foreman show lists the decisions on a task: action, who, corrected, the tr
   const section = r.stdout.slice(r.stdout.indexOf('decisions:\n'), r.stdout.indexOf('\nrecent activity:'));
   const lines = section.split('\n').slice(1).filter(Boolean);
   assert.equal(lines.length, 3, r.stdout);
-  assert.match(lines[0]!, /approve by human; corrected: yes \(stated\); merged: yes; reviewed 111111111111 → landed 111111111111; verified by: independent reviewer, verify 3040\/0\/1; → done; note: landed r2's on-top patch by hand$/);
+  assert.match(lines[0]!, /approve by human \(operator\); corrected: yes \(stated\); merged: yes; reviewed 111111111111 → landed 111111111111; verified by: independent reviewer, verify 3040\/0\/1; → done; note: landed r2's on-top patch by hand$/);
   assert.match(lines[1]!, /corrected: yes \(the trees differ\); merged: yes \(--as-is\); reviewed 111111111111 → landed 999999999999; → done; note: n{120}…$/);
   assert.match(lines[2]!, /cancel by system; → canceled; note: parent t_e was canceled$/);
   // A daemon from before the table answers without the list: no section, no crash.

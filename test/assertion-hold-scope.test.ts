@@ -167,8 +167,8 @@ test("the worker's words do not release the hold: its report, its diff, the crit
     t.after(() => fs.rmSync(report, { force: true }));
     store.addArtifact({ runId: first.id, taskId, type: 'report', path: report, summary: `changed ${FILE} as the ticket requires` });
     store.setStatus(taskId, 'rejected', `the worker says the ticket names ${FILE}; it does not`);
-    store.addDecision({ taskId, runId: first.id, action: 'reject', actor: 'owner-model', note: `rejected: ${FILE} narrowed` });
-    store.addDecision({ taskId, runId: first.id, action: 'retry', actor: 'system', note: `retry: ${FILE}` });
+    store.addDecision({ taskId, runId: first.id, action: 'reject', actor: 'owner-model', actorId: 'owner-model', note: `rejected: ${FILE} narrowed` });
+    store.addDecision({ taskId, runId: first.id, action: 'retry', actor: 'system', actorId: 'system', note: `retry: ${FILE}` });
     store.retry(taskId);
     const task = store.getTask(taskId)!;
     assert.ok(task.repairNotes?.includes(FILE) && task.operatorDemands?.includes(FILE), 'the name is on the task row, in what a round carries');
@@ -242,7 +242,7 @@ test('no decision note releases: a note on a retry, a rejection, an approval, a 
   const diff = gitDiff(t, { [FILE]: BEFORE }, { [FILE]: NARROWED });
   for (const action of ['retry', 'reject', 'approve', 'reopen', 'cancel'] as const) {
     const r = record(t, { prompt: 'Make the web preview record smaller. Work in src/preview.ts.' }, diff, (store, taskId) => {
-      store.addDecision({ taskId, runId: null, action, actor: 'human', note: `${FILE}: the narrowed check has to go back` });
+      store.addDecision({ taskId, runId: null, action, actor: 'human', actorId: 'operator', note: `${FILE}: the narrowed check has to go back` });
     });
     assert.equal(r.hold, FLAG, action);
     assert.deepEqual(r.stored.map((f) => f.hold), ['held'], action);

@@ -6,7 +6,7 @@ import { config } from './config.ts';
 export class DaemonLockError extends Error {}
 
 /** True when a process with this pid exists (EPERM means it exists but isn't ours). */
-function alive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -49,7 +49,7 @@ export function acquireDaemonLock(home: string = config.home, pid: number = proc
     // reboot, whose pid the new one happened to get — and signal 0 to our own
     // pid always succeeds, so without this the daemon refused to start, every
     // time, until someone deleted the file by hand.
-    if (Number.isInteger(holder) && holder > 0 && holder !== pid && alive(holder)) {
+    if (Number.isInteger(holder) && holder > 0 && holder !== pid && processAlive(holder)) {
       throw new DaemonLockError(
         `another foreman daemon (pid ${holder}) already owns ${home} — ` +
           'stop it first, or point FOREMAN_HOME at a different directory',

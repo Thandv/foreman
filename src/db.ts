@@ -1,10 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Artifact, Decision, MemoryFact, Run, RunEvent, Task, Verdict } from './types.ts';
+import type { Artifact, Decision, MemoryFact, Principal, Run, RunEvent, Task, Verdict } from './types.ts';
 import type { ArchiveRecord } from './archive.ts';
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,
   title        TEXT NOT NULL,
@@ -164,6 +164,25 @@ CREATE TABLE IF NOT EXISTS red_repos (
   attempts      INTEGER NOT NULL DEFAULT 0
 );
 
+-- Landings in progress (gate.ts): a row is written before the merge and deleted once its ref update is recorded.
+-- A row the daemon finds at start is a merge a crash cut short; it holds that repo's dependents until the operator
+-- clears it (Store.adoptInterruptedLandings).
+CREATE TABLE IF NOT EXISTS landings (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo       TEXT NOT NULL,
+  task_id    TEXT NOT NULL,
+  run_id     TEXT,
+  started_at INTEGER NOT NULL
+);
+
+-- Scheduler starts (Store.recordDaemonStart): a row per start, marked clean_exit by an orderly stop. A start that finds
+-- the previous row unmarked follows a crash; that is how unclean restarts are attributed to the runs in flight.
+CREATE TABLE IF NOT EXISTS daemon_starts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         INTEGER NOT NULL,
+  clean_exit INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS shadow_verdicts (
   id            TEXT PRIMARY KEY,
   task_id       TEXT NOT NULL,
@@ -246,6 +265,28 @@ CREATE TRIGGER IF NOT EXISTS decisions_no_replace BEFORE INSERT ON decisions
 WHEN EXISTS (SELECT 1 FROM decisions WHERE id = NEW.id)
 BEGIN SELECT RAISE(ABORT, 'decisions is append-only: a row is never replaced'); END;
 
+-- Who may call the API (Store.addPrincipal). The names 'operator', 'owner-model' and 'system' are constants, never
+-- rows. A principal is never deleted, only disabled, so the principal id a token names always resolves.
+CREATE TABLE IF NOT EXISTS principals (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  name        TEXT NOT NULL UNIQUE,
+  created_by  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  disabled_at INTEGER
+);
+
+-- A principal's bearer tokens (Store.addToken). Only the sha256 hex of the secret is kept, never the secret.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id           TEXT PRIMARY KEY,
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  token_hash   TEXT NOT NULL UNIQUE,
+  expires_at   INTEGER,
+  created_by   TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  revoked_at   INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS idx_decisions_task ON decisions(task_id, at);
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id, created_at);
@@ -262,7 +303,7 @@ CREATE INDEX IF NOT EXISTS idx_shadow_role   ON shadow_verdicts(playbook, role, 
 `;
 
 /** Additive-only migrations; each is skipped when the column already exists. */
-const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
+export const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ['tasks', 'test_cmd', 'TEXT'],
   ['tasks', 'merge_on_approve', 'INTEGER NOT NULL DEFAULT 0'],
   ['tasks', 'repair_notes', 'TEXT'],
@@ -348,6 +389,16 @@ const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   // about who ruled, once a retry has cleared the task's owner-gate marker.
   ['runs', 'decision', 'TEXT'],
   ['runs', 'verify_wait_ms', 'INTEGER NOT NULL DEFAULT 0'],
+  // Time this run's gate suites ran, slot wait excluded: the sum over every
+  // daemon suite command (gate, its timeout re-run, each playbook check, the
+  // revert check) of its wall time less its verify-slot wait. 0 on a run that
+  // ran none, or from before it was recorded. Read by `doctor --latency`.
+  ['runs', 'suite_ms', 'INTEGER NOT NULL DEFAULT 0'],
+  // Time this run's worker's own suite runs queued for a test slot (POST
+  // /api/verify-slot, Scheduler.slotQueued), from the first wait opening to
+  // the last closing. Apart from verify_wait_ms, which counts the daemon's own
+  // gate waits (debrief reads it as that). Read by `doctor --latency`.
+  ['runs', 'worker_slot_wait_ms', 'INTEGER NOT NULL DEFAULT 0'],
   // Daemon stops that requeued this ticket since its last fresh start (Retry,
   // a repair round, Give to AI). On the row, not in `events`: pruneEvents would
   // erase the count that bounds a daemon that keeps stopping mid-run.
@@ -367,6 +418,17 @@ const COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ['runs', 'brief_bytes', 'INTEGER'],
   ['runs', 'brief_cuts', 'TEXT'],
   ['runs', 'report_bytes', 'INTEGER'],
+  // Epoch ms this task entered awaiting-approval (Store.setStatus), kept while
+  // it stays parked and cleared by every path that moves it out. Apart from
+  // updated_at, which any later write (a gate change) resets. NULL on a task
+  // parked before the column existed: readers fall back to updated_at.
+  ['tasks', 'awaiting_since', 'INTEGER'],
+  // Who acted on a decision: the request principal's id, or a reserved actor id ('operator', 'owner-model',
+  // 'system'). NULL on a row from before it; ADD COLUMN fires none of the table's append-only triggers.
+  ['decisions', 'actor_id', 'TEXT'],
+  // Who created the task: the request principal's id ('operator' with auth off), or its parent's creator. NULL on a
+  // task no person asked for (a schedule fires it). Every task from before the column is the operator's (migrate).
+  ['tasks', 'created_by', 'TEXT'],
 ];
 
 const STATUSES = new Set<string>([
@@ -431,7 +493,7 @@ export function backfillRunDecisions(db: DatabaseSync): number {
  * SCHEMA, this runs on every open and every statement is IF NOT EXISTS, so an
  * existing database picks the index up the next time it is opened.
  */
-const MIGRATED_INDEXES = `
+export const MIGRATED_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived_at, status, updated_at);
 `;
@@ -444,13 +506,69 @@ function migrate(db: DatabaseSync): void {
       // Once, when the column arrives: the history it is derived from is pruned
       // as runs accumulate, so later is less than now.
       if (table === 'runs' && column === 'decision') backfillRunDecisions(db);
+      // Before created_by, every task was the one operator's: the only person there was.
+      if (table === 'tasks' && column === 'created_by') db.exec("UPDATE tasks SET created_by = 'operator'");
     }
   }
 }
 
-export function openDb(dbPath: string): DatabaseSync {
+/**
+ * The ledger's schema version, stamped in the file header (`PRAGMA
+ * user_version`). Bump it, and add its row to test/schema-version.test.ts,
+ * whenever SCHEMA, COLUMNS or MIGRATED_INDEXES change.
+ */
+export const SCHEMA_VERSION = 5;
+
+/** A ledger written by a newer Foreman: this binary must not touch it. */
+export class NewerSchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NewerSchemaError';
+  }
+}
+
+/** A ledger written by an older Foreman, opened by something other than `foreman serve`: only serve migrates. */
+export class OlderSchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OlderSchemaError';
+  }
+}
+
+/** Throws NewerSchemaError when `db`'s stamp is ahead of SCHEMA_VERSION; returns the stamp otherwise. */
+export function requireKnownSchema(db: DatabaseSync, label: string): number {
+  const version = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+  if (version > SCHEMA_VERSION) {
+    throw new NewerSchemaError(
+      `${label} has schema version ${version}, newer than this Foreman's ${SCHEMA_VERSION}: ` +
+        'it was written by a newer Foreman; upgrade Foreman to open it. Nothing was changed',
+    );
+  }
+  return version;
+}
+
+/**
+ * Opens (creating when missing) the ledger at `dbPath`. A brand-new empty file is given the schema by any caller;
+ * an existing ledger stamped older than SCHEMA_VERSION is migrated only with `migrate: true` (`foreman serve`), so a
+ * CLI from another checkout never rewrites the live ledger's schema.
+ */
+export function openDb(dbPath: string, opts: { migrate?: boolean } = {}): DatabaseSync {
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
+  // Before any pragma or DDL: a newer ledger, or an older one this caller may not migrate, is left exactly as it was.
+  let version: number;
+  try {
+    version = requireKnownSchema(db, dbPath);
+    if (version < SCHEMA_VERSION && !opts.migrate && !isEmptyDb(db)) {
+      throw new OlderSchemaError(
+        `${dbPath} has schema version ${version}, older than this Foreman's ${SCHEMA_VERSION}: ` +
+          'run foreman serve once to upgrade it. Nothing was changed',
+      );
+    }
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
@@ -463,7 +581,13 @@ export function openDb(dbPath: string): DatabaseSync {
   db.exec(SCHEMA);
   migrate(db);
   db.exec(MIGRATED_INDEXES);
+  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return db;
+}
+
+/** True for a file with no schema objects yet: a database this open is creating, not one it would migrate. */
+function isEmptyDb(db: DatabaseSync): boolean {
+  return db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get() === undefined;
 }
 
 type Row = Record<string, unknown>;
@@ -530,6 +654,8 @@ export function rowToTask(row: Row, deps: string[] = []): Task {
     gateDecision: nstr(row['gate_decision']),
     assignee: nstr(row['assignee']) as Task['assignee'],
     archivedAt: nnum(row['archived_at']),
+    awaitingSince: nnum(row['awaiting_since']),
+    createdBy: nstr(row['created_by']),
     createdAt: num(row['created_at']),
     updatedAt: num(row['updated_at']),
     deps,
@@ -571,6 +697,17 @@ export function rowToRun(row: Row): Run {
 
 const nbool = (v: unknown): boolean | null => (v == null ? null : Number(v) === 1);
 
+export function rowToPrincipal(row: Row): Principal {
+  return {
+    id: str(row['id']),
+    kind: str(row['kind']) as Principal['kind'],
+    name: str(row['name']),
+    createdBy: str(row['created_by']),
+    createdAt: num(row['created_at']),
+    disabledAt: nnum(row['disabled_at']),
+  };
+}
+
 export function rowToDecision(row: Row): Decision {
   return {
     id: str(row['id']),
@@ -579,6 +716,7 @@ export function rowToDecision(row: Row): Decision {
     at: num(row['at']),
     action: str(row['action']) as Decision['action'],
     actor: str(row['actor']) as Decision['actor'],
+    actorId: nstr(row['actor_id']),
     note: nstr(row['note']),
     noteCutBytes: num(row['note_cut_bytes']),
     statusAfter: nstr(row['status_after']),

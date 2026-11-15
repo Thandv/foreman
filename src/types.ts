@@ -121,6 +121,17 @@ export interface Task {
    * in `archive` outlives the row (see archive.ts).
    */
   archivedAt: number | null;
+  /**
+   * Epoch ms this task entered awaiting-approval, kept through a re-park or a
+   * gate change while it waits; null when it is not parked, or was parked
+   * before this was recorded (then updated_at stands in).
+   */
+  awaitingSince: number | null;
+  /**
+   * Who created this task: the request principal's id ('operator' with auth off), or its parent's creator. Null on a
+   * task no person asked for, such as one a schedule fired.
+   */
+  createdBy: string | null;
   createdAt: number;
   updatedAt: number;
   deps: string[];
@@ -184,6 +195,28 @@ export type DecisionActor = 'human' | 'owner-model' | 'system';
 export const DECISION_ACTIONS: readonly DecisionAction[] = ['approve', 'reject', 'cancel', 'retry', 'reopen', 'landed', 'deps-drop'];
 export const DECISION_ACTORS: readonly DecisionActor[] = ['human', 'owner-model', 'system'];
 
+/** Actor ids that are string constants, never rows in `principals`: no principal may take one as its name. */
+export type ReservedActorId = 'operator' | 'owner-model' | 'system';
+export const RESERVED_ACTOR_IDS: readonly ReservedActorId[] = ['operator', 'owner-model', 'system'];
+
+/** The actor id a decision row gets when its writer names no principal: a person is the operator. */
+export const DEFAULT_ACTOR_ID: Readonly<Record<DecisionActor, ReservedActorId>> = { human: 'operator', 'owner-model': 'owner-model', system: 'system' };
+
+export type PrincipalKind = 'human' | 'service';
+export const PRINCIPAL_KINDS: readonly PrincipalKind[] = ['human', 'service'];
+
+/** A person or a service that holds API tokens (the `principals` table). Never deleted, only disabled. */
+export interface Principal {
+  /** 'p_' + random hex. */
+  id: string;
+  kind: PrincipalKind;
+  /** Unique, and matches PRINCIPAL_NAME (queue.ts), which keeps it safe in a commit trailer. */
+  name: string;
+  createdBy: string;
+  createdAt: number;
+  disabledAt: number | null;
+}
+
 /**
  * One decision on a task, as the `decisions` table holds it (db.ts). Written once, when the decision's outcome is
  * known, and never changed. The landing fields (landedTree, asIs, merged, mergeReason, corrected, reviewSource)
@@ -197,6 +230,11 @@ export interface Decision {
   at: number;
   action: DecisionAction;
   actor: DecisionActor;
+  /**
+   * Who acted: the request principal's id, or a reserved actor id ('operator' with auth off, 'owner-model', 'system').
+   * Null on a row written before the column existed.
+   */
+  actorId: string | null;
   /** The whole text given, bounded at 16 KB with a marker; null when none was given. */
   note: string | null;
   /** Bytes of the note that were not stored (0 when it was stored whole). */
@@ -292,7 +330,8 @@ export interface RunEvent {
   taskId: string | null;
   runId: string | null;
   ts: number;
-  type: 'status' | 'stage' | 'log' | 'progress' | 'artifact' | 'error' | 'metrics' | 'verdict' | 'assign' | 'archive' | 'shadow' | 'warning' | 'skills' | 'decision' | 'worker-suite';
+  type: 'status' | 'stage' | 'log' | 'progress' | 'artifact' | 'error' | 'metrics' | 'verdict' | 'assign' | 'archive' | 'shadow' | 'warning' | 'skills' | 'decision' | 'worker-suite'
+    | 'principal-minted' | 'token-minted';
   stage: Stage | null;
   message: string;
 }
@@ -325,7 +364,7 @@ export function probeTask(over: Partial<Task> = {}): Task {
     attempts: 0, maxAttempts: 1, error: null, testCmd: null, mergeOnApprove: false,
     repairNotes: null, repairs: 0, maxRepairs: 0, scheduleId: null, parentId: null, allowCore: false, baseRef: null,
     role: null, playbook: null, points: null, acceptance: null, forbiddenPaths: null, isEpic: false, gate: null, gateDecision: null,
-    assignee: null, archivedAt: null,
+    assignee: null, archivedAt: null, awaitingSince: null, createdBy: null,
     createdAt: 0, updatedAt: 0, deps: [], ...over,
   };
 }

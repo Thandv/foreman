@@ -223,6 +223,7 @@ export async function classifyAsk(
     `\n\nREQUEST: ${ask}`;
   try {
     const { text } = await ownerCall(prompt, {
+      sensitivity: opts.sensitivity ?? 'S1',
       // Picking one of a handful of playbooks is a one-word decision; it does
       // not need the owner tier's most expensive model, and paying for it on
       // every ambiguous ask is spend nobody gets value from.
@@ -736,12 +737,13 @@ export async function crewPlan(opts: CrewPlanOptions): Promise<CrewPlan> {
     (opts.repo ? `TARGET REPO: ${opts.repo}\n` : '') +
     (opts.revise?.notes.length ? revisionBrief(opts.revise) : '') +
     // Last: it is the largest and least cache-stable part of the prompt.
-    (opts.repo ? `\n${repoBrief(opts.repo, ask)}` : '');
+    (opts.repo ? `\n${await repoBrief(opts.repo, ask)}` : '');
 
   let text: string;
   let costUsd = 0;
   try {
     const res = await ownerCall(prompt, {
+      sensitivity: opts.sensitivity ?? 'S1',
       signal: opts.signal,
       maxTurns: opts.maxTurns ?? 5,
       timeoutMs: opts.timeoutMs ?? planTimeoutMs(),
@@ -844,6 +846,8 @@ export interface QueueCrewOptions {
    * every ticket, not on the container: the container never parks at a gate.
    */
   gate?: Task['gate'];
+  /** Who asked for the epic; its tickets inherit it as the epic's children (Store.addTask). */
+  createdBy?: string | null;
 }
 
 /**
@@ -882,6 +886,7 @@ export function queueCrewPlan(store: Store, plan: CrewPlan, extra: QueueCrewOpti
     isEpic: true,
     mergeOnApprove: false,
     parentId: extra.parentId ?? null,
+    createdBy: extra.createdBy,
     sensitivity: extra.sensitivity ?? 'S1',
     budgetUsd: extra.budgetUsd ?? null,
     priority: extra.priority ?? 0,

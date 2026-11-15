@@ -14,6 +14,10 @@
   pointed at different homes but the same `FOREMAN_DB` are not caught.
 - Slow SSE readers get a bounded buffer (1000 events past socket saturation), then are dropped;
   a dropped board reconnects with `?since=` and catches up from SQLite.
+- An event listener (SSE stream, tracer) that throws is isolated: the event row is still written,
+  the other listeners still get it, and the throw is counted on `Store.listenerErrors` and logged to
+  stderr at most once a minute per listener. That listener misses the event; a board catches it up
+  from SQLite with `?since=` on reconnect.
 - Each runner child's pid (which is its process-group id, since it is detached) is recorded on its
   run row. On SIGINT, SIGTERM or SIGHUP `foreman serve` stops dispatching and aborts every post-merge
   check. It gives approvals already landing up to 60 s, then waits up to 60 s for the scheduler to
@@ -37,12 +41,16 @@
 - The sandbox exists only on macOS. On Linux the default `FOREMAN_SANDBOX=tests` makes `foreman serve`
   refuse to start (its start-up self-test fails); set `FOREMAN_SANDBOX=off` and test commands run
   unconfined. `FOREMAN_SANDBOX=all` is accepted but behaves as `tests`.
-- The approve and `landed` endpoints take no proof of who is calling, and the routes record the caller as `human`.
-  The `x-foreman-run` header on `POST /api/verify-slot` is not authenticated: anything that can
-  reach the port may send any run id. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
+- Until the first principal exists the API takes no bearer token: the approve and `landed` endpoints take no proof
+  of who is calling, and the routes record the caller as `human` either way. Tokens give attribution, not security,
+  while workers run unsandboxed (docs/security.md). With auth off, the `x-foreman-run` header on
+  `POST /api/verify-slot` without its run token counts as naming no run: anything that can reach the port is slotted. The API binds loopback only unless `FOREMAN_ALLOW_REMOTE=1`.
 - Until workers are sandboxed, a worker can write the real repo's `.git/config`, `hooks/`, `info/` or a
   `refs/replace`/`refs/notes` ref by path. Foreman only detects that (a baseline taken at jail creation, compared
   at collection and at landing; docs/security.md) and holds or refuses for a person; it restores nothing. The
   baseline is a file the unsandboxed worker could rewrite too, as could the worker-suite line's mtimes.
+- Crash attribution (`daemon_starts`, docs/OPERATING.md) is not tamper-proof while workers are unsandboxed: a worker
+  can write the ledger, mark a start clean, or kill the daemon itself, so the count and the crash-loop hold are a
+  guard against honest crash loops, not a security boundary.
 - The recurrence language is not cron (see `schedule`); missed windows fire once, not once per
   window elapsed.

@@ -283,6 +283,7 @@ export function queuePlan(store: Store, plan: Plan, extra: Partial<Task> = {}): 
       sensitivity: (extra.sensitivity as Sensitivity) ?? 'S1',
       budgetUsd: extra.budgetUsd ?? null,
       priority: extra.priority ?? 0,
+      createdBy: extra.createdBy,
       deps: node.after.map((ref) => ids.get(ref)).filter((id): id is string => Boolean(id)),
     });
     ids.set(node.ref, task.id);

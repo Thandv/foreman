@@ -123,13 +123,13 @@ function fixtureRepo(): string {
 const WORK = 'printf "changed\\n" > README.md';
 
 /** Hold the only slot, queue `task`, and release once the run is parked behind it. */
-async function runBehindHeldSlot(store: Store, taskId: string): Promise<void> {
+async function runBehindHeldSlot(store: Store, taskId: string, holdMs = 30): Promise<void> {
   const held = await acquireVerifySlot();
   const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
   const drained = sched.drain(30_000);
   await until(() => verifySlotStats().waiting === 1);
   assert.equal(store.latestRun(taskId)?.verifyWaitMs, 0, 'nothing is recorded until the wait ends');
-  await sleep(30);
+  await sleep(holdMs);
   held.release();
   await drained;
 }
@@ -139,11 +139,16 @@ test('a gate check takes a slot, and the run records the time it waited as verif
     const store = new Store(':memory:');
     const repo = fixtureRepo();
     try {
-      const t = store.addTask({ title: 'gate', prompt: WORK, kind: 'code', runner: 'shell', repo, testCmd: 'true' });
+      const t = store.addTask({ title: 'gate', prompt: WORK, kind: 'code', runner: 'shell', repo, testCmd: 'sleep 0.2' });
+      const startedAt = Date.now();
       await runBehindHeldSlot(store, t.id);
+      const wallMs = Date.now() - startedAt;
       const run = store.latestRun(t.id)!;
       assert.equal(run.testsPassed, true);
       assert.ok(run.verifyWaitMs! > 0, `expected a recorded wait, got ${run.verifyWaitMs}`);
+      const [latency] = store.recentRunsForLatency(1);
+      assert.ok(latency!.suiteMs >= 200, `the gate's run time is recorded as suite time, got ${latency!.suiteMs}`);
+      assert.ok(latency!.suiteMs + latency!.verifyWaitMs <= wallMs, `suite ${latency!.suiteMs} + wait ${latency!.verifyWaitMs} > wall ${wallMs}`);
       assert.ok(store.eventsForTask(t.id).some((e) => /waited \d+ms for a verify slot/.test(e.message ?? '')));
     } finally {
       store.close();
@@ -151,18 +156,24 @@ test('a gate check takes a slot, and the run records the time it waited as verif
     }
   }));
 
+/** A playbook `slots-pb` with these checks, in a fresh FOREMAN_PLAYBOOKS_DIR; returns the dir. */
+function crewPlaybook(checks: string[]): string {
+  const dir = scratchDir('foreman-slots-pb-');
+  process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
+  const fm = {
+    id: 'slots-pb', description: 'checks', triggers: ['x'],
+    roles: { lead: { tier: 'owner' }, worker: { tier: 'worker' } },
+    reviewers: [{ role: 'lead', style: 'code-review' }],
+    escalation: { chair: 'lead', afterFailures: 2 },
+    checks, gate: { default: 'human', hardHuman: ['S2'] }, constraints: ['Never do the bad thing.'],
+  };
+  fs.writeFileSync(path.join(dir, 'slots-pb.md'), `---\n${JSON.stringify(fm, null, 2)}\n---\n\n## pipeline\n\nPlan then execute.\n\n## role: lead\n\nYou lead the work and review it.\n\n## role: worker\n\nYou execute what the lead assigns.\n`);
+  return dir;
+}
+
 test('a crew test gate (a playbook check) takes a slot', () =>
   withCap('1', async () => {
-    const dir = scratchDir('foreman-slots-pb-');
-    process.env['FOREMAN_PLAYBOOKS_DIR'] = dir;
-    const fm = {
-      id: 'slots-pb', description: 'one check', triggers: ['x'],
-      roles: { lead: { tier: 'owner' }, worker: { tier: 'worker' } },
-      reviewers: [{ role: 'lead', style: 'code-review' }],
-      escalation: { chair: 'lead', afterFailures: 2 },
-      checks: ['true'], gate: { default: 'human', hardHuman: ['S2'] }, constraints: ['Never do the bad thing.'],
-    };
-    fs.writeFileSync(path.join(dir, 'slots-pb.md'), `---\n${JSON.stringify(fm, null, 2)}\n---\n\n## pipeline\n\nPlan then execute.\n\n## role: lead\n\nYou lead the work and review it.\n\n## role: worker\n\nYou execute what the lead assigns.\n`);
+    const dir = crewPlaybook(['true']);
     const store = new Store(':memory:');
     const repo = fixtureRepo();
     try {
@@ -175,6 +186,55 @@ test('a crew test gate (a playbook check) takes a slot', () =>
       store.close();
       fs.rmSync(repo, { recursive: true, force: true });
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+test('a run whose two playbook checks take 1 s each records about 2 s of suite time, slot wait excluded', () =>
+  withCap('1', async () => {
+    const dir = crewPlaybook(['sleep 1', 'sleep 1']);
+    const store = new Store(':memory:');
+    const repo = fixtureRepo();
+    try {
+      const t = store.addTask({ title: 'crew', prompt: WORK, kind: 'code', runner: 'shell', repo, playbook: 'slots-pb', role: 'worker' });
+      const startedAt = Date.now();
+      await runBehindHeldSlot(store, t.id, 1_000);
+      const wallMs = Date.now() - startedAt;
+      const [run] = store.recentRunsForLatency(1);
+      assert.ok(run!.verifyWaitMs >= 1_000, `the slot wait is recorded, got ${run!.verifyWaitMs}`);
+      assert.ok(run!.suiteMs >= 1_990, `both checks' run time is recorded, got ${run!.suiteMs}`);
+      // Counted into suite_ms as well, the wait would make the two add up to more than the whole drain took.
+      assert.ok(run!.suiteMs + run!.verifyWaitMs <= wallMs, `suite ${run!.suiteMs} + wait ${run!.verifyWaitMs} > wall ${wallMs}`);
+    } finally {
+      delete process.env['FOREMAN_PLAYBOOKS_DIR'];
+      store.close();
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+test('a run canceled while it queues for a slot records the wait as no suite time', () =>
+  withCap('1', async () => {
+    const store = new Store(':memory:');
+    const repo = fixtureRepo();
+    const held = await acquireVerifySlot();
+    try {
+      const t = store.addTask({ title: 'gate', prompt: WORK, kind: 'code', runner: 'shell', repo, testCmd: 'true' });
+      const sched = new Scheduler(store, { tickMs: 5, verifyEnabled: false, maxWorkers: 1 });
+      const drained = sched.drain(30_000);
+      await until(() => verifySlotStats().waiting === 1);
+      const queuedAt = Date.now();
+      await sleep(300);
+      store.cancel(t.id);
+      await drained;
+      const queuedMs = Date.now() - queuedAt;
+      const [run] = store.recentRunsForLatency(1);
+      assert.ok(queuedMs >= 300);
+      // Counted as suite time, the 300 ms and more it queued would all be here.
+      assert.ok(run!.suiteMs < 300, `the queued time is not suite time, got ${run!.suiteMs}`);
+    } finally {
+      held.release();
+      store.close();
+      fs.rmSync(repo, { recursive: true, force: true });
     }
   }));
 

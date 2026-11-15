@@ -1,0 +1,12 @@
+# The four-eyes demo on throwaway daemons: one host, the local fake GitLab, a project with no required approval rules.
+# Attribution, not security: see method.md.
+events: principal-minted {"name":"alice","principalId":"p_a13a4dcd5a","kind":"human","tokenId":"tk_9abfe143f0","hostAdmin":true}
+events: principal-minted {"name":"bob","principalId":"p_822d204690","kind":"human","tokenId":"tk_091b07273e","hostAdmin":true}
+alice submits t_99e4ede381: "alice's change"
+alice approves t_99e4ede381 -> 403 four-eyes: alice created this ticket, so another person must approve or land it; nothing was decided
+bob approves t_99e4ede381 -> 200 mr-opened
+merge request note posted by Foreman:
+  Foreman-Approved-By: bob (p_822d204690)
+  Foreman-Author: alice
+  Foreman-Decision: d_30428cfc84
+events: merged !2 at 9252a4c8cd7281bf9f8dcf9dc9e3d5cd4360b878; checkout sync pending

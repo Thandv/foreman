@@ -22,9 +22,10 @@ import {
 } from './agreement.ts';
 import { pruneDepsCache } from './deps.ts';
 import { computeLatencyReport } from './latency.ts';
+import { collectMetrics, toProm } from './metrics.ts';
 import { gatherEvidence, proposeImprovement, queueImprovement } from './improve.ts';
 import { consolidate } from './assistant/memory.ts';
-import { applyApproval, applyRejection, envGate, ShuttingDownError } from './gate.ts';
+import { applyApproval, applyRejection, envGate, FourEyesRefused, fourEyesRefusal, ShuttingDownError } from './gate.ts';
 import { crewAdvisories } from './verify/crewReview.ts';
 import { planAsk, queuePlan, type Plan } from './assistant/plan.ts';
 import {
@@ -44,12 +45,16 @@ import { getRunner, runnerIds } from './runners/index.ts';
 import { modelForTask } from './roles.ts';
 import { setTicketSkills } from './skills.ts';
 import { withDroppedIssues } from './verify/crewReview.ts';
-import { acquireVerifySlot, claimRunLease, slotsAhead, VerifyWaitAborted } from './verify/slots.ts';
+import { acquireVerifySlot, claimRunLease, slotsAhead, VERIFY_SLOT_REFUSED, VerifyWaitAborted } from './verify/slots.ts';
 import { testTimeoutMs } from './verify/tests.ts';
 import { checkRepo } from './gitTripwire.ts';
-import { pinnedGit } from './isolate.ts';
-import { probeTask, STAGES } from './types.ts';
-import type { Decision, GateMode, RunEvent, Sensitivity } from './types.ts';
+import { handLandingRefusal } from './landing/mr.ts';
+import { pinnedGit } from './gitExec.ts';
+import { hostSecretMatches, HOST_SECRET_HEADER } from './security/hostSecret.ts';
+import { hostAdminMintAllowed, mintToken, readMintRequest } from './security/mint.ts';
+import { authenticate, authIsOn, verifySlotAllowed } from './security/tokenAuth.ts';
+import { DEFAULT_ACTOR_ID, probeTask, STAGES } from './types.ts';
+import type { Decision, GateMode, Principal, RunEvent, Sensitivity } from './types.ts';
 
 const BOARD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'board');
 const MIME: Record<string, string> = {
@@ -65,6 +70,13 @@ const MIME: Record<string, string> = {
  * far behind can reconnect with ?since= and catch up from SQLite.
  */
 export const SSE_MAX_PENDING = 1000;
+
+/**
+ * The most rows a reconnect with ?since= replays. A client further behind gets
+ * one `gap` frame carrying the newest event id instead of a partial replay, and
+ * reloads its snapshot (board/lib/store.js).
+ */
+const SSE_REPLAY_MAX = 500;
 
 /** Per-client SSE write policy: bounded buffering, then disconnection. */
 export class SseClient {
@@ -101,6 +113,33 @@ export class SseClient {
     }
     return true;
   }
+}
+
+/**
+ * allowCore as a request may have it: only with the host-admin secret
+ * (src/security/hostSecret.ts). Without it the flag is dropped, never refused,
+ * and the created task records why (`noteAllowCoreDropped`).
+ */
+function allowCoreOf(req: http.IncomingMessage, body: Record<string, unknown>): { allowCore: boolean; dropped: boolean } {
+  if (body['allowCore'] !== true) return { allowCore: false, dropped: false };
+  const allowCore = hostSecretMatches(config.home, req.headers[HOST_SECRET_HEADER]);
+  return { allowCore, dropped: !allowCore };
+}
+
+function noteAllowCoreDropped(store: Store, taskId: string, core: { dropped: boolean }): void {
+  if (core.dropped) store.record({ taskId, type: 'warning', message: 'allowCore dropped: request lacked the host-admin secret' });
+}
+
+/**
+ * Why a request may not approve or reject a pending playbook, or null when it may. These routes write the operator's
+ * catalog and four-eyes does not cover them, so with auth on (until roles, E1.3-5) they take a human principal that
+ * also carries the host-admin secret from a loopback peer. With auth off (`principal` null) nothing changes.
+ */
+function catalogApprovalRefusal(req: http.IncomingMessage, principal: Principal | null): string | null {
+  if (principal === null) return null;
+  if (principal.kind !== 'human') return 'catalog approval needs a human principal';
+  if (!hostAdminMintAllowed(req, config.home)) return 'catalog approval needs the host-admin secret, from this machine';
+  return null;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -248,6 +287,12 @@ function stub(text: string | null, len: number): { value: string | null; truncat
   return { value: text.slice(0, len), truncated: true };
 }
 
+/** Id of the newest event row, 0 on an empty ledger. */
+function newestEventId(store: Store): number {
+  const row = store.db.prepare('SELECT MAX(id) AS id FROM events').get() as Record<string, unknown> | undefined;
+  return Number(row?.['id'] ?? 0);
+}
+
 function landedSummary(d: Decision): { commit: string | null; landedTree: string | null; by: string | null; actor: string; at: number } {
   const extra = d.extra ?? {};
   return {
@@ -321,7 +366,6 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       landed: landed.has(task.id) ? landedSummary(landed.get(task.id)!) : null,
     };
   });
-  const lastEvent = store.db.prepare('SELECT MAX(id) AS id FROM events').get() as Record<string, unknown> | undefined;
   const today = new Date().toISOString().slice(0, 10);
   const callsByLocal = store.receiptCallCountsByLocal(today);
   return {
@@ -362,6 +406,9 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       verifying: scheduler.verifyingCount,
       verifyLane: scheduler.verifyLaneSize,
     },
+    dispatchHold: scheduler.dispatchHoldState,
+    // Landings a crash cut short (Store.adoptInterruptedLandings): their repos' dependents wait for `foreman land-clear`.
+    landInterrupted: store.interruptedLandings(),
     budget: {
       spentToday: store.spentToday(),
       // The cap governs metered spend only; this is every dollar recorded,
@@ -372,7 +419,7 @@ function snapshot(store: Store, scheduler: Scheduler): unknown {
       nonLocalCallsToday: callsByLocal.nonLocal,
     },
     roster: readBench()?.roster ?? null,
-    lastEventId: Number(lastEvent?.['id'] ?? 0),
+    lastEventId: newestEventId(store),
     serverTime: Date.now(),
   };
 }
@@ -496,7 +543,21 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         res.end();
         return;
       }
-      json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      // node:sqlite failures carry code 'ERR_SQLITE_ERROR' and a numeric errcode.
+      // Matched on those, never on message text.
+      const e = err as { code?: unknown; errcode?: unknown } | null;
+      if (e !== null && typeof e === 'object' && e.code === 'ERR_SQLITE_ERROR') {
+        if (e.errcode === 5 || e.errcode === 6) {
+          json(res, 503, { error: `ledger busy: ${message}; retry` });
+          return;
+        }
+        if (e.errcode === 13) {
+          json(res, 507, { error: `ledger disk full: ${message}` });
+          return;
+        }
+      }
+      json(res, 400, { error: message });
     });
   });
 
@@ -527,6 +588,26 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       return json(res, 403, { error: 'cross-origin write refused' });
     }
 
+    // The host-admin mint (security/mint.ts): the host-admin secret from a loopback peer, whatever the auth state and
+    // with no bearer, so it is also the way back in after a lockout. Anything else is 401, before the body is read.
+    if (seg[1] === 'tokens' && seg.length === 2 && method === 'POST') {
+      if (!hostAdminMintAllowed(req, config.home)) {
+        return json(res, 401, { error: 'mint refused: needs the host-admin secret, from this machine' });
+      }
+      return json(res, 201, mintToken(store, readMintRequest(await readJsonBody(req))));
+    }
+
+    // Once a principal exists (tokenAuth.ts), every other /api request needs a live principal's bearer token, GET and
+    // SSE included. verify-slot is the one other exception: a worker proves its run with the run token instead (below).
+    // Who is acting, for the decision rows this request writes and the tasks it creates: that principal, or the operator
+    // while auth is off.
+    let principal: Principal | null = null;
+    if (seg[1] !== 'verify-slot' && authIsOn(store)) {
+      principal = authenticate(store, req.headers);
+      if (!principal) return json(res, 401, { error: 'not authenticated: send Authorization: Bearer <token>' });
+    }
+    const actorId: string = principal?.id ?? DEFAULT_ACTOR_ID.human;
+
     // --- SSE -------------------------------------------------------------
     if (seg[1] === 'events' && method === 'GET') {
       res.writeHead(200, {
@@ -543,7 +624,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       const send = (ev: RunEvent): void => {
         client.write(`id: ${ev.id}\ndata: ${JSON.stringify(ev)}\n\n`);
       };
-      if (Number.isFinite(since) && since > 0) for (const ev of store.eventsSince(since)) send(ev);
+      if (Number.isFinite(since) && since > 0) {
+        // No await between this read and store.on below, so no event falls between them.
+        const missed = store.eventsSince(since, SSE_REPLAY_MAX + 1);
+        if (missed.length > SSE_REPLAY_MAX) client.write(`event: gap\ndata: ${JSON.stringify({ lastEventId: newestEventId(store) })}\n\n`);
+        else for (const ev of missed) send(ev);
+      }
       const onEvent = (ev: RunEvent): void => send(ev);
       store.on('event', onEvent);
       const beat = setInterval(() => {
@@ -569,6 +655,12 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       // request while the first is open is refused before it takes a place — and its wait for a slot is not charged
       // to its deadline. The claim, like the slot, lasts exactly as long as this response.
       const lease = claimRunLease(req.headers);
+      if (!verifySlotAllowed(store, lease.runId)) {
+        lease.release();
+        res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(`${VERIFY_SLOT_REFUSED}\n`);
+        return;
+      }
       if (lease.busy) {
         res.writeHead(409, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
         res.end(`${lease.busy}\n`);
@@ -622,6 +714,32 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
     }
 
     if (seg[1] === 'state' && method === 'GET') return json(res, 200, snapshot(store, scheduler));
+
+    // Holds new work only (Scheduler.dispatchHold); the rest of every tick keeps running. In memory: a restart clears it.
+    if (seg[1] === 'dispatch-hold' && !seg[2] && method === 'POST') {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const reason = typeof body['reason'] === 'string' ? body['reason'].trim() : '';
+      if (!reason || reason.length > 500) return json(res, 400, { error: 'reason must be 1-500 characters' });
+      scheduler.dispatchHold(reason);
+      store.record({ type: 'status', message: `dispatch held: ${reason}` });
+      return json(res, 200, { hold: scheduler.dispatchHoldState });
+    }
+    if (seg[1] === 'dispatch-hold' && !seg[2] && method === 'DELETE') {
+      scheduler.releaseDispatchHold();
+      store.record({ type: 'status', message: 'dispatch hold released' });
+      void scheduler.tick().catch(() => {});
+      return json(res, 200, { hold: null });
+    }
+
+    // The operator's word that a repo a crash left mid-merge is sound again: its held dependents are released.
+    if (seg[1] === 'land-interrupted' && seg[2] === 'clear' && !seg[3] && method === 'POST') {
+      const body = (await readJsonBody(req)) as Record<string, unknown>;
+      const repo = typeof body['repo'] === 'string' ? body['repo'].trim() : '';
+      if (!repo) return json(res, 400, { error: 'repo is required' });
+      if (!store.clearLandInterrupted(repo)) return json(res, 404, { error: `no interrupted landing in ${repo}` });
+      void scheduler.tick().catch(() => {});
+      return json(res, 200, { landInterrupted: store.interruptedLandings() });
+    }
 
     if (seg[1] === 'settings' && seg[2] === 'gate' && method === 'POST') {
       const body = (await readJsonBody(req)) as Record<string, unknown>;
@@ -741,6 +859,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         } else if (rawAcceptance != null) {
           return json(res, 400, { error: 'acceptance must be text or a list of text' });
         }
+        const core = allowCoreOf(req, body);
         const task = store.addTask({
           title: String(body['title'] ?? ''),
           prompt: String(body['prompt'] ?? ''),
@@ -756,14 +875,16 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           playbook: (body['playbook'] as string) || null,
           points: body['points'] == null ? null : Number(body['points']),
           acceptance,
-          allowCore: body['allowCore'] === true,
+          allowCore: core.allowCore,
           mergeOnApprove: body['mergeOnApprove'] === undefined ? undefined : Boolean(body['mergeOnApprove']),
           maxRepairs: body['maxRepairs'] === undefined ? undefined : Number(body['maxRepairs']),
           maxAttempts: body['maxAttempts'] === undefined ? undefined : Number(body['maxAttempts']),
           deps: Array.isArray(body['deps']) ? (body['deps'] as string[]) : [],
           assignee: (body['assignee'] as never) || null,
           skills: skills as string[] | null,
+          createdBy: actorId,
         });
+        noteAllowCoreDropped(store, task.id, core);
         void scheduler.tick().catch(() => {});
         return json(res, 201, task);
       }
@@ -786,7 +907,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       }
 
       if (taskId && method === 'DELETE' && !seg[3]) {
-        store.deleteTask(taskId);
+        store.deleteTask(taskId, actorId);
         return json(res, 200, { ok: true });
       }
 
@@ -804,18 +925,25 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
               corrected,
               reviewSource,
               selfRoot: scheduler.selfRoot,
+              // Who approves: the principal that authenticated the request, or the operator while auth is off.
+              principal: actorId,
               // `foreman approve --as-is <sha>`: a person lands a tree that is
               // not the reviewed one by naming it (merge.ts).
-              source: 'human',
               acceptTree: typeof body['acceptTree'] === 'string' ? body['acceptTree'] : null,
             });
           } catch (err) {
             if (err instanceof ShuttingDownError) return json(res, 503, { error: err.message });
+            if (err instanceof FourEyesRefused) return json(res, 403, { error: err.message });
             throw err;
           }
-          const { task, merge, registration, decision } = approved;
+          const { task, merge, registration, decision, postMerge } = approved;
           void scheduler.tick().catch(() => {});
-          return json(res, 200, { ...task, merge, registration, decision: decision ?? null });
+          // Answered once the merge has settled, not after the repo's whole suite: the post-merge check runs on in
+          // the background (the reverify route's shape) and says what it found on the timeline and in /api/state.
+          void postMerge
+            ?.then(() => scheduler.tick().catch(() => {}))
+            .catch((err: Error) => safeRecord(store, { taskId, type: 'error', message: `main check after merging ${taskId} failed: ${err.message}` }));
+          return json(res, 200, { ...task, merge, registration, decision: decision ?? null, postMerge: postMerge ? 'pending' : 'none' });
         }
         if (action === 'landed') {
           // Host and Origin were checked for every /api write above, before routing: this route is behind the same
@@ -840,8 +968,14 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             const tripwire = await checkRepo(asked.repo, asRun.id, { requireBaseline: false, git: pinnedGit });
             if (!tripwire.ok) return json(res, 409, { error: `cannot mark ${taskId} landed: ${tripwire.reason}` });
           }
+          // Four-eyes, as for approve: the change is the named commit against its first parent.
+          const refused = await fourEyesRefusal(store, taskId, actorId, { from: `${commit}^1`, to: commit }, scheduler.selfRoot);
+          if (refused) return json(res, 403, { error: refused.message });
+          // D6: a repo that lands by merge request, and every repo once auth is on, is landed through its MR.
+          const viaMr = asked ? await handLandingRefusal(store, asked, commit, { authOn: authIsOn(store), selfRoot: scheduler.selfRoot }) : null;
+          if (viaMr) return json(res, 409, { error: viaMr });
           try {
-            const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human' });
+            const landed = await store.markLanded(taskId, { commit, by: (by as string | null | undefined) ?? null, note, actor: 'human', actorId });
             void scheduler.tick().catch(() => {});
             const decision = store.decisionsForTask(taskId).filter((d) => d.action === 'landed').at(-1) ?? null;
             return json(res, 200, { ...landed, decision });
@@ -858,7 +992,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             return json(res, 400, { error: 'dep must be a ticket id (t_ and letters or digits); nothing was done' });
           }
           try {
-            const task = store.dropDependency(taskId, dep, 'human');
+            const task = store.dropDependency(taskId, dep, 'human', actorId);
             void scheduler.tick().catch(() => {});
             const decision = store.decisionsForTask(taskId).filter((d) => d.action === 'deps-drop').at(-1) ?? null;
             return json(res, 200, { ...task, decision });
@@ -872,7 +1006,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           refuseCorrected(body, 'reject');
           const note = String(body['note'] ?? 'rejected by operator');
           const asked = Date.now();
-          const rejected = applyRejection(store, taskId, note);
+          const rejected = applyRejection(store, taskId, note, actorId);
           return json(res, 200, { ...rejected, decision: justRecorded(store, taskId, 'reject', asked) });
         }
         if (action === 'reverify') {
@@ -927,7 +1061,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           // Never refused over its note (readCancelNote): whatever came with it, the cancel goes ahead.
           const { note, problem, cascade } = await readCancelNote(req);
           const asked = Date.now();
-          const canceled = store.cancel(taskId, note, { cascade });
+          const canceled = store.cancel(taskId, note, { cascade, actorId });
           return json(res, 200, {
             ...canceled,
             decision: justRecorded(store, taskId, 'cancel', asked),
@@ -953,7 +1087,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
             setTicketSkills(store, taskId, skills);
           }
           const asked = Date.now();
-          const retried = store.retry(taskId, note, 'skills' in body ? { skills: body['skills'] === 'default' ? null : body['skills'] } : null);
+          const retried = store.retry(taskId, note, 'skills' in body ? { skills: body['skills'] === 'default' ? null : body['skills'] } : null, actorId);
           void scheduler.tick().catch(() => {});
           return json(res, 200, { ...retried, decision: justRecorded(store, taskId, 'retry', asked) });
         }
@@ -962,7 +1096,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           refuseCorrected(body, 'reopen');
           try {
             const asked = Date.now();
-            const reopened = store.reopen(taskId, note);
+            const reopened = store.reopen(taskId, note, actorId);
             return json(res, 200, { ...reopened, decision: justRecorded(store, taskId, 'reopen', asked) });
           } catch (err) {
             return json(res, 409, { error: (err as Error).message });
@@ -1219,9 +1353,11 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           return json(res, 400, { error: (err as Error).message });
         }
       }
-      // Approve/reject mirror the tool-approval routes: localhost-only like the
-      // rest of the API, no other authentication, one explicit human action.
+      // Approve/reject: one explicit human action that writes the catalog. With auth on it also needs the host-admin
+      // secret over loopback (catalogApprovalRefusal); a refusal is 403 and leaves the draft where it was.
       if (method === 'POST' && seg[2] && (seg[3] === 'approve' || seg[3] === 'reject')) {
+        const refusal = catalogApprovalRefusal(req, principal);
+        if (refusal) return json(res, 403, { error: refusal });
         try {
           return json(
             res,
@@ -1242,11 +1378,13 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         area: (body['area'] as string) || null,
       });
       if (body['confirm'] !== true) return json(res, 200, { proposal, evidence, queued: null });
+      const core = allowCoreOf(req, body);
       const task = queueImprovement(store, proposal, {
-        allowCore: body['allowCore'] === true,
+        allowCore: core.allowCore,
         budgetUsd: body['budgetUsd'] == null ? undefined : Number(body['budgetUsd']),
         runner: body['runner'] as never,
       });
+      noteAllowCoreDropped(store, task.id, core);
       void scheduler.tick().catch(() => {});
       return json(res, 201, { proposal, queued: task });
     }
@@ -1272,6 +1410,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
         sensitivity: (body['sensitivity'] as never) ?? 'S1',
         budgetUsd: body['budgetUsd'] == null ? null : Number(body['budgetUsd']),
         priority: body['priority'] === undefined ? 0 : Number(body['priority']),
+        createdBy: actorId,
       });
       void scheduler.tick().catch(() => {});
       return json(res, 201, { plan: queued.plan, queued: queued.tasks });
@@ -1411,6 +1550,7 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
           runner: body['runner'] as never,
           parentId: (body['parentId'] as string) || null,
           gate,
+          createdBy: actorId,
         });
       } catch (err) {
         return json(res, 400, { error: (err as Error).message });
@@ -1439,6 +1579,16 @@ export function createServer(store: Store, scheduler: Scheduler): http.Server {
       if (method === 'POST' && seg[2] && (seg[3] === 'quarantine' || seg[3] === 'release')) {
         return json(res, 200, setQuarantine(seg[2], seg[3] === 'quarantine'));
       }
+    }
+
+    if (seg[1] === 'metrics' && !seg[2] && method === 'GET') {
+      const format = url.searchParams.get('format') ?? 'json';
+      if (format !== 'json' && format !== 'prom') return json(res, 400, { error: 'format must be json or prom' });
+      const metrics = collectMetrics(store, scheduler.tickStageMs(), Date.now());
+      if (format === 'json') return json(res, 200, metrics);
+      res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(toProm(metrics));
+      return;
     }
 
     if (seg[1] === 'latency' && method === 'GET') {
