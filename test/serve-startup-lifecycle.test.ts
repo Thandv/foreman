@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { isProtectedPath } from '../src/security/coreGuard.ts';
 
 // Pins what `node src/cli.ts serve` does from start to an orderly stop: the startup lines in order, then SIGTERM
 // (sent once the startup output is complete, no sleeps) and exit code 0. The output is normalised: the scratch
@@ -54,3 +55,27 @@ const GOLDEN =
   'trace <TRACE>\n' +
   '\n' +
   'stopping…\n';
+
+// cli.ts hands serve()'s result to process.exit unless it is -1: a refusal to start must still exit 1, not leave the
+// process to run out with 0.
+test('serve refuses an unknown FOREMAN_SANDBOX value with exit 1, before it prints or opens anything', async (t) => {
+  const parent = fs.realpathSync(scratchDir('foreman-refuse-'));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const home = path.join(parent, 'home');
+  const cli = path.join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const env: NodeJS.ProcessEnv = { ...process.env, FOREMAN_HOME: home, FOREMAN_PORT: '0', FOREMAN_PREWARM: 'off', FOREMAN_SANDBOX: 'bogus' };
+  delete env['FOREMAN_RUN_ID'];
+  const child = spawn(process.execPath, [cli, 'serve'], { cwd: parent, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, killSignal: 'SIGKILL' });
+  let out = '';
+  let err = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { err += d; });
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) => child.on('close', (c, s) => resolve([c, s])));
+  assert.deepEqual([code, signal, out], [1, null, ''], err);
+  assert.match(err, /^foreman: FOREMAN_SANDBOX must be off, tests or all, got "bogus"\n$/);
+  assert.deepEqual(['daemon.pid', 'foreman.db'].filter((f) => fs.existsSync(path.join(home, f))), []);
+});
+
+test('src/daemon.ts is a protected path', () => {
+  assert.equal(isProtectedPath('src/daemon.ts'), true);
+});
