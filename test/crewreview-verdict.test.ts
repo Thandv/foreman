@@ -187,6 +187,21 @@ test('a fail from a reviewer who read an excerpt stands: a defect seen in part o
   }, OVER_CAP_DIFF);
 });
 
+test('heldReason holds on an excerpt opinion only under a stated, non-fail verdict, and never on an errored one', async () => {
+  const { heldReason } = await import('../src/verify/crewReview.ts');
+  const NOTE = 'the reviewer read only an excerpt of the work — a person decides';
+  const opinion = (extra: Record<string, unknown> = {}) => ({
+    model: 'opus', provider: 'claude-cli', local: false, verdict: 'pass', confidence: 1, critique: '', costUsd: 0, latencyMs: 0,
+    excerpt: true as const, ...extra,
+  });
+  const record = (verdict: string | undefined, extra: Record<string, unknown> = {}) =>
+    ({ ...(verdict ? { verdict } : {}), council: [opinion(extra)] }) as unknown as Parameters<typeof heldReason>[0];
+  assert.equal(heldReason(record('pass')), NOTE, 'a pass on an excerpt is held');
+  assert.equal(heldReason(record('fail')), null, 'a fail stands: nothing to hold');
+  assert.equal(heldReason(record(undefined)), null, 'no stated verdict: nothing to hold');
+  assert.equal(heldReason(record('pass', { error: 'reviewer unavailable' })), null, 'an errored opinion read nothing');
+});
+
 test('the chair of a two-reviewer chain gets a third of the timeout, never under 1000 ms', () => {
   assert.equal(crewChairShareMs(1_800_000, 2), 600_000, 'the default 30 minute task timeout');
   assert.equal(crewChairShareMs(90 * 60_000, 2), 1_800_000, 'the 90 minute local-only timeout');
