@@ -293,6 +293,18 @@ offer Re-review first (the same reviewer would give the same reply); in the
 shadow-agreement ledger a pair whose cloud verdict is such a `split` is kept
 and not scored.
 
+**A pass on an excerpt is not a pass.** A diff over a crew reviewer's reading
+cap (`FOREMAN_CREW_CODE_DIFF_CAP_BYTES`, 96 KB; prose
+`FOREMAN_PROSE_DIFF_CAP_BYTES`, 160 KB) reaches it as an excerpt, and the
+reviewer is told not to fail the work over what lies past the cut. Its pass
+therefore says nothing about the rest, so a chain that passes such work is
+recorded as `split` with a `FOREMAN CHECK` line naming the reviewers that read
+an excerpt. It parks for you with the note `the reviewer read only an excerpt of
+the work — a person decides` (on the board, `held for you`), and the owner model
+does not sign it off, whatever a later council re-review of the same run says.
+A fail stands: a defect seen in part of the work is still a defect. In the
+shadow-agreement ledger such a split, like any other, is kept and not scored.
+
 **Pre-existing assertions.** When a run's diff modifies a test file that was
 there before the run, a check with no model in it lists what a reader would
 want a reason for: an assertion line removed or changed (also a later line of

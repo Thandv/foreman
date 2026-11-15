@@ -110,10 +110,10 @@ export interface RevertTestsOptions {
 
 export const REVERT_TESTS_DEFAULTS = { perTestMs: 60_000, perFileMs: 300_000, budgetMs: 600_000, loadMs: 30_000 } as const;
 
-interface Change { status: string; path: string; from: string | null }
+export interface Change { status: string; path: string; from: string | null }
 
 /** `git diff --name-status -M -z base tree`, read: each changed path with its old name for a rename. */
-async function listChanges(repo: string, base: string, tree: string): Promise<Change[]> {
+export async function listChanges(repo: string, base: string, tree: string): Promise<Change[]> {
   const out = await git(repo, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '-M', '--name-status', '-z', base, tree, '--']);
   const parts = out.split('\0');
   const changes: Change[] = [];
@@ -131,7 +131,7 @@ async function listChanges(repo: string, base: string, tree: string): Promise<Ch
   return changes;
 }
 
-async function blob(repo: string, rev: string, rel: string): Promise<string | null> {
+export async function blob(repo: string, rev: string, rel: string): Promise<string | null> {
   try {
     return await git(repo, ['cat-file', 'blob', `${rev}:${rel}`]);
   } catch {
@@ -140,7 +140,7 @@ async function blob(repo: string, rev: string, rel: string): Promise<string | nu
 }
 
 /** A path of the reviewed tree, written into the scratch tree as the tree has it: bytes and mode, a symlink verbatim. */
-async function writeFromTree(repo: string, tree: string, root: string, rel: string): Promise<void> {
+export async function writeFromTree(repo: string, tree: string, root: string, rel: string): Promise<void> {
   const target = inside(root, rel);
   if (!target) throw new Error(`${rel} is outside the scratch tree`);
   withinScratch(root, target, rel);
@@ -247,7 +247,7 @@ export function parseTap(output: string): { results: TapResult[]; comments: stri
   return { results, comments };
 }
 
-const oneLine = (s: string, max = 240): string => s.replace(/\s+/g, ' ').trim().slice(0, max);
+export const oneLine = (s: string, max = 240): string => s.replace(/\s+/g, ' ').trim().slice(0, max);
 
 /** Is this result the runner's report for a file that did not load (one failure named after the file, at its top)? */
 function loadFailure(results: TapResult[], file: string): TapResult | null {
@@ -283,8 +283,8 @@ function sameFile(loc: string, dir: string, file: string): boolean {
   return plain.endsWith(`/${file}`);
 }
 
-/** The command for one file: the script's flags without its reporters or filters, then ours. */
-function fileCommand(flags: string[], file: string, perTestMs: number, patterns: string[] | null): string {
+/** The command for one file (or several): the script's flags without its reporters or filters, then ours. */
+export function fileCommand(flags: string[], file: string | string[], perTestMs: number, patterns: string[] | null): string {
   const DROP = /^--test-(reporter|reporter-destination|timeout|name-pattern|skip-pattern|only|shard|force-exit|rerun-failures)(=|$)/;
   const kept: string[] = [];
   for (let k = 0; k < flags.length; k++) {
@@ -300,7 +300,7 @@ function fileCommand(flags: string[], file: string, perTestMs: number, patterns:
     'node', ...kept.map(shq), '--test', '--test-reporter=tap', '--test-reporter-destination=stdout',
     `--test-timeout=${perTestMs}`, '--test-force-exit',
     ...(patterns ?? []).map((p) => `--test-name-pattern=${shq(p)}`),
-    shq(file),
+    ...(Array.isArray(file) ? file : [file]).map(shq),
   ].join(' ');
 }
 

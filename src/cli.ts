@@ -174,6 +174,8 @@ Env: FOREMAN_HOME, FOREMAN_PORT, FOREMAN_MAX_WORKERS, FOREMAN_DB, FOREMAN_CLAUDE
      test its diff adds or changes is run with the diff's non-test files put back to the base, and the reviewer and the
      owner gate get a per-test table: fails / passes / could not run without the change. A reviewer aid only: no
      repair, no hold. Stored as <run>.revert-tests.json (foreman show, foreman debrief).
+     FOREMAN_MUTANTS=on (default off). After a code ticket's tests pass, up to 20 mutants of its changed source lines
+     are run against its changed test files; the reviewer and the owner gate see which survived. No repair, no hold.
      FOREMAN_SLOT_WAIT_CREDIT_MS=1800000 (how much of a worker's own wait for a test slot is not charged to its run),
      FOREMAN_CLAUDE_CONFIG_DIR (a claude-code worker's own CLAUDE_CONFIG_DIR; default $FOREMAN_HOME/claude-config),
      FOREMAN_CLAUDE_ENV_ALLOW (extra variable names a claude-code worker inherits, comma-separated; its env is an allowlist),

@@ -165,6 +165,19 @@ test('spawnStreaming reassembles lines split across chunks and flushes the tail'
   assert.deepEqual(lines.filter(([, s]) => s === 'stderr').map(([l]) => l), ['warn']);
 });
 
+test('spawnStreaming splits a line with no newline into 1,000,000-character pieces and drops none of it', async () => {
+  const pieces: string[] = [];
+  const script = `process.stdout.write('0123456789'.repeat(250_000))`;
+  const code = await spawnStreaming(process.execPath, ['-e', script], {
+    cwd: os.tmpdir(),
+    signal: new AbortController().signal,
+    onLine: (line) => pieces.push(line),
+  });
+  assert.equal(code, 0);
+  assert.ok(pieces.every((p) => p.length <= 1_000_000), `piece lengths ${pieces.map((p) => p.length)}`);
+  assert.equal(pieces.join(''), '0123456789'.repeat(250_000), `got ${pieces.join('').length} of 2500000 characters`);
+});
+
 test('a run that ran out of turns says so, instead of quoting the agent mid-sentence', () => {
   const { state } = feed(claudeCodeSpec, [
     [JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Now converting the quotes:' }] } }), 'stdout'],

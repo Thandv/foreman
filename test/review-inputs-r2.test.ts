@@ -282,6 +282,7 @@ test('the board does not offer Re-review first for a crew split, and says who it
     'the reviewer gave no status for acceptance items 1, 2 — a person decides',
     'the reviewer says acceptance item 2 is not met (no test for the port), and a chair passed the work — a person decides',
     'the diff changed since the earlier approval — it needs approving again; the reviewer could not verify acceptance items 1, 3 — a person decides',
+    'the reviewer read only an excerpt of the work — a person decides',
   ]) assert.equal(board.heldByReviewer({ error: note }, split), true, note);
   // A council that reached no verdict is still "no verdict", with Re-review first.
   for (const note of ['council split — needs your call', 'council split — chair unavailable: connect ECONNREFUSED', null, 'NOT REVIEWED: no reviewer could be reached; this work reaches you unread'])

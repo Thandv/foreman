@@ -226,7 +226,7 @@ export function splitNote(v) {
  */
 export function heldByReviewer(task, run) {
   return run?.verdict === 'split'
-    && /\bthe reviewer (?:says|could not verify|gave no status for) acceptance items? \d/.test(task?.error ?? '');
+    && /\bthe reviewer (?:(?:says|could not verify|gave no status for) acceptance items? \d|read only an excerpt\b)/.test(task?.error ?? '');
 }
 
 /**

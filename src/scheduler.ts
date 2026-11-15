@@ -44,7 +44,8 @@ import { crewLeadsVerify, crewReview, DROPPED_ISSUE_PREFIX, droppedSinceLastPark
 import { storeReport, storedReport } from './verify/report.ts';
 import { recordAssertionChanges, storedAssertionNote } from './verify/assertionCheck.ts';
 import { existingOutputDir, readWorkerSuite, recordWorkerSuite } from './verify/workerSuite.ts';
-import { recordRevertTests, revertTestsApplies, revertTestsCheck, revertTestsNote, revertTestsSummary, storedRevertTestsNote } from './verify/revertTests.ts';
+import { recordRevertTests, revertTestsApplies, revertTestsCheck, revertTestsNote, revertTestsSummary, storedRevertTestsNote, type RevertRunResult } from './verify/revertTests.ts';
+import { mutantsCheck, mutantsNote, mutantsSummary, recordMutants, storedMutantsNote } from './verify/mutants.ts';
 import { detectTestCmd, runTestsSlotted } from './verify/tests.ts';
 import {
   BEHIND_ADVICE, behindLine, behindMain, behindParkNote, failuresAllChangedOnMain, gateTimeout, nothingToChangeNote, timedOutTwiceNote,
@@ -80,6 +81,8 @@ export interface SchedulerOptions {
   selfRoot?: string;
   /** The per-test revert check (verify/revertTests.ts); defaults to FOREMAN_REVERT_TESTS (config.revertTests). */
   revertTests?: boolean;
+  /** The mutation check on changed lines (verify/mutants.ts); defaults to FOREMAN_MUTANTS (config.mutants). */
+  mutants?: boolean;
 }
 
 export { redBackoffMs };
@@ -681,6 +684,7 @@ export class Scheduler {
   private readonly verifyFn: (args: VerifyArgs) => Promise<Verdict>;
   private readonly verifyEnabled: boolean;
   private readonly revertTests: boolean;
+  private readonly mutants: boolean;
   /** Owner-gate calls in flight, keyed by task: single-flight across ticks. */
   private readonly gating = new Map<string, Promise<void>>();
   /**
@@ -735,6 +739,7 @@ export class Scheduler {
     this.broker = opts.broker ?? new Broker(store);
     this.verifyEnabled = opts.verifyEnabled ?? process.env['FOREMAN_VERIFY'] !== 'off';
     this.revertTests = opts.revertTests ?? config.revertTests;
+    this.mutants = opts.mutants ?? config.mutants;
     this.verifyFn =
       opts.verify ??
       ((args) =>
@@ -1857,10 +1862,26 @@ export class Scheduler {
       // cancel or a stop still ends it.
       let revertNote: string | null = null;
       const reviewedTree = jail?.repo ? this.store.getRun(runId)?.reviewedTree ?? null : null;
-      if (revertTestsApplies({
-        enabled: this.revertTests, kind: task.kind, repo: jail?.repo, workerOk: result.ok && !nothingToChange && !personHold,
+      const scratchApplies = (enabled: boolean): boolean => revertTestsApplies({
+        enabled, kind: task.kind, repo: jail?.repo, workerOk: result.ok && !nothingToChange && !personHold,
         testsRan: tests.ran, testsPassed: tests.passed, diff, tree: reviewedTree, aborted: controller.signal.aborted,
-      })) {
+      });
+      // One command in a scratch tree, through the verify slots and the sandbox like the test stage.
+      const slottedRun = async (dir: string, cmd: string, timeoutMs: number): Promise<RevertRunResult> => {
+        // Every line: the TAP report is read off the whole output, not the tail runTests keeps.
+        const lines: string[] = [];
+        let waitedMs = 0;
+        const r = await runTestsSlotted(
+          dir, cmd, controller.signal,
+          (line) => { if (lines.length < 100_000) lines.push(line); },
+          (pid) => this.store.setRunPid(runId, pid),
+          (ms) => { waitedMs += ms; onVerifyWait(ms); },
+          onSlotQueue,
+          { timeoutMs },
+        );
+        return { passed: r.passed, timedOut: r.killedAfterSec !== undefined, refused: r.refused === true, output: r.refused ? r.output : lines.join('\n'), waitedMs };
+      };
+      if (scratchApplies(this.revertTests)) {
         this.store.setRunStage(runId, task.id, 'test', 'revert check, per test');
         clock.pause('revert-check');
         const checked = await revertTestsCheck({
@@ -1870,20 +1891,7 @@ export class Scheduler {
           workRoot: config.workRoot,
           runId,
           signal: controller.signal,
-          run: async (dir, cmd, timeoutMs) => {
-            // Every line: the TAP report is read off the whole output, not the tail runTests keeps.
-            const lines: string[] = [];
-            let waitedMs = 0;
-            const r = await runTestsSlotted(
-              dir, cmd, controller.signal,
-              (line) => { if (lines.length < 100_000) lines.push(line); },
-              (pid) => this.store.setRunPid(runId, pid),
-              (ms) => { waitedMs += ms; onVerifyWait(ms); },
-              onSlotQueue,
-              { timeoutMs },
-            );
-            return { passed: r.passed, timedOut: r.killedAfterSec !== undefined, refused: r.refused === true, output: r.refused ? r.output : lines.join('\n'), waitedMs };
-          },
+          run: slottedRun,
           log: emit,
         }).finally(() => {
           clock.resume('revert-check');
@@ -1895,6 +1903,35 @@ export class Scheduler {
           recordRevertTests(this.store, runId, task.id, checked);
           revertNote = revertTestsNote(checked);
           emit(`${revertTestsSummary(checked)} (${(checked.runMs / 1000).toFixed(1)}s run time) — for the reviewer; nothing is held on it`);
+        }
+      }
+      // --- the mutation check on changed lines (verify/mutants.ts) ----------
+      // FOREMAN_MUTANTS=on only. The same kind of aid as the revert check, run
+      // the same way (scratch tree, slotted and sandboxed, the run's clock
+      // stopped, its own bounds): up to 20 mutants of the changed source lines
+      // against the changed test files. It repairs, holds and fails nothing.
+      let mutantsNoteText: string | null = null;
+      if (scratchApplies(this.mutants)) {
+        this.store.setRunStage(runId, task.id, 'test', 'mutation check, changed lines');
+        clock.pause('mutation-check');
+        const checked = await mutantsCheck({
+          repo: jail!.repo!,
+          base: await jailBase(jail!).catch(() => null),
+          tree: reviewedTree!,
+          workRoot: config.workRoot,
+          runId,
+          signal: controller.signal,
+          run: slottedRun,
+          log: emit,
+        }).finally(() => {
+          clock.resume('mutation-check');
+          deadlineAt = clock.deadlineAt;
+        });
+        if (checked?.status === 'n/a') emit(`mutation check: n/a — ${checked.reason}`);
+        else if (checked) {
+          recordMutants(this.store, runId, task.id, checked);
+          mutantsNoteText = mutantsNote(checked);
+          emit(`${mutantsSummary(checked)} (${(checked.runMs / 1000).toFixed(1)}s run time) — for the reviewer; nothing is held on it`);
         }
       }
       // The test command and the checks ran in the jail as shell, after the
@@ -1977,7 +2014,7 @@ export class Scheduler {
         }
         // Both crew-chain calls below get the note, apart from the report: the
         // report is bounded on its own (verify/report.ts), the note never cut.
-        const foremanNote = [preReviewNote, assertionNote, revertNote].filter(Boolean).join('\n\n') || null;
+        const foremanNote = [preReviewNote, assertionNote, revertNote, mutantsNoteText].filter(Boolean).join('\n\n') || null;
         const crewReport: CrewReport = { text: result.report ?? result.summary ?? null, path: reportPath, note: foremanNote };
         const toolBody = task.kind === 'tool' ? toolEvidence(jail.dir) : '';
         const evidence: Evidence = {
@@ -2943,7 +2980,7 @@ export class Scheduler {
           task, run.id, evidence.body, null, this.lifetime.signal, emit, Date.now() + this.taskTimeoutMs,
           run.branch ?? null,
           run.testsPassed === null ? null : { ran: true, passed: run.testsPassed, cmd: task.testCmd },
-          tree, { ...storedReport(this.store, run), note: [storedAssertionNote(this.store, run), storedRevertTestsNote(this.store, run)].filter(Boolean).join('\n\n') || null },
+          tree, { ...storedReport(this.store, run), note: [storedAssertionNote(this.store, run), storedRevertTestsNote(this.store, run), storedMutantsNote(this.store, run)].filter(Boolean).join('\n\n') || null },
         );
         if (crew && stillCurrent()) {
           this.store.clearGateDecision(taskId);

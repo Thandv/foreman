@@ -248,6 +248,8 @@ export interface AdvisorOpinion {
   style?: string;
   /** Set only on a crew review of a ticket with numbered acceptance: the reviewer's status per item (crewReview.ts). */
   acceptance?: AcceptanceEntry[];
+  /** Set only on a crew review entry whose reviewer read an excerpt: the work was over its reading cap (crewReview.ts). */
+  excerpt?: true;
 }
 
 export interface Verdict {
@@ -305,7 +307,7 @@ export interface Artifact {
    * `assertions`: the pre-existing assertions the run's diff removed or changed (verify/assertionCheck.ts).
    * `revert-tests`: each changed test run with the src change put back (verify/revertTests.ts); a reviewer aid, never a hold.
    */
-  type: 'diff' | 'file' | 'report' | 'log' | 'assertions' | 'revert-tests' | 'worker-suite';
+  type: 'diff' | 'file' | 'report' | 'log' | 'assertions' | 'revert-tests' | 'mutants' | 'worker-suite';
   path: string;
   summary: string | null;
   /** null = undecided, 1 = approved, 0 = rejected. */

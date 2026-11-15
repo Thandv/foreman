@@ -26,6 +26,7 @@ import { chairRuled, reviewLabel } from './verify/council.ts';
 import { assertionHold } from './verify/assertionCheck.ts';
 import { checkRepo } from './gitTripwire.ts';
 import { storedRevertTestsNote } from './verify/revertTests.ts';
+import { storedMutantsNote } from './verify/mutants.ts';
 import { cutMiddle, storedReport } from './verify/report.ts';
 import { boundDroppedIssues, droppedSinceLastPark, DROPPED_ISSUE_PREFIX, formatDroppedIssues, heldReason, isCapDrop } from './verify/crewReview.ts';
 
@@ -750,6 +751,11 @@ function gateEvidence(task: Task, run: Run | null, diff: string, chain: string, 
   ].join('\n\n');
 }
 
+/** The run's revert check and mutation check tables, when it has them: information for the owner model, not a rule. */
+function scratchChecksNote(store: Store, run: Run | null): string | null {
+  return [storedRevertTestsNote(store, run), storedMutantsNote(store, run)].filter(Boolean).join('\n\n') || null;
+}
+
 /**
  * Pure prompt assembly: the caller reads the chain (it holds the Store), this
  * shapes it. static-first for prompt-cache hits — GATE_CONTRACT is identical on
@@ -1293,7 +1299,7 @@ export async function ownerGate(opts: OwnerGateOptions): Promise<GateDecision> {
   if (broke) return log('hold', broke, false);
 
   const diff = runDiff(store, task, run);
-  const prompt = buildGatePrompt(task, run, diff, verdictChain(store, task, run), run ? storedReport(store, run).text : null, storedRevertTestsNote(store, run));
+  const prompt = buildGatePrompt(task, run, diff, verdictChain(store, task, run), run ? storedReport(store, run).text : null, scratchChecksNote(store, run));
 
   let text: string;
   try {
@@ -1405,7 +1411,7 @@ export async function ownerGateBatch(opts: OwnerGateBatchOptions): Promise<Map<s
 
   const prompt = buildBatchGatePrompt(eligible.map(({ task, run }) => ({
     task, run, diff: runDiff(store, task, run), chain: verdictChain(store, task, run), report: run ? storedReport(store, run).text : null,
-    revert: storedRevertTestsNote(store, run),
+    revert: scratchChecksNote(store, run),
   })));
 
   let text: string;

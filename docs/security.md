@@ -98,6 +98,34 @@ read once when the daemon starts) Foreman runs it, per test, and tells the revie
   300 s; the whole check has 600 s of **run time** (slot waits are not counted). A file that hangs at the base costs
   at most that bound, and its tests are `could not run`.
 
+## The mutation check on changed lines (`FOREMAN_MUTANTS`)
+
+The revert check asks whether a new test fails with the whole change put back; the finer question is whether the
+tests notice when one changed line is wrong. With `FOREMAN_MUTANTS=on` (off by default; anything but `on`/`off`
+refuses to start; read once) Foreman runs small mutants of the changed lines and tells the reviewer which ones the
+tests did not notice. It decides nothing (`src/verify/mutants.ts`).
+
+- **When**: as the revert check (a `code` ticket in a repo, worker finished, tests ran and passed), and only when the
+  diff changes a JavaScript or TypeScript source file *and* adds or changes a test file the test command runs.
+- **Which mutants**: on the source lines the diff adds or rewrites only, outside strings and comments: a relational
+  boundary (`<`/`<=`, `>`/`>=`, spaced comparisons only), equality (`===`/`!==`, `==`/`!=`), a logical connector
+  (`&&`/`||`), a boolean literal, and deleting an expression statement (a call or assignment on its own line). At
+  most 20 per run, spread evenly over the changed lines when there are more.
+- **How**: a scratch worktree at the run's base gets the whole **reviewed tree**'s change (never the live worktree).
+  The changed test files run once clean — if they do not pass there, every mutant is `could not run` — then once per
+  mutant, each in a fresh scratch worktree built with that one line changed. Nothing is written into a tree after the
+  worker's tests have run in it (they may swap any path in it, the tree itself included, for a link); each tree is
+  removed after its run. Only a `node … --test …` script can be aimed at the changed test files.
+- **What each mutant gets**: `killed` (the tests failed), `survived` (they passed: either they do not check that
+  line, or the mutant is equivalent — the reviewer decides which), or `could not run` (timed out, budget spent, or the
+  check failed — never a clean result).
+- **Where it goes**: a `FOREMAN MUTATION CHECK` note to the crew reviewer (and to a re-review), a section of the owner
+  gate's evidence, and `<FOREMAN_HOME>/artifacts/<run>.mutants.json` with a `mutants` artifact row. **No repair
+  round, no hold, no failed stage comes from it.**
+- **Cost and bounds**: one verify slot and the sandbox per command, the run's deadline stopped for the check, each run
+  killed at three times the clean run (at least 30 s, at most 120 s), and 600 s of run time for the whole check.
+  Building the scratch trees (one checkout per run, up to 21) is not counted in that 600 s.
+
 ## The sandbox (`FOREMAN_SANDBOX`)
 
 A jail is a git worktree, not a boundary. A test command is code a worker wrote, and without a
