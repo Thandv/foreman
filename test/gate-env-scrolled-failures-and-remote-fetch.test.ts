@@ -12,7 +12,7 @@ import { behindMain, gateTimeout, namesFailingTest, testCommandFiles } from '../
 import type { Run, Task } from '../src/types.ts';
 import { runTests } from '../src/verify/tests.ts';
 
-// Review round 2 on the gate-timeout / behind-main parks (test/gate-env.test.ts, test/gate-env-r1.test.ts): a red
+// Review round 2 on the gate-timeout / behind-main parks (test/gate-env.test.ts, test/gate-env-timeout-and-nothing-to-change-holds.test.ts): a red
 // test that had scrolled out of the kept output when the run was cut short, a fetch from a remote the repo's
 // config names, and a jail whose package.json is not a file. Then four things round 1's on-top says of itself that
 // no test held (each survived as a mutant): "no change" is said of a code ticket only, it renames no older hold, the
@@ -69,7 +69,7 @@ test('the same when Foreman itself kills the run at its bound: a red test printe
     assert.equal(gateTimeout(red), null);
     const green = await runTests(dir, longSuite(dir, '', 450, 'exec sleep 60'), never());
     assert.deepEqual(gateTimeout(green), { seconds: 3, by: 'foreman' });
-    // What a dying suite prints after the kill is still the kill's doing (test/gate-env-r1.test.ts), not a named failure.
+    // What a dying suite prints after the kill is still the kill's doing (test/gate-env-timeout-and-nothing-to-change-holds.test.ts), not a named failure.
     const dying = await runTests(dir, 'trap \'echo "✖ test/a.test.js (cancelled)"; exit 1\' TERM; echo "ok 1 - a"; sleep 600 & wait', never());
     assert.match(dying.output, /cancelled/, 'the rig: the line was printed, after the kill');
     assert.deepEqual(gateTimeout(dying), { seconds: 3, by: 'foreman' });
