@@ -10,6 +10,10 @@ import { recordDecision } from '../src/assistant/memory.ts';
 import { Store } from '../src/queue.ts';
 import type { Task } from '../src/types.ts';
 
+// The .md timeline is rendered in local time on purpose; PIN_MD below was computed under these rules (UTC+2 on the
+// fixture's date), so the zone is fixed here and the pin holds on any machine, CI's UTC included.
+process.env.TZ = 'Europe/Berlin';
+
 // A synthetic ledger in the scratch FOREMAN_DB test/env.ts made. The clock is moved by hand.
 let clock = Date.parse('2026-10-11T02:00:00Z');
 Date.now = () => clock;
