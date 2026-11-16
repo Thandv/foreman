@@ -1307,6 +1307,31 @@ export class Scheduler {
         this.store.record({ taskId: task.id, runId, type: 'log', message: `further output is in the run log (the first ${runnerCap} runner lines are recorded here)` });
       }
     };
+    // A worker-controlled stream (test:, check:, deps install) keeps its first and last lines in the events table, with
+    // one marker between; at most runnerCap events. The run log file keeps every line. Call end() when the stream
+    // is over, before any Foreman-owned verdict line.
+    const cappedEmit = (prefix: string): { line: (l: string) => void; end: () => void } => {
+      const head = config.logLinesPerRun;
+      const tailCap = head - 1;
+      const tail: string[] = [];
+      let seen = 0;
+      let dropped = 0;
+      const rec = (m: string): void => { this.store.record({ taskId: task.id, runId, type: 'log', message: m.slice(0, 4000) }); };
+      return {
+        line: (l) => {
+          const m = `${prefix}${l}`;
+          seen++;
+          if (seen <= head) return emit(m);
+          writeLog(m);
+          tail.push(m);
+          if (tail.length > tailCap) { tail.shift(); dropped++; }
+        },
+        end: () => {
+          if (dropped > 0) rec(`${dropped} ${prefix.replace(/:\s*$/, '') || 'deps'} lines omitted (the full output is in the run log)`);
+          for (const m of tail.splice(0)) rec(m);
+        },
+      };
+    };
     // Progress: a write needs a changed value, plus 1 s since the last write or a move of at least 0.01.
     let wroteProgress: number | null = null;
     let wroteProgressAt = 0;
@@ -1438,11 +1463,12 @@ export class Scheduler {
       // A worktree never carries a gitignored node_modules, so the test gate
       // would run against an uninstalled tree and fail a good change.
       if (jail.repo) {
+        const depsOut = cappedEmit('');
         const deps = await provisionDeps(jail.dir, jail.repo, {
           allowInstall: true,
           signal: controller.signal,
-          onLine: emit,
-        });
+          onLine: depsOut.line,
+        }).finally(depsOut.end);
         emit(`deps: ${deps.reason}${deps.provisioned ? ` (${deps.ms}ms)` : ''}`);
       }
 
@@ -1689,13 +1715,16 @@ export class Scheduler {
             });
             if (behind) emit(behindLine(behind));
           }
-          const runGate = (): ReturnType<typeof runTestsSlotted> => runTestsSlotted(
-            jail!.dir, cmd, controller.signal,
-            (line) => emit(`test: ${line}`),
-            (pid) => this.store.setRunPid(runId, pid),
-            onVerifyWait,
-            onSlotQueue,
-          );
+          const runGate = (): ReturnType<typeof runTestsSlotted> => {
+            const out = cappedEmit('test: ');
+            return runTestsSlotted(
+              jail!.dir, cmd, controller.signal,
+              out.line,
+              (pid) => this.store.setRunPid(runId, pid),
+              onVerifyWait,
+              onSlotQueue,
+            ).finally(out.end);
+          };
           const first = await runGate();
           tests = first;
           // A gate that ran out of time with no failing test named is not the worker's failure: it is run once
@@ -1757,13 +1786,14 @@ export class Scheduler {
           for (const check of pb.checks) {
             if (controller.signal.aborted) { checksPassed = false; break; }
             this.store.setRunStage(runId, task.id, 'test', check);
+            const checkOut = cappedEmit('check: ');
             const r = await runTestsSlotted(
               jail.dir, check, controller.signal,
-              (line) => emit(`check: ${line}`),
+              checkOut.line,
               (pid) => this.store.setRunPid(runId, pid),
               onVerifyWait,
               onSlotQueue,
-            );
+            ).finally(checkOut.end);
             emit(r.passed ? `check passed (${check})` : `CHECK FAILED (${check})`);
             outputs.push(r.output);
             ranChecks.push(check);
