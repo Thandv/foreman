@@ -10,6 +10,9 @@ import { recordDecision } from '../src/assistant/memory.ts';
 import { Store } from '../src/queue.ts';
 import type { Task } from '../src/types.ts';
 
+// The .md prints local clock times (src/debrief.ts hhmm), so the pinned digest holds in one zone only: pin it here.
+process.env['TZ'] = 'UTC';
+
 // A synthetic ledger in the scratch FOREMAN_DB test/env.ts made. The clock is moved by hand.
 let clock = Date.parse('2026-10-11T02:00:00Z');
 Date.now = () => clock;
@@ -64,7 +67,7 @@ store.setStatus(cascaded.id, 'failed', `dependency ${dead.id} ended as failed`);
 
 // Pinned from the code before the hand-landed change: sha256 of the normalised --no-model .json and .md.
 const PIN_JSON = '678aca7fd8e650bb3ca7a3d6c9341a352240e5c33010c55dcc01a97b159beefb';
-const PIN_MD = '80c26408ed3eecdc591d817fbef8122a61161f9cc4c65d78db80bebe26b1fa69';
+const PIN_MD = 'f7534d18a0eddc8acd07e7160a3f9617685c66cdce2dcc3e83d23c57cab2d100';
 
 /** The document as JSON with the random ids, the scratch home and the generation time made stable. */
 function stable(text: string, ids: string[]): string {
