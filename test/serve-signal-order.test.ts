@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const source = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'cli.ts'), 'utf8');
-// The serve branch only: a listener installed anywhere else in cli.ts says nothing about the order serve uses.
-const start = source.indexOf("if (cmd === 'serve') {");
+const source = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'daemon.ts'), 'utf8');
+// The serve function only: a listener installed anywhere else says nothing about the order serve uses.
+const start = source.indexOf('export async function serve()');
 const end = source.indexOf('return -1; // stay alive', start);
 const serve = source.slice(start, end);
 

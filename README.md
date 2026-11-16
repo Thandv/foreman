@@ -41,7 +41,7 @@ foreman serve              # daemon + board on http://127.0.0.1:4100; startup pr
 in-flight merges, then runs, get up to a minute each; past that it says so, kills the runs' process groups and exits
 anyway), 1 when it refuses to start (sandbox self-test, a held lock, a port in use) and 1 after an uncaught
 exception, also one that arrives during a signal's stop. It records the first uncaught exception as an `error` event and
-then stops the same orderly way (`src/daemonGuard.ts`); the next ten are only written to stderr. An unhandled promise
+then stops the same orderly way (`src/daemonGuard.ts`; the lifecycle itself is `src/daemon.ts`; both are protected paths); the next ten are only written to stderr. An unhandled promise
 rejection does not stop it: it is written to stderr, recorded as an `error` event at most once a minute per message (the next
 record carries the count it suppressed), and the daemon keeps running.
 

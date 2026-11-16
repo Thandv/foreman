@@ -17,6 +17,7 @@ Foreman is one Node process: an HTTP server and a scheduler loop over one SQLite
 | `src/verify/crewReview.ts` | The reviewer chain that reads a run's diff and returns a verdict and follow-ups. |
 | `src/gate.ts` | The approval gate, decided by a person or the owner model: approve and reject, and handing an approved change to `src/merge.ts` to land. |
 | `src/server.ts` | The HTTP API and the static board. |
+| `src/daemon.ts` | The `foreman serve` lifecycle: lock, sandbox self-test, sweeps, backup timers, signal handlers, orderly shutdown and exit code. |
 | `src/assistant/crewPlan.ts` | Turns an ask into a planned epic of tickets. |
 | `src/models.ts` | The model roster: aliases, specs, the model-plane config. |
 | `src/verify/council.ts` | The advisory council: several model opinions and a chair verdict. |
@@ -191,6 +192,7 @@ Not every entry exists on a fresh install: the module that uses a path creates i
 - `src/server.ts`
 - `src/db.ts`
 - `src/daemonGuard.ts`
+- `src/daemon.ts`
 - `test/improve.test.ts`
 - `test/security-guard.test.ts`
 
