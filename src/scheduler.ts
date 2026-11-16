@@ -491,14 +491,43 @@ export function councilShareOf(deadlineAt: number, share = Number(process.env['F
   return Math.max(30_000, Math.floor(remaining * Math.min(0.9, Math.max(0.1, share))));
 }
 
-/** Resolve to null rather than hang past `ms`; the caller treats null as "no verdict". */
-async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T | null> {
+/** How long to wait for an abandoned, aborted call to unwind (and free its broker slot). */
+const ABANDON_SETTLE_MS = 5_000;
+
+/**
+ * Resolve to null rather than hang past `ms`; the caller treats null as "no verdict".
+ *
+ * The work gets a signal of its own, joined with the run's: when the timer
+ * fires the share's controller aborts, so an abandoned council stops holding
+ * its broker slot. The run's own controller is never touched. Before returning
+ * null we wait (bounded by `settleMs`) for the aborted work to settle, so the
+ * slot is released before the next stage starts.
+ */
+export async function withDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  parent: AbortSignal,
+  settleMs = ABANDON_SETTLE_MS,
+): Promise<T | null> {
+  const share = new AbortController();
+  const work = run(AbortSignal.any([parent, share.signal]));
   let timer: NodeJS.Timeout | undefined;
+  let rang = false;
   const bell = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
+    timer = setTimeout(() => { rang = true; resolve(null); }, ms);
   });
   try {
-    return await Promise.race([work, bell]);
+    const result = await Promise.race([work, bell]);
+    if (!rang) return result;
+    share.abort(new Error('council share of the deadline ran out'));
+    let settleTimer: NodeJS.Timeout | undefined;
+    const bound = new Promise<void>((resolve) => { settleTimer = setTimeout(resolve, settleMs); });
+    try {
+      await Promise.race([work.then(() => undefined, () => undefined), bound]);
+    } finally {
+      if (settleTimer) clearTimeout(settleTimer);
+    }
+    return null;
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -2035,8 +2064,9 @@ export class Scheduler {
             // authoritative reviewer. So once given up on, it writes nothing.
             let gaveUp = false;
             verdict = await withDeadline(
-              this.verifyFn({ task, runId, evidence, signal: controller.signal, onNote: emit, stillCurrent: () => !gaveUp }),
+              (signal) => this.verifyFn({ task, runId, evidence, signal, onNote: emit, stillCurrent: () => !gaveUp }),
               councilShareOf(deadlineAt),
+              controller.signal,
             );
             if (!verdict) gaveUp = true;
             if (!verdict) {
@@ -2367,8 +2397,9 @@ export class Scheduler {
     try {
       this.store.setRunStage(runId, task.id, 'verify', 'shadow (local, non-binding)');
       const shadow = await withDeadline(
-        this.verifyFn({ task, runId, evidence, signal, onNote: () => {}, shadow: true }),
+        (shareSignal) => this.verifyFn({ task, runId, evidence, signal: shareSignal, onNote: () => {}, shadow: true }),
         councilShareOf(deadlineAt),
+        signal,
       );
       if (!shadow) {
         emit('shadow: the local council did not answer in time — recorded as a split');
