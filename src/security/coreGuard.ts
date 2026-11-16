@@ -41,6 +41,7 @@ export const PROTECTED_PATHS = [
   'src/server.ts',
   'src/db.ts',
   'src/daemonGuard.ts',
+  'src/daemon.ts',
   'test/improve.test.ts',
   'test/security-guard.test.ts',
 ];
