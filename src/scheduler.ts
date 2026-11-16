@@ -1323,7 +1323,7 @@ export class Scheduler {
           seen++;
           if (seen <= head) return emit(m);
           writeLog(m);
-          tail.push(m);
+          tail.push(m.slice(0, 4000)); // held until end(): only what the events table keeps
           if (tail.length > tailCap) { tail.shift(); dropped++; }
         },
         end: () => {
