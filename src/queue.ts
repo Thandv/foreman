@@ -278,11 +278,31 @@ export class Store extends EventEmitter {
   record(
     e: { taskId?: string | null; runId?: string | null; type: RunEvent['type']; stage?: Stage | null; message: string },
   ): RunEvent {
+    const ev = this.insertEvent(e);
+    this.emit('event', ev);
+    return ev;
+  }
+
+  /**
+   * Roll back only if a transaction is still open. SQLite rolls a transaction
+   * back by itself on some errors (SQLITE_FULL, for one), and an unguarded
+   * ROLLBACK then throws "no transaction is active", replacing the original
+   * error the caller must see. Never throws.
+   */
+  private rollbackIfOpen(): void {
+    try {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+    } catch { /* already rolled back; the caller rethrows the original error */ }
+  }
+
+  private insertEvent(
+    e: { taskId?: string | null; runId?: string | null; type: RunEvent['type']; stage?: Stage | null; message: string },
+  ): RunEvent {
     const ts = Date.now();
     const info = this.db
       .prepare('INSERT INTO events (task_id, run_id, ts, type, stage, message) VALUES (?,?,?,?,?,?)')
       .run(e.taskId ?? null, e.runId ?? null, ts, e.type, e.stage ?? null, e.message);
-    const ev: RunEvent = {
+    return {
       id: Number(info.lastInsertRowid),
       taskId: e.taskId ?? null,
       runId: e.runId ?? null,
@@ -291,8 +311,6 @@ export class Store extends EventEmitter {
       stage: e.stage ?? null,
       message: e.message,
     };
-    this.emit('event', ev);
-    return ev;
   }
 
   eventsSince(sinceId: number, limit = 500): RunEvent[] {
@@ -467,6 +485,7 @@ export class Store extends EventEmitter {
     );
     const status: TaskStatus = input.isEpic || deps.length ? 'blocked' : readyStatus(resolvedAssignee);
 
+    let ev: RunEvent;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db
@@ -500,13 +519,17 @@ export class Store extends EventEmitter {
         if (dep === taskId) throw new Error('a task cannot depend on itself');
         insDep.run(taskId, dep);
       }
+      // The status event rides in the same transaction as the row: the add is
+      // all-or-nothing, so a BUSY here can never leave a task behind that a
+      // retry would then duplicate. Emitted only once the commit has landed.
+      ev = this.insertEvent({ taskId, type: 'status', message: `${status}: ${title}` });
       this.db.exec('COMMIT');
     } catch (err) {
-      this.db.exec('ROLLBACK');
+      this.rollbackIfOpen();
       throw err;
     }
 
-    this.record({ taskId, type: 'status', message: `${status}: ${title}` });
+    this.emit('event', ev);
     return this.getTask(taskId)!;
   }
 
@@ -1958,7 +1981,7 @@ export class Store extends EventEmitter {
       }
       this.db.exec('COMMIT');
     } catch (err) {
-      this.db.exec('ROLLBACK');
+      this.rollbackIfOpen();
       throw err;
     }
     if (folded) this.record({ type: 'archive', message: `archived ${folded} closed task(s) older than ${days}d` });
