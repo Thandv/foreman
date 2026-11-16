@@ -1017,6 +1017,7 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
       }
       if (ev.type !== 'status') continue;
       let m: RegExpMatchArray | null;
+      let waiting: RegExpExecArray | null;
       if ((m = msg.match(/^pre-review repair round (\d+) queued/))) {
         preReviewRounds++;
         status = 'queued';
@@ -1110,6 +1111,9 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
           if (revived) {
             revivals.push({ at: ev.ts, dependency: revived[1]! });
             say(ev.ts, `revived: dependency ${revived[1]} was retried`);
+          } else if (next === 'blocked' && (waiting = /^waiting: dependency (\S+) was canceled\b/.exec(note))) {
+            // The dependency was cancelled and the ticket waits for a person (queue.ts reconcileBlocked): not a failure, not a cascade.
+            say(ev.ts, `waiting on dependency ${waiting[1]}, which was canceled`);
           } else if (note.startsWith('held: ')) {
             holds.push({ at: ev.ts, why: bound(note, cap.sentence) });
             addFailure(ev.ts, ev.runId, note);
@@ -1205,14 +1209,28 @@ function collectAt(store: Store, subjectId: string, opts: CollectOptions, scale:
         const added: OperatorAction = row.action === 'cancel'
           ? { at: row.at, action, by, note: before ? `while ${before}` : '', noteSource: '', ...(note ? { said: note } : {}) }
           : { at: row.at, action, by, note, noteSource: note ? 'decisions' : '' };
+        // A dependency dropped by hand is named from the row's own `extra.dep`, wherever the note's wording goes.
+        const dep = typeof row.extra?.['dep'] === 'string' ? String(row.extra['dep']) : '';
+        if (row.action === 'deps-drop' && dep) {
+          if (!added.note.includes(dep)) added.note = bound(`dropped dependency ${dep}${added.note ? `: ${added.note}` : ''}`, cap.text);
+          say(row.at, `operator dropped dependency ${dep}`);
+        }
         operator.push(added);
         rowTaken.add(added);
         if (row.action === 'reject' || (row.action === 'approve' && row.statusAfter === 'done')) decidedAt ??= row.at;
       }
+      // `foreman landed`: the work was landed by a person on the base branch, so there is no merge event; this row is the landing.
+      if (row.action === 'landed') {
+        const sha = typeof row.extra?.['commit'] === 'string' ? String(row.extra['commit']) : '';
+        landing.merged = true;
+        landing.at = row.at;
+        decidedAt = row.at;
+        say(row.at, `landed by hand: commit ${sha || '(not recorded)'}`);
+      }
       if (row.action === 'cancel' && note) say(row.at, `the cancel's note: ${note.slice(0, 200)}`);
     }
     // The approval that closed the ticket, as a person made it: what it states about a correction is the record.
-    const closing = ledgerRows.filter((r) => r.action === 'approve' && r.actor === 'human' && r.statusAfter === 'done').pop() ?? null;
+    const closing = ledgerRows.filter((r) => r.actor === 'human' && ((r.action === 'approve' && r.statusAfter === 'done') || r.action === 'landed')).pop() ?? null;
 
     operator.sort((a, b) => a.at - b.at);
     for (const o of operator) {
@@ -1658,7 +1676,7 @@ function notVisibleOf(doc: DebriefCollect): string[] {
   ];
   // What the ledger has since begun to record is no longer "not visible" for the tickets that have it; each line
   // is reworded only when this document actually holds such a record, so an older epic reads as it always did.
-  const approvals = doc.tickets.flatMap((t) => (t.ledgerDecisions ?? []).filter((d) => d.action === 'approve' && d.actor === 'human'));
+  const approvals = doc.tickets.flatMap((t) => (t.ledgerDecisions ?? []).filter((d) => (d.action === 'approve' || d.action === 'landed') && d.actor === 'human'));
   if (approvals.length) {
     const unstated = approvals.filter((d) => d.corrected === null).length;
     out[1] = `Whether an approval carried a correction, as a fact: recorded in the ledger's \`decisions\` table for ${approvals.length - unstated} of ${approvals.length} human approval(s) here (an --as-is landing of another tree, or --corrected / --clean). For the other ${unstated}, and for any approval made before that table existed, it is still read out of the note's wording ("on-top", "approve +", "corrections", "landed by hand", "not landable"), and a correction described in other words is classed as agreed.`;
